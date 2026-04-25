@@ -1,0 +1,7 @@
+infra/.env
+workspace/postgres_data/
+workspace/qdrant_data/
+workspace/openwebui_data/
+data/logs/
+data/tmp/
+node_modules/
