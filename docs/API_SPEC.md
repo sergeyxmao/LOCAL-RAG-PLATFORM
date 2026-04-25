@@ -1,0 +1,127 @@
+# API Spec
+
+Текущие маршруты:
+- GET /health
+- GET /settings
+- GET /documents
+- GET /documents/duplicates
+- GET /documents/:id/chunks
+- GET /documents/:id/assets
+- GET /documents/:id/assets/:fileName
+- GET /documents/:id/pages/:pageNumber/preview
+- GET /jobs
+- GET /ui/consult
+- GET /ui/ingest
+- GET /ui/jobs
+- GET /ui/pages-search
+- POST /documents/deduplicate
+- POST /documents/upload
+- POST /documents/ingest-file
+- POST /documents/ingest-file-async
+- POST /documents/ingest-folder
+- POST /documents/ingest-folder-async
+- POST /documents/ingest-text
+- POST /documents/:id/reclassify-assets
+- POST /jobs/:id/cancel
+- POST /jobs/:id/retry
+- POST /ask
+- POST /ask/pages
+- POST /search
+- POST /search/pages
+
+Первый рабочий ingestion-срез:
+- upload flow в `data/raw`
+- batch ingest папки через `POST /documents/ingest-folder`
+- фоновый ingest одного файла через `POST /documents/ingest-file-async`
+- фоновый ingest папки через `POST /documents/ingest-folder-async`
+- повторный ingest того же файла теперь по умолчанию пропускается как уже проиндексированный; для принудительной пере-загрузки можно передать `force: true`
+- поддержка `.txt`, `.md`, `.pdf`, `.docx`, `.csv`, `.xlsx`, `.xls`
+- parsed text сохраняется в `data/parsed`
+- PDF дополнительно создаёт page-preview PNG assets в `data/assets`
+- PDF page assets также регистрируются как `document_assets` в PostgreSQL
+- для PDF-страниц сохраняются:
+  - `assetClass`
+  - `confidence`
+  - `engineeringTopics`
+  - `signalTags`
+
+Поведение retrieval/answer:
+- `POST /search` использует hybrid retrieval: semantic + lexical + heuristic reranking
+- `POST /search` принимает `scope: "all" | "chunks" | "assets"`
+- `POST /search` принимает `documentId`, чтобы ограничить поиск одним документом
+- `POST /search` принимает `engineeringTopic`, чтобы фильтровать asset-результаты по инженерной теме
+- `POST /search` принимает `signalTag`, чтобы фильтровать asset-результаты по точному тегу или сигналу, например `LIT-101`
+- `POST /search/pages` — page-only обёртка над `scope: "assets"`
+- `POST /search/pages` принимает `assetClass`:
+  - `title`
+  - `contents`
+  - `changelog`
+  - `legal`
+  - `signals`
+  - `table`
+  - `scheme`
+  - `screen`
+  - `text`
+- `POST /search/pages` также принимает `engineeringTopic`, например:
+  - `PCS`
+  - `PCR`
+  - `I/O`
+  - `Резервирование`
+- `POST /search/pages` также принимает `signalTag`, чтобы искать страницы по конкретному тегу или сигналу
+- `POST /ask` сначала пытается собрать ответ через локальную LLM по найденным источникам
+- `POST /ask` принимает `scope: "all" | "chunks" | "assets"`
+- `POST /ask` принимает `documentId`, чтобы ограничить ответ одним документом
+- `POST /ask` принимает `engineeringTopic` для фильтрации asset-источников по инженерной теме
+- `POST /ask` принимает `signalTag` для фильтрации asset-источников по точному тегу или сигналу
+- `POST /ask/pages` строит ответ только по page-level asset results
+- `POST /ask/pages` принимает `assetClass` для фильтрации по типу страниц
+- `POST /ask/pages` принимает `engineeringTopic` для фильтрации по инженерной теме
+- `POST /ask/pages` принимает `signalTag` для фильтрации по точному тегу или сигналу
+- если локальная LLM не укладывается по времени на слабом ноутбуке, `POST /ask` возвращает grounded fallback с `mode: fallback-source-snippet`
+- если после retrieval нет релевантных источников, `POST /ask` возвращает честный ответ без галлюцинации с `mode: fallback-empty`
+
+Поведение visual assets:
+- `POST /documents/ingest-file` для PDF создаёт page previews и page-level metadata
+- `GET /documents/:id/assets` отдаёт page records со сводками:
+  - `byType`
+  - `byTopic`
+  - `bySignalTag`
+  - `items`
+- `GET /documents/:id/assets/browse` принимает:
+  - `assetClass`
+  - `engineeringTopic`
+  - `signalTag`
+- `GET /documents/:id/pages/:pageNumber/preview` лениво создаёт и возвращает PNG preview для любой индексированной PDF-страницы
+- `GET /ui/pages-search` даёт лёгкий браузерный UI для page-only поиска, ответа и browse-режима
+- `GET /ui/consult` даёт основной браузерный UI для вопросов по базе, выбору документа и фильтрам по scope/теме/сигналу
+- `GET /ui/ingest` даёт лёгкий браузерный UI для загрузки одного файла или целой папки из `data/raw`
+- `GET /documents/duplicates` показывает активные группы дублей среди уже индексированных документов
+- `POST /documents/deduplicate` удаляет старые индексированные дубли из PostgreSQL и Qdrant, оставляя самый свежий индекс
+- `GET /ui/jobs` даёт браузерный UI для просмотра статусов задач импорта
+- `POST /jobs/:id/cancel` останавливает активную задачу и очищает её частичные чанки/векторы
+- `POST /jobs/:id/retry` очищает неполный индекс файла и запускает задачу заново
+- `POST /documents/:id/reclassify-assets` пере-считает типы и инженерные темы уже загруженного PDF без повторной загрузки
+- `POST /documents/ingest-folder` принимает:
+  - `relativeDir`
+  - `categories`
+  - `recursive`
+  - `force`
+  и индексирует все поддерживаемые файлы из папки внутри `data/raw` последовательно, с отчётом по каждому файлу
+- результаты ingest-файла и ingest-папки теперь могут содержать:
+  - `skipped: true`
+  - `skipReason: "already-indexed"`
+- `POST /documents/ingest-file-async` и `POST /documents/ingest-folder-async` сразу возвращают `202 Accepted` и запускают импорт в фоне; статус дальше отслеживается через `/jobs` или `/ui/jobs`
+- PDF-страницы эвристически классифицируются в типы:
+  - `title`
+  - `contents`
+  - `changelog`
+  - `legal`
+  - `signals`
+  - `table`
+  - `scheme`
+  - `screen`
+  - `text`
+- для страниц также сохраняются инженерные признаки:
+  - `engineeringTopics`
+  - `signalTags`
+  - `confidence`

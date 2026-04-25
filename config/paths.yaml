@@ -1,0 +1,9 @@
+paths:
+  raw: data/raw
+  parsed: data/parsed
+  assets: data/assets
+  chunks: data/chunks
+  exports: data/exports
+  backups: data/backups
+  logs: data/logs
+  tmp: data/tmp

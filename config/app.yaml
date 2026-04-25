@@ -1,0 +1,9 @@
+app:
+  name: local-rag-platform
+  environment: local
+
+paths:
+  raw: /app/data/raw
+  parsed: /app/data/parsed
+  chunks: /app/data/chunks
+  backups: /app/data/backups

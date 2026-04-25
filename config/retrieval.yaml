@@ -1,0 +1,14 @@
+semantic:
+  top_k: 12
+
+bm25:
+  top_k: 12
+
+fusion:
+  method: rrf
+  top_k_final: 6
+
+reranking:
+  enabled: true
+  mode: heuristic
+  candidate_pool: 12

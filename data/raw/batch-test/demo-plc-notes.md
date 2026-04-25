@@ -1,0 +1,10 @@
+# PLC and Pump Control Notes
+
+PLC is a programmable logic controller used to automate industrial processes.
+In a pumping station, the PLC can read float switches, pressure sensors, and emergency stop signals.
+
+If the tank level reaches the high-high mark, the PLC should stop the feed pump and raise an alarm.
+If the tank level falls below the low mark, the PLC may start the standby pump if auto mode is enabled.
+
+All alarm events should be logged with timestamp, equipment tag, and operator acknowledgment status.
+The HMI should display pump state, current mode, alarm banner, and last command source.

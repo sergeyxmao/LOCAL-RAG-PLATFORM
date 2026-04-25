@@ -1,0 +1,9 @@
+chat:
+  provider: ollama
+  model: qwen3:4b
+  base_url: http://host.docker.internal:11434
+
+embedding:
+  provider: ollama
+  model: qwen3-embedding:0.6b
+  base_url: http://host.docker.internal:11434

@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: localrag-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ../workspace/postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    networks:
+      - localrag-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: localrag-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT}:6333"
+      - "${QDRANT_GRPC_PORT}:6334"
+    volumes:
+      - ../workspace/qdrant_data:/qdrant/storage
+    networks:
+      - localrag-net
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: localrag-open-webui
+    restart: unless-stopped
+    ports:
+      - "${OPEN_WEBUI_PORT}:8080"
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+    volumes:
+      - ../workspace/openwebui_data:/app/backend/data
+    networks:
+      - localrag-net
+
+  kb-api:
+    build:
+      context: ../apps/kb-api
+    container_name: localrag-kb-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${KB_API_PORT}:8787"
+    depends_on:
+      - postgres
+      - qdrant
+    volumes:
+      - ../config:/app/config
+      - ../data:/app/data
+    networks:
+      - localrag-net
+
+  ingestion-worker:
+    build:
+      context: ../apps/ingestion-worker
+    container_name: localrag-ingestion-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - qdrant
+    volumes:
+      - ../config:/app/config
+      - ../data:/app/data
+    networks:
+      - localrag-net
+
+networks:
+  localrag-net:
+    driver: bridge

@@ -1,0 +1,21 @@
+chunking:
+  strategy: sentence
+  max_tokens: 450
+  overlap_sentences: 2
+
+contextual_enrichment:
+  enabled: false
+
+visual_assets:
+  enabled: true
+  pdf_preview_pages: 4
+  pdf_scale: 2
+
+extractors:
+  pdf: true
+  docx: true
+  xlsx: true
+  xls: true
+  csv: true
+  txt: true
+  md: true

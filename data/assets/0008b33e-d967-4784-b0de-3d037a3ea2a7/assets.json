@@ -1,0 +1,19 @@
+{
+  "documentId": "0008b33e-d967-4784-b0de-3d037a3ea2a7",
+  "sourceType": "pdf",
+  "totalPages": 1,
+  "extractedPages": 1,
+  "items": [
+    {
+      "type": "pdf-page-preview",
+      "page": 1,
+      "title": "Demo Visual PDF Assets DB - Page 1",
+      "fileName": "Demo-Visual-PDF-Assets-DB-page-001.png",
+      "relativePath": "0008b33e-d967-4784-b0de-3d037a3ea2a7/Demo-Visual-PDF-Assets-DB-page-001.png",
+      "sizeBytes": 36197,
+      "text": "PLC visual test page Pump P-201A stop logic preview Simple scheme box",
+      "textExcerpt": "PLC visual test page Pump P-201A stop logic preview Simple scheme box",
+      "mimeType": "image/png"
+    }
+  ]
+}

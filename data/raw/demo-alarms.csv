@@ -1,0 +1,4 @@
+tag,description,high_high_action,hmi_field
+LIT-101,Level transmitter for tank 101,Stop feed pump and raise alarm,Alarm banner
+P-201A,Main feed pump,Stopped by PLC on high-high level,Pump state
+P-201B,Standby feed pump,Starts when low level and auto mode are active,Current mode
