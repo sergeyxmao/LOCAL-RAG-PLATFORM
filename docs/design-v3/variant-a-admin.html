@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вариант A - Админ</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brand-mark">LR</span><span>LOCAL-RAG-PLATFORM</span></a>
+      <nav class="main-nav">
+        <a class="nav-link" href="variant-a-consultant.html">Консультант</a>
+        <a class="nav-link" href="variant-a-upload.html">Загрузка документов</a>
+        <a class="nav-link active" href="variant-a-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch">
+        <a class="switch-link active" href="variant-a-admin.html">A</a>
+        <a class="switch-link" href="variant-b-admin.html">B</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workspace admin-layout">
+        <aside class="left-rail">
+          <div class="rail-head">
+            <h2>Состояние</h2>
+            <div class="meta-line"><span class="status ok">health ok</span><span>локально</span></div>
+          </div>
+          <div class="doc-list">
+            <div class="doc-item active"><div class="doc-title">Обзор базы</div><div class="meta-line"><span>сейчас</span></div></div>
+            <div class="doc-item"><div class="doc-title">Задачи импорта</div><div class="meta-line"><span>7 активных</span></div></div>
+            <div class="doc-item"><div class="doc-title">Ошибки</div><div class="meta-line"><span class="status bad">2 новых</span></div></div>
+            <div class="doc-item"><div class="doc-title">Журнал</div><div class="meta-line"><span>kb-api</span><span>worker</span></div></div>
+          </div>
+        </aside>
+
+        <section class="work-main">
+          <section class="metric-grid">
+            <div class="metric-card"><div class="metric-value">1 284</div><div class="muted">документы</div></div>
+            <div class="metric-card"><div class="metric-value">48 920</div><div class="muted">страницы</div></div>
+            <div class="metric-card"><div class="metric-value">182k</div><div class="muted">chunks</div></div>
+            <div class="metric-card"><div class="metric-value">3 418</div><div class="muted">таблицы</div></div>
+            <div class="metric-card"><div class="metric-value">9 740</div><div class="muted">изображения</div></div>
+          </section>
+
+          <div class="admin-grid">
+            <section class="work-main">
+              <section class="panel">
+                <div class="section-head"><h2>Сервисы</h2></div>
+                <div class="service-grid" style="padding:12px;">
+                  <div class="service-tile"><strong>Qdrant</strong><div class="meta-line"><span class="status ok">доступен</span><span>collection kb_chunks</span></div><p class="muted">Vector search отвечает, индексы читаются.</p></div>
+                  <div class="service-tile"><strong>PostgreSQL</strong><div class="meta-line"><span class="status ok">доступен</span><span>metadata</span></div><p class="muted">Документы, jobs и журналы записываются.</p></div>
+                  <div class="service-tile"><strong>Ollama</strong><div class="meta-line"><span class="status warn">медленно</span><span>qwen3:4b</span></div><p class="muted">Модель отвечает, latency выше обычного.</p></div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="section-head"><h2>Задачи импорта</h2></div>
+                <table class="data-table">
+                  <thead><tr><th>Документ</th><th>Статус</th><th>Прогресс</th><th>Сообщение</th></tr></thead>
+                  <tbody>
+                    <tr><td>2 Функциональные блоки</td><td><span class="status ok">выполняется</span></td><td>640 / 1 000</td><td>Индексация chunks в Qdrant</td></tr>
+                    <tr><td>Сигналы насосной станции.xlsx</td><td><span class="status ok">готово</span></td><td>184 / 184</td><td>Таблица добавлена</td></tr>
+                    <tr><td>Скан паспорта шкафа 03.jpg</td><td><span class="status bad">ошибка</span></td><td>0 / 1</td><td>OCR выключен для изображения</td></tr>
+                    <tr><td>Архив схем PDF</td><td><span class="status warn">ожидает</span></td><td>0 / 412</td><td>Будет запущено в фоне</td></tr>
+                  </tbody>
+                </table>
+              </section>
+
+              <section class="split-panels">
+                <div class="panel">
+                  <div class="section-head"><h2>Диск C:</h2></div>
+                  <div style="padding:12px;">
+                    <div class="metric-value">10.4 ГБ</div>
+                    <p class="muted">Свободно. Порог предупреждения: 8 ГБ.</p>
+                    <div class="progress"><span style="width:72%;"></span></div>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="section-head"><h2>Ошибки</h2></div>
+                  <div class="task-list">
+                    <div class="task-item"><div class="task-title">Qdrant WAL</div><p class="muted">Ранее была нехватка места. Сейчас место есть, наблюдение включено.</p></div>
+                    <div class="task-item"><div class="task-title">OCR не включён</div><p class="muted">Изображение импортировано без текста.</p></div>
+                  </div>
+                </div>
+              </section>
+            </section>
+
+            <aside class="work-main">
+              <section class="panel">
+                <div class="section-head"><h2>Обслуживание</h2></div>
+                <div class="action-grid" style="padding:12px;">
+                  <button class="action-tile" type="button"><strong>Проверить индекс</strong><p class="muted">Сверить PostgreSQL, chunks и Qdrant.</p></button>
+                  <button class="action-tile" type="button"><strong>Очистить дубли</strong><p class="muted">Показать кандидаты перед удалением.</p></button>
+                  <button class="action-tile" type="button"><strong>Переиндексировать выбранное</strong><p class="muted">Только отмеченные документы.</p></button>
+                  <button class="action-tile" type="button"><strong>Открыть журнал</strong><p class="muted">События kb-api и ingestion.</p></button>
+                </div>
+              </section>
+
+              <section class="danger-zone">
+                <h2 style="margin-top:0;">Осторожно</h2>
+                <p>Действия ниже отделены от обычного обслуживания. Они требуют явного подтверждения и не запускаются из прототипа.</p>
+                <div class="filter-row">
+                  <button class="btn danger" type="button">Удалить выбранный индекс</button>
+                  <button class="btn danger" type="button">Очистить историю задач</button>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

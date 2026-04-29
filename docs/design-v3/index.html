@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LOCAL-RAG-PLATFORM - дизайн-прототип V3</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-frame" data-index-root data-variant="a">
+    <header class="topbar">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">LR</span>
+        <span>LOCAL-RAG-PLATFORM</span>
+      </a>
+      <nav class="main-nav" aria-label="Основная навигация">
+        <a class="nav-link active" data-screen-link="consultant" href="variant-a-consultant.html">Консультант</a>
+        <a class="nav-link" data-screen-link="upload" href="variant-a-upload.html">Загрузка документов</a>
+        <a class="nav-link" data-screen-link="admin" href="variant-a-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch" aria-label="Выбор варианта">
+        <button class="switch-link active" type="button" data-variant-button="a">Вариант A</button>
+        <button class="switch-link" type="button" data-variant-button="b">Вариант B</button>
+      </div>
+    </header>
+
+    <main class="index-shell">
+      <section class="hero-workspace">
+        <aside class="index-side">
+          <h1>Новый прототип интерфейса локальной базы знаний</h1>
+          <p>
+            Это отдельный статический прототип в документации. Он не подключается к API,
+            не меняет рабочий UI и показывает, как может выглядеть полноценное приложение.
+          </p>
+          <div class="panel" style="padding: 14px; box-shadow: none;">
+            <div class="doc-title">Вариант A</div>
+            <div class="muted">Светлый инженерный рабочий стол: библиотека слева, вопрос и фильтры сверху, ответ и источники в центре.</div>
+          </div>
+          <div class="panel" style="padding: 14px; box-shadow: none;">
+            <div class="doc-title">Вариант B</div>
+            <div class="muted">Премиальный AI workspace: выразительнее, плотнее, с сильным блоком источников и статусами локальной базы.</div>
+          </div>
+          <a class="btn primary" data-screen-link="consultant" href="variant-a-consultant.html">Открыть выбранный консультант</a>
+          <a class="btn soft" href="references.md">Смотреть web-референсы</a>
+        </aside>
+
+        <section class="index-main">
+          <div class="preview-toolbar">
+            <div>
+              <strong>Экраны прототипа</strong>
+              <div class="muted">Переключатель сверху меняет ссылки на выбранный вариант.</div>
+            </div>
+            <div class="page-tabs">
+              <a class="tab-link active" data-screen-link="consultant" href="variant-a-consultant.html">Консультант</a>
+              <a class="tab-link" data-screen-link="upload" href="variant-a-upload.html">Загрузка</a>
+              <a class="tab-link" data-screen-link="admin" href="variant-a-admin.html">Админ</a>
+            </div>
+          </div>
+
+          <div class="preview-grid">
+            <a class="screen-card" data-screen-link="consultant" href="variant-a-consultant.html">
+              <div class="screen-card-head">
+                <strong>Консультант</strong>
+                <span class="status ok">источники</span>
+              </div>
+              <div class="screen-mini">
+                <div style="display:grid;grid-template-columns:90px 1fr;gap:8px;">
+                  <div class="mini-block" style="height:220px;"></div>
+                  <div style="display:grid;gap:8px;">
+                    <div class="mini-row"></div>
+                    <div class="mini-block"></div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;">
+                      <div class="mini-row"></div>
+                      <div class="mini-row"></div>
+                      <div class="mini-row"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </a>
+
+            <a class="screen-card" data-screen-link="upload" href="variant-a-upload.html">
+              <div class="screen-card-head">
+                <strong>Загрузка документов</strong>
+                <span class="status warn">фон</span>
+              </div>
+              <div class="screen-mini">
+                <div class="mini-block" style="height:130px;"></div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;">
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                </div>
+                <div class="mini-block" style="height:82px;"></div>
+              </div>
+            </a>
+
+            <a class="screen-card" data-screen-link="admin" href="variant-a-admin.html">
+              <div class="screen-card-head">
+                <strong>Админ / состояние базы</strong>
+                <span class="status ok">локально</span>
+              </div>
+              <div class="screen-mini">
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:7px;">
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                  <div class="mini-row"></div>
+                </div>
+                <div class="mini-block" style="height:94px;"></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">
+                  <div class="mini-block" style="height:92px;"></div>
+                  <div class="mini-block" style="height:92px;"></div>
+                </div>
+              </div>
+            </a>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

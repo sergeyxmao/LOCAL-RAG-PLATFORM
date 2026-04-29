@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вариант B - Загрузка документов</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="variant-b">
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brand-mark">LR</span><span>LOCAL-RAG-PLATFORM</span></a>
+      <nav class="main-nav">
+        <a class="nav-link" href="variant-b-consultant.html">Консультант</a>
+        <a class="nav-link active" href="variant-b-upload.html">Загрузка документов</a>
+        <a class="nav-link" href="variant-b-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch">
+        <a class="switch-link" href="variant-a-upload.html">A</a>
+        <a class="switch-link active" href="variant-b-upload.html">B</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workspace-canvas">
+        <div class="workspace upload-layout">
+          <aside class="left-rail">
+            <div class="rail-head">
+              <h2>Пакет импорта</h2>
+              <div class="meta-line"><span class="status warn">фон рекомендован</span></div>
+            </div>
+            <div class="doc-list">
+              <div class="doc-item active"><div class="doc-title">Новая партия</div><div class="meta-line"><span>8 типов файлов</span></div></div>
+              <div class="doc-item"><div class="doc-title">OCR очередь</div><div class="meta-line"><span>3 скана</span><span>ручной старт</span></div></div>
+              <div class="doc-item"><div class="doc-title">Ошибки импорта</div><div class="meta-line"><span class="status bad">2</span></div></div>
+            </div>
+          </aside>
+
+          <section class="work-main">
+            <div class="upload-grid">
+              <div class="work-main">
+                <section class="dropzone">
+                  <div>
+                    <div class="status ok" style="margin-bottom:10px;">локальная обработка</div>
+                    <h1 style="margin:0 0 8px;">Соберите пакет документов</h1>
+                    <p class="muted">Папка, PDF, Word, таблицы, текст, изображения, фото страниц и сканы попадут в одну очередь с понятными статусами.</p>
+                    <div class="filter-row" style="justify-content:center;">
+                      <button class="btn primary" type="button">Добавить документы</button>
+                      <button class="btn soft" type="button">Добавить папку</button>
+                      <button class="btn warn" type="button">Поставить в фон</button>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="bento-row">
+                  <section class="panel">
+                    <div class="section-head"><h2>Форматы</h2></div>
+                    <div class="format-grid" style="padding:12px;grid-template-columns:repeat(2,minmax(0,1fr));">
+                      <div class="format-tile"><div class="format-icon">PDF</div><strong>PDF и страницы</strong><p class="muted">page_type, схемы, таблицы.</p></div>
+                      <div class="format-tile"><div class="format-icon">XLS</div><strong>XLSX / CSV</strong><p class="muted">сигналы и уставки.</p></div>
+                      <div class="format-tile"><div class="format-icon">DOC</div><strong>DOCX, TXT, MD</strong><p class="muted">регламенты и заметки.</p></div>
+                      <div class="format-tile"><div class="format-icon">IMG</div><strong>Изображения и сканы</strong><p class="muted">OCR точечно.</p></div>
+                    </div>
+                  </section>
+
+                  <section class="panel">
+                    <div class="section-head"><h2>Режим</h2></div>
+                    <div style="padding:12px;display:grid;gap:10px;">
+                      <div class="mode-tile source-card-premium"><strong>Быстрый текст</strong><p class="muted">Для больших папок на текущем ноутбуке.</p><span class="status ok">выбран</span></div>
+                      <div class="mode-tile"><strong>PDF preview</strong><p class="muted">После первого прохода для нужных документов.</p><span class="status warn">позже</span></div>
+                      <div class="mode-tile"><strong>OCR</strong><p class="muted">Сканы и фото страниц, высокая нагрузка CPU.</p><span class="status warn">ручной режим</span></div>
+                    </div>
+                  </section>
+                </div>
+
+                <section class="warning-panel">
+                  <strong>Предупреждение по ноутбуку</strong>
+                  <p>Если свободного места меньше 8-10 ГБ, не запускайте массовые preview и OCR. Сначала выполните текстовый фоновый проход.</p>
+                </section>
+              </div>
+
+              <aside class="work-main">
+                <section class="panel">
+                  <div class="section-head"><h2>Живая очередь</h2></div>
+                  <div class="queue" style="padding:12px;">
+                    <div class="queue-item source-card-premium">
+                      <div class="task-title">Документация metsoDNA CR</div>
+                      <div class="meta-line"><span class="status ok">индексация</span><span>640 / 1 000</span><span>без preview</span></div>
+                      <div class="progress"><span style="width:64%;"></span></div>
+                    </div>
+                    <div class="queue-item">
+                      <div class="task-title">Фотографии страниц шкафа</div>
+                      <div class="meta-line"><span class="status warn">ждёт OCR</span><span>12 файлов</span></div>
+                    </div>
+                    <div class="queue-item">
+                      <div class="task-title">Старый экспорт CSV</div>
+                      <div class="meta-line"><span class="status bad">ошибка</span><span>кодировка не распознана</span></div>
+                      <p class="muted">Сохраните CSV в UTF-8 или импортируйте через XLSX.</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="panel">
+                  <div class="section-head"><h2>Параметры партии</h2></div>
+                  <div style="padding:12px;display:grid;gap:10px;">
+                    <label class="filter-row"><input type="checkbox" checked /> Фоновая задача</label>
+                    <label class="filter-row"><input type="checkbox" checked /> Пропуск дублей</label>
+                    <label class="filter-row"><input type="checkbox" /> Создать preview страниц</label>
+                    <label class="filter-row"><input type="checkbox" /> Включить OCR для сканов</label>
+                    <button class="btn primary" type="button">Запустить пакет</button>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

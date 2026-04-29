@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вариант B - Консультант</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="variant-b">
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brand-mark">LR</span><span>LOCAL-RAG-PLATFORM</span></a>
+      <nav class="main-nav">
+        <a class="nav-link active" href="variant-b-consultant.html">Консультант</a>
+        <a class="nav-link" href="variant-b-upload.html">Загрузка документов</a>
+        <a class="nav-link" href="variant-b-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch">
+        <a class="switch-link" href="variant-a-consultant.html">A</a>
+        <a class="switch-link active" href="variant-b-consultant.html">B</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workspace-canvas">
+        <div class="workspace">
+          <aside class="left-rail">
+            <div class="rail-head">
+              <h2>Локальная библиотека</h2>
+              <div class="meta-line"><span class="status ok">готова к поиску</span><span>АСУ ТП</span></div>
+            </div>
+            <div class="rail-search">
+              <input class="input" value="signals FIC PSL насосная" />
+            </div>
+            <div class="doc-list">
+              <div class="doc-item active"><div class="doc-title">metsoDNA CR / функциональные блоки</div><div class="meta-line"><span>326 стр.</span><span>4 источника</span></div></div>
+              <div class="doc-item active"><div class="doc-title">I/O листы и уставки</div><div class="meta-line"><span>XLSX</span><span>2 таблицы</span></div></div>
+              <div class="doc-item"><div class="doc-title">Схемы шкафов DI/DO</div><div class="meta-line"><span>scheme</span><span>screen</span></div></div>
+              <div class="doc-item"><div class="doc-title">Инструкции диагностики</div><div class="meta-line"><span>DOCX</span><span>текст</span></div></div>
+            </div>
+          </aside>
+
+          <section class="work-main">
+            <div class="query-bar">
+              <div class="field">
+                <label>Рабочий агент</label>
+                <select class="select"><option>АСУ ТП консультант · qwen3:4b</option></select>
+              </div>
+              <div class="field">
+                <label>Запрос</label>
+                <textarea class="textarea">Собери краткий разбор контура FIC_204: сигналы, уставки, источники и что проверить при нестабильном расходе.</textarea>
+              </div>
+              <button class="btn primary" type="button">Найти ответ</button>
+            </div>
+
+            <div class="filter-row">
+              <span class="pill">гибридный поиск</span>
+              <span class="pill">цитировать страницы</span>
+              <span class="pill">таблицы включены</span>
+              <span class="pill">теги: FIC_204, PSL_118</span>
+            </div>
+
+            <div class="consult-grid">
+              <div class="answer-column">
+                <div class="bento-row">
+                  <section class="used-docs">
+                    <div class="section-head" style="padding:0;border:0;"><h2>Контекст ответа</h2></div>
+                    <div class="doc-strip">
+                      <div class="source-item source-card-premium"><strong>FB_AI_PID.pdf</strong><div class="meta-line"><span class="status ok">точное совпадение</span><span>стр. 42</span></div></div>
+                      <div class="source-item source-card-premium"><strong>Setpoints.xlsx</strong><div class="meta-line"><span class="status ok">таблица</span><span>лист 3</span></div></div>
+                      <div class="source-item"><strong>Диагностика.docx</strong><div class="meta-line"><span>проверки</span><span>раздел 5</span></div></div>
+                    </div>
+                  </section>
+                  <section class="empty-state">
+                    <h3>Пустой результат</h3>
+                    <p class="muted">Если оставить только "scheme" и убрать XLSX, для уставок источники не найдены. Ответ будет остановлен через fallback-empty.</p>
+                  </section>
+                </div>
+
+                <article class="answer-sheet">
+                  <h2>Разбор контура</h2>
+                  <p>Контур <span class="signal-code">FIC_204</span> использует измерение расхода <span class="signal-code">FI_204_PV</span>, уставку <span class="signal-code">FIC_204_SP</span> и управляющий выход <span class="signal-code">FIC_204_OUT</span>. В источниках также найдено условие блокировки <span class="signal-code">PSL_118</span>, которое может объяснить провалы управления при низком давлении.</p>
+                  <table class="answer-table">
+                    <thead><tr><th>Проверка</th><th>Что смотреть</th><th>Источник</th></tr></thead>
+                    <tbody>
+                      <tr><td>Масштабирование AI</td><td>Диапазон датчика и инженерные единицы</td><td>PDF стр. 42</td></tr>
+                      <tr><td>Уставки</td><td>Рабочая и аварийная границы</td><td>XLSX Setpoints</td></tr>
+                      <tr><td>Блокировка</td><td>Состояние <span class="signal-code">PSL_118</span></td><td>PDF стр. 118</td></tr>
+                    </tbody>
+                  </table>
+                  <p>Практический следующий шаг: открыть страницу 42 и лист Setpoints рядом, затем сверить, не расходится ли диапазон датчика с уставкой оператора.</p>
+                </article>
+
+                <section class="source-strip">
+                  <div class="section-head"><h2>Цитируемые фрагменты</h2></div>
+                  <div class="source-grid">
+                    <div class="source-item source-card-premium"><div class="doc-title">[1] FB_AI_PID.pdf · стр. 42</div><p><mark>FI_204_PV</mark> поступает на PID-блок после масштабирования.</p><div class="meta-line"><span>signals</span><span>score 0.91</span></div></div>
+                    <div class="source-item source-card-premium"><div class="doc-title">[2] Setpoints.xlsx · строка 18</div><p>Рабочая уставка для <mark>FIC_204_SP</mark> вынесена в таблицу.</p><div class="meta-line"><span>table</span><span>score 0.86</span></div></div>
+                    <div class="source-item"><div class="doc-title">[3] Диагностика.docx</div><p>При нестабильном расходе проверить входной сигнал и блокировки.</p><div class="meta-line"><span>text</span><span>score 0.74</span></div></div>
+                  </div>
+                </section>
+              </div>
+
+              <aside class="side-inspector panel">
+                <div class="pane-head"><h2>Источник доверия</h2></div>
+                <div class="inspector-body">
+                  <div class="source-item source-card-premium">
+                    <div class="doc-title">Открытая цитата</div>
+                    <p class="muted">Показывает конкретный документ, страницу, тип страницы и совпавший сигнал.</p>
+                  </div>
+                  <div class="source-item">
+                    <div class="doc-title">Состав ответа</div>
+                    <div class="meta-line"><span class="status ok">3 документа</span><span>7 chunks</span><span>2 таблицы</span></div>
+                  </div>
+                  <div class="source-item">
+                    <div class="doc-title">Технические теги</div>
+                    <div class="filter-row"><span class="tag">FIC_204</span><span class="tag">FI_204_PV</span><span class="tag">PSL_118</span><span class="tag">PID</span></div>
+                  </div>
+                </div>
+                <div class="rail-head"><button class="btn primary" type="button">Собрать отчёт по источникам</button></div>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

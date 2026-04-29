@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вариант B - Админ</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="variant-b">
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brand-mark">LR</span><span>LOCAL-RAG-PLATFORM</span></a>
+      <nav class="main-nav">
+        <a class="nav-link" href="variant-b-consultant.html">Консультант</a>
+        <a class="nav-link" href="variant-b-upload.html">Загрузка документов</a>
+        <a class="nav-link active" href="variant-b-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch">
+        <a class="switch-link" href="variant-a-admin.html">A</a>
+        <a class="switch-link active" href="variant-b-admin.html">B</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workspace-canvas">
+        <div class="workspace admin-layout">
+          <aside class="left-rail">
+            <div class="rail-head">
+              <h2>Control room</h2>
+              <div class="meta-line"><span class="status ok">локальная база</span><span>25.04.2026</span></div>
+            </div>
+            <div class="doc-list">
+              <div class="doc-item active"><div class="doc-title">Индекс</div><div class="meta-line"><span>PostgreSQL + Qdrant</span></div></div>
+              <div class="doc-item"><div class="doc-title">Импорт</div><div class="meta-line"><span>jobs</span><span>progress</span></div></div>
+              <div class="doc-item"><div class="doc-title">Модели</div><div class="meta-line"><span>Ollama</span><span>qwen3</span></div></div>
+              <div class="doc-item"><div class="doc-title">Осторожно</div><div class="meta-line"><span class="status bad">опасные действия</span></div></div>
+            </div>
+          </aside>
+
+          <section class="work-main">
+            <section class="metric-grid">
+              <div class="metric-card source-card-premium"><div class="metric-value">1 284</div><div class="muted">документы</div></div>
+              <div class="metric-card"><div class="metric-value">48 920</div><div class="muted">страницы</div></div>
+              <div class="metric-card"><div class="metric-value">182k</div><div class="muted">chunks</div></div>
+              <div class="metric-card"><div class="metric-value">3 418</div><div class="muted">таблицы</div></div>
+              <div class="metric-card"><div class="metric-value">9 740</div><div class="muted">изображения</div></div>
+            </section>
+
+            <div class="admin-grid">
+              <section class="work-main">
+                <div class="bento-row">
+                  <section class="panel">
+                    <div class="section-head"><h2>Сервисы</h2></div>
+                    <div style="padding:12px;display:grid;gap:10px;">
+                      <div class="service-tile source-card-premium"><strong>Qdrant</strong><div class="meta-line"><span class="status ok">online</span><span>vector search</span></div></div>
+                      <div class="service-tile"><strong>PostgreSQL</strong><div class="meta-line"><span class="status ok">online</span><span>metadata</span></div></div>
+                      <div class="service-tile"><strong>Ollama</strong><div class="meta-line"><span class="status warn">latency</span><span>qwen3:4b</span></div></div>
+                    </div>
+                  </section>
+                  <section class="panel">
+                    <div class="section-head"><h2>Диск и нагрузка</h2></div>
+                    <div style="padding:12px;">
+                      <div class="metric-value">10.4 ГБ</div>
+                      <p class="muted">Свободно на C:. Массовые preview лучше отложить до 15+ ГБ.</p>
+                      <div class="progress"><span style="width:72%;"></span></div>
+                    </div>
+                  </section>
+                </div>
+
+                <section class="panel">
+                  <div class="section-head"><h2>Импорт и ошибки</h2></div>
+                  <table class="data-table">
+                    <thead><tr><th>Задача</th><th>Статус</th><th>Прогресс</th><th>Действие</th></tr></thead>
+                    <tbody>
+                      <tr><td>metsoDNA CR / функциональные блоки</td><td><span class="status ok">идёт</span></td><td>64%</td><td>Открыть детали</td></tr>
+                      <tr><td>Таблица сигналов XLSX</td><td><span class="status ok">готово</span></td><td>100%</td><td>Проверить поиск</td></tr>
+                      <tr><td>Фото страниц шкафа</td><td><span class="status warn">ждёт OCR</span></td><td>0%</td><td>Включить OCR</td></tr>
+                      <tr><td>CSV архив</td><td><span class="status bad">ошибка</span></td><td>0%</td><td>Открыть журнал</td></tr>
+                    </tbody>
+                  </table>
+                </section>
+
+                <section class="panel">
+                  <div class="section-head"><h2>Инструменты обслуживания</h2></div>
+                  <div class="action-grid" style="padding:12px;">
+                    <button class="action-tile source-card-premium" type="button"><strong>Проверить индекс</strong><p class="muted">Сверка documents, pages, chunks и vector ids.</p></button>
+                    <button class="action-tile" type="button"><strong>Очистить дубли</strong><p class="muted">Сначала показать список кандидатов.</p></button>
+                    <button class="action-tile" type="button"><strong>Переиндексировать выбранное</strong><p class="muted">Без массового запуска всей базы.</p></button>
+                    <button class="action-tile" type="button"><strong>Открыть журнал</strong><p class="muted">Ошибки kb-api, jobs, Qdrant, Ollama.</p></button>
+                  </div>
+                </section>
+              </section>
+
+              <aside class="work-main">
+                <section class="panel">
+                  <div class="section-head"><h2>Качество базы</h2></div>
+                  <div class="task-list">
+                    <div class="task-item source-card-premium"><div class="task-title">PDF pages</div><div class="meta-line"><span class="status ok">93%</span><span>классифицированы</span></div></div>
+                    <div class="task-item"><div class="task-title">Теги и сигналы</div><div class="meta-line"><span>12 480 тегов</span><span>4 200 signals</span></div></div>
+                    <div class="task-item"><div class="task-title">fallback-empty</div><div class="meta-line"><span class="status ok">включён</span><span>ответ только с источниками</span></div></div>
+                  </div>
+                </section>
+
+                <section class="danger-zone">
+                  <h2 style="margin-top:0;">Осторожно</h2>
+                  <p>Опасные операции отделены от обычной панели и должны требовать подтверждения.</p>
+                  <div style="display:grid;gap:8px;">
+                    <button class="btn danger" type="button">Удалить выбранный документ из индекса</button>
+                    <button class="btn danger" type="button">Очистить коллекцию Qdrant</button>
+                    <button class="btn danger" type="button">Сбросить историю задач</button>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

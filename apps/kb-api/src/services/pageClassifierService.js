@@ -9,8 +9,8 @@ function countMatches(text, patterns) {
   return patterns.reduce((total, pattern) => total + (pattern.test(text) ? 1 : 0), 0);
 }
 
-function uniqueValues(items) {
-  return Array.from(new Set(items.filter(Boolean)));
+function uniqueValues(items, limit = 20) {
+  return Array.from(new Set(items.filter(Boolean))).slice(0, limit);
 }
 
 function countWords(text) {
@@ -24,10 +24,10 @@ function countWords(text) {
 function extractSignalTags(text) {
   const matches =
     text.match(
-      /\b[a-zа-я]{1,8}-\d{2,4}[a-zа-я0-9-]*\b|\b[a-zа-я]{2,8}\d{2,4}[a-zа-я0-9-]*\b/gi
+      /\b[a-zа-я]{1,10}[-_]\d{1,5}[a-zа-я0-9_-]*\b|\b[a-zа-я]{2,10}\d{2,5}[a-zа-я0-9_-]*\b/gi
     ) ?? [];
 
-  return uniqueValues(matches.map((item) => item.toUpperCase())).slice(0, 12);
+  return uniqueValues(matches.map((item) => item.toUpperCase()), 20);
 }
 
 function collectEngineeringTopics(text) {
@@ -78,6 +78,22 @@ function collectEngineeringTopics(text) {
       patterns: [/\bsignal\b/i, /сигнал/i, /\btag\b/i, /тег/i, /channel/i, /канал/i],
     },
     {
+      topic: "Схемы",
+      patterns: [/схем/i, /diagram/i, /drawing/i, /чертеж/i, /подключени/i, /структур/i],
+    },
+    {
+      topic: "Электрика/клеммы",
+      patterns: [/terminal/i, /клемм/i, /wiring/i, /кабел/i, /шкаф/i, /cabinet/i, /монтажн/i],
+    },
+    {
+      topic: "Функциональные блоки",
+      patterns: [/functional block/i, /функциональн.*блок/i, /\bpid\b/i, /\bramp/i, /\bint\b/i],
+    },
+    {
+      topic: "Регулирование",
+      patterns: [/\bpid\b/i, /регулирован/i, /setpoint/i, /уставк/i, /контур/i],
+    },
+    {
       topic: "Параметры",
       patterns: [/\bparameter\b/i, /параметр/i, /\bsetpoint\b/i, /уставк/i, /priority/i, /приоритет/i],
     },
@@ -92,7 +108,19 @@ function collectEngineeringTopics(text) {
   return topics;
 }
 
-function buildScores(combinedText, textStart, signalTags) {
+function countLineMatches(text, predicate) {
+  return String(text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(predicate).length;
+}
+
+function countRegexMatches(text, pattern) {
+  return String(text ?? "").match(pattern)?.length ?? 0;
+}
+
+function buildScores(combinedText, textStart, signalTags, rawText = "") {
   const scores = {
     title: 0,
     contents: 0,
@@ -104,6 +132,20 @@ function buildScores(combinedText, textStart, signalTags) {
     screen: 0,
     text: 0,
   };
+  const raw = String(rawText ?? "");
+  const dottedLeaderLines = countLineMatches(raw, (line) =>
+    /[.·]{4,}\s*\d{1,4}\s*$/.test(line) || /(?:[.·]\s*){4,}\d{1,4}\s*$/.test(line)
+  );
+  const columnLikeLines = countLineMatches(raw, (line) => {
+    const columns = line.split(/\t|\s{2,}|\s+\|\s+|;/).map((part) => part.trim()).filter(Boolean);
+    return columns.length >= 3;
+  });
+  const shortDiagramLines = countLineMatches(raw, (line) =>
+    line.length <= 90 && /[-─—>|<+*/\\()[\]{}]{3,}/.test(line)
+  );
+  const parameterRows = countLineMatches(raw, (line) =>
+    /\b(default|type|range|unit|value|parameter|signal|tag|channel|address)\b|тип\s*:|значение|описание|адрес|клемм|канал|сигнал|параметр/i.test(line)
+  );
 
   if (/комплект документации|document package|metso/.test(combinedText)) {
     scores.title += 2;
@@ -139,6 +181,14 @@ function buildScores(combinedText, textStart, signalTags) {
     /типы ввода/,
     /главные интерактивные функции/,
   ]);
+  if (dottedLeaderLines >= 3) {
+    scores.contents += 6;
+  } else if (dottedLeaderLines > 0) {
+    scores.contents += 2;
+  }
+  if (countRegexMatches(raw, /\b\d{1,3}\.\d{1,3}\b/g) >= 6) {
+    scores.contents += 2;
+  }
 
   scores.table += countMatches(combinedText, [
     /таблиц|табличн|\btable\b/,
@@ -148,6 +198,14 @@ function buildScores(combinedText, textStart, signalTags) {
     /address|адрес|module|модул|terminal|клемм|unit|единиц/,
     /alarm list|signal list|перечень сигналов|список сигналов/,
   ]);
+  if (columnLikeLines >= 5) {
+    scores.table += 5;
+  } else if (columnLikeLines >= 2) {
+    scores.table += 2;
+  }
+  if (parameterRows >= 4) {
+    scores.table += 3;
+  }
   if (signalTags.length >= 3) {
     scores.table += 4;
   }
@@ -156,6 +214,7 @@ function buildScores(combinedText, textStart, signalTags) {
     /signal list|перечень сигналов|список сигналов|tag list|список тегов|alarm list|список тревог/,
     /channel list|point list|alarm summary|signal summary/,
     /\btag\b|тег|signal|сигнал|channel|канал/,
+    /\bai\b|\bao\b|\bdi\b|\bdo\b|\baio\b|\bdio\b|analog input|digital output/,
   ]);
   if (signalTags.length >= 3) {
     scores.signals += 3;
@@ -167,7 +226,8 @@ function buildScores(combinedText, textStart, signalTags) {
   scores.screen += countMatches(combinedText, [
     /экран|\bhmi\b|operator station|display|trend|faceplate|мнемосхем|мнемосхема|\bscada\b/,
     /alarm list|список тревог|оператор|operator|overview|process display/,
-    /human machine interface|alarm summary|trend display|face plate/,
+    /human machine interface|alarm summary|trend display|face plate|screen dump|screenshot/,
+    /кнопк|окно|панел|индикац|график|тренд|видеокадр/,
   ]);
 
   scores.scheme += countMatches(combinedText, [
@@ -175,7 +235,15 @@ function buildScores(combinedText, textStart, signalTags) {
     /\bpcs\b|\bpcr\b|\bi\/o\b|ввод\s*\/\s*вывод|ввода\s*\/\s*вывода|controller|контроллер/,
     /cabinet|шкаф|station|станци|profibus|profinet|modbus|ethernet|opc|redundancy|резервирован/,
     /fieldbus|loop diagram|wiring|подключени|топологи/,
+    /p&id|pid diagram|functional diagram|block diagram|блок-схем|принципиальн|монтажн|электрическ|чертеж/,
+    /terminal|клемм|кабел|модул|rack|шина|bus|узел|node|line diagram|single line/,
   ]);
+  if (shortDiagramLines >= 3) {
+    scores.scheme += 3;
+  }
+  if (columnLikeLines >= 6 && scores.scheme >= 3) {
+    scores.table += 1;
+  }
 
   return scores;
 }
@@ -204,6 +272,7 @@ export function analyzePdfPageAsset({ pageNumber, title, text }) {
   const normalizedTitle = normalizeText(title);
   const normalizedText = normalizeText(text);
   const combined = `${normalizedTitle} ${normalizedText}`.trim();
+  const rawText = `${title ?? ""}\n${text ?? ""}`.trim();
   const textStart = normalizedText.slice(0, 240);
   const wordCount = countWords(combined);
   const signalTags = extractSignalTags(combined);
@@ -221,6 +290,7 @@ export function analyzePdfPageAsset({ pageNumber, title, text }) {
 
   if (
     pageNumber === 1 &&
+    wordCount <= 60 &&
     (/комплект документации/.test(combined) ||
       /функциональные блоки/.test(combined) ||
       /metso/.test(combined))
@@ -234,7 +304,7 @@ export function analyzePdfPageAsset({ pageNumber, title, text }) {
     };
   }
 
-  const scores = buildScores(combined, textStart, signalTags);
+  const scores = buildScores(combined, textStart, signalTags, rawText);
   let assetClass = "text";
   const looksLikeRepeatedFrontMatterHeader =
     wordCount <= 24 &&
@@ -267,7 +337,7 @@ export function analyzePdfPageAsset({ pageNumber, title, text }) {
     assetClass = "signals";
   } else if (scores.table >= 4 && scores.table >= scores.scheme && scores.table >= scores.screen) {
     assetClass = "table";
-  } else if (scores.screen >= 2 && scores.screen >= scores.scheme) {
+  } else if (scores.screen >= 3 && scores.screen >= scores.scheme) {
     assetClass = "screen";
   } else if (scores.scheme >= 3) {
     assetClass = "scheme";

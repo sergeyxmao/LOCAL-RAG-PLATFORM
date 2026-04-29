@@ -1,3 +1,9 @@
+import { parseTagList } from "../utils/tags.js";
+
+function parseTags(value) {
+  return parseTagList(value);
+}
+
 export async function askRoutes(app) {
   app.post("/ask", async (request, reply) => {
     try {
@@ -17,13 +23,17 @@ export async function askRoutes(app) {
         engineeringTopic: body.engineeringTopic,
         signalTag: body.signalTag,
         documentId: body.documentId,
+        documentIds: body.documentIds,
+        selectedTags: parseTags(body.selectedTags ?? body.tags ?? body.categories),
+        nodeId: body.nodeId,
+        includeChildren: body.includeChildren,
       });
       return {
         ok: true,
         ...result,
       };
     } catch (error) {
-      reply.code(500);
+      reply.code(error.statusCode ?? 500);
       return {
         ok: false,
         error: error.message,
@@ -49,13 +59,17 @@ export async function askRoutes(app) {
         engineeringTopic: body.engineeringTopic,
         signalTag: body.signalTag,
         documentId: body.documentId,
+        documentIds: body.documentIds,
+        selectedTags: parseTags(body.selectedTags ?? body.tags ?? body.categories),
+        nodeId: body.nodeId,
+        includeChildren: body.includeChildren,
       });
       return {
         ok: true,
         ...result,
       };
     } catch (error) {
-      reply.code(500);
+      reply.code(error.statusCode ?? 500);
       return {
         ok: false,
         error: error.message,

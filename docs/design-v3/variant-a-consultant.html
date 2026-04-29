@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вариант A - Консультант</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brand-mark">LR</span><span>LOCAL-RAG-PLATFORM</span></a>
+      <nav class="main-nav">
+        <a class="nav-link active" href="variant-a-consultant.html">Консультант</a>
+        <a class="nav-link" href="variant-a-upload.html">Загрузка документов</a>
+        <a class="nav-link" href="variant-a-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch">
+        <a class="switch-link active" href="variant-a-consultant.html">A</a>
+        <a class="switch-link" href="variant-b-consultant.html">B</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workspace">
+        <aside class="left-rail">
+          <div class="rail-head">
+            <h2>Библиотека документов</h2>
+            <div class="meta-line"><span>1 284 документа</span><span>48 920 страниц</span></div>
+          </div>
+          <div class="rail-search">
+            <input class="input" value="metsoDNA CR функциональные блоки" aria-label="Поиск по библиотеке" />
+          </div>
+          <div class="doc-list">
+            <div class="doc-item active">
+              <div class="doc-title">2 Функциональные блоки / FB_AI_PID.pdf</div>
+              <div class="meta-line"><span class="status ok">выбран</span><span>PDF</span><span>326 стр.</span><span>signals</span></div>
+            </div>
+            <div class="doc-item active">
+              <div class="doc-title">Сигналы насосной станции.xlsx</div>
+              <div class="meta-line"><span class="status ok">выбран</span><span>XLSX</span><span>таблицы</span></div>
+            </div>
+            <div class="doc-item">
+              <div class="doc-title">Регламент диагностики контуров.docx</div>
+              <div class="meta-line"><span>DOCX</span><span>текст</span><span>АСУ ТП</span></div>
+            </div>
+            <div class="doc-item">
+              <div class="doc-title">Схемы подключения модулей DI.pdf</div>
+              <div class="meta-line"><span>PDF</span><span>scheme</span><span>72 стр.</span></div>
+            </div>
+            <div class="doc-item">
+              <div class="doc-title">Журнал изменений проекта.md</div>
+              <div class="meta-line"><span>MD</span><span>changelog</span></div>
+            </div>
+          </div>
+          <div class="rail-head">
+            <button class="btn soft" type="button">Выбрать все в папке</button>
+          </div>
+        </aside>
+
+        <section class="work-main">
+          <div class="query-bar">
+            <div class="field">
+              <label>Агент</label>
+              <select class="select">
+                <option>Инженер АСУ ТП</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Вопрос</label>
+              <textarea class="textarea">Какие сигналы участвуют в контуре регулирования расхода и где посмотреть таблицу уставок?</textarea>
+            </div>
+            <button class="btn primary" type="button">Спросить по базе</button>
+          </div>
+
+          <div class="consult-grid">
+            <div class="answer-column answer-only">
+              <article class="answer-sheet">
+                <h2>Ответ агента</h2>
+                <p>По найденным источникам контур расхода построен вокруг сигнала <span class="signal-code">FIC_204</span>. В цепочке участвуют измерение расхода <span class="signal-code">FI_204_PV</span>, управляющий выход <span class="signal-code">FIC_204_OUT</span>, режим автоматики <span class="signal-code">FIC_204_AUTO</span> и блокировка по минимальному давлению <span class="signal-code">PSL_118</span>.</p>
+                <table class="answer-table">
+                  <thead>
+                    <tr><th>Сигнал</th><th>Назначение</th><th>Источник</th><th>Действие</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><span class="signal-code">FI_204_PV</span></td><td>Текущее значение расхода</td><td>FB_AI_PID.pdf, стр. 42</td><td>Проверить масштабирование AI</td></tr>
+                    <tr><td><span class="signal-code">FIC_204_SP</span></td><td>Уставка регулятора</td><td>XLSX, лист Setpoints</td><td>Сверить с таблицей уставок</td></tr>
+                    <tr><td><span class="signal-code">FIC_204_OUT</span></td><td>Выход на исполнительный механизм</td><td>FB_AI_PID.pdf, стр. 76</td><td>Проверить ограничения min/max</td></tr>
+                  </tbody>
+                </table>
+                <p>Таблица уставок найдена в Excel-файле. Для проверки рядом указаны конкретные страницы PDF и строка таблицы, чтобы можно было быстро открыть первоисточник.</p>
+                <div class="filter-row">
+                  <span class="tag">#АСУТП</span>
+                  <span class="tag">#PID</span>
+                  <span class="tag">#signals</span>
+                  <span class="tag">#насосная_станция</span>
+                </div>
+              </article>
+            </div>
+
+            <aside class="work-main">
+              <section class="used-docs">
+                <div class="section-head" style="padding:0;border:0;">
+                  <h2>Документы, участвующие в ответе</h2>
+                </div>
+                <div class="doc-list" style="padding:0;">
+                  <div class="source-item">
+                    <div class="doc-title">FB_AI_PID.pdf</div>
+                    <div class="meta-line"><span class="status ok">4 фрагмента</span><span>стр. 42, 76, 118</span></div>
+                  </div>
+                  <div class="source-item">
+                    <div class="doc-title">Сигналы насосной станции.xlsx</div>
+                    <div class="meta-line"><span class="status ok">2 строки</span><span>таблица I/O</span></div>
+                  </div>
+                  <div class="source-item">
+                    <div class="doc-title">Регламент диагностики.docx</div>
+                    <div class="meta-line"><span>1 фрагмент</span><span>проверка датчика</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="source-strip">
+                <div class="section-head">
+                  <h2>Страницы и источники ответа</h2>
+                </div>
+                <div class="doc-list">
+                  <div class="source-item">
+                    <div class="doc-title">стр. 42 · signals</div>
+                    <p><mark>FI_204_PV</mark> связан с блоком масштабирования AI и передаётся в регулятор.</p>
+                    <div class="meta-line"><span>score 0.88</span><span>PDF</span></div>
+                  </div>
+                  <div class="source-item">
+                    <div class="doc-title">стр. 76 · scheme</div>
+                    <p>Выход регулятора ограничивается блоками min/max перед приводом клапана.</p>
+                    <div class="meta-line"><span>score 0.82</span><span>PDF-page</span></div>
+                  </div>
+                  <div class="source-item">
+                    <div class="doc-title">Setpoints · table</div>
+                    <p>Уставка <mark>FIC_204_SP</mark> указана в таблице технологических параметров.</p>
+                    <div class="meta-line"><span>score 0.79</span><span>XLSX</span></div>
+                  </div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

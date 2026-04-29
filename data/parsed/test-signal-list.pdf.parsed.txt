@@ -1,2 +1,0 @@
-PDF Page 1
-Список сигналов и тревог Signal list / Alarm list LIT-101 Уровень бака High-High alarm FIT-201 Расход сырья Low alarm P-201A Насос А Run status P-201B Насос Б Fault alarm TT-301 Температура Warning alarm Channel DI-104 Interlock input

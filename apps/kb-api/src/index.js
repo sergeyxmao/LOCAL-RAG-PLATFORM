@@ -16,7 +16,11 @@ import { settingsRoutes } from "./routes/settings.js";
 import { documentRoutes } from "./routes/documents.js";
 import { searchRoutes } from "./routes/search.js";
 import { askRoutes } from "./routes/ask.js";
+import { tagRoutes } from "./routes/tags.js";
 import { jobRoutes } from "./routes/jobs.js";
+import { nodeRoutes } from "./routes/nodes.js";
+import { adminRoutes } from "./routes/admin.js";
+import { uiStateRoutes } from "./routes/uiState.js";
 import { uiRoutes } from "./routes/ui.js";
 
 const app = Fastify({ logger: true });
@@ -32,6 +36,8 @@ const qdrantProvider = new QdrantProvider({
 const embeddingProvider = new OllamaEmbeddingProvider({
   baseUrl: appConfig.models.embedding.base_url,
   model: appConfig.models.embedding.model,
+  batchSize: Number(appConfig.models.embedding.batch_size || 8),
+  maxInputChars: Number(appConfig.models.embedding.max_input_chars || 400),
   unloadModels: [appConfig.models.chat.model],
 });
 const chatProvider = new OllamaChatProvider({
@@ -85,7 +91,11 @@ await app.register(settingsRoutes);
 await app.register(documentRoutes);
 await app.register(searchRoutes);
 await app.register(askRoutes);
+await app.register(tagRoutes);
 await app.register(jobRoutes);
+await app.register(nodeRoutes);
+await app.register(adminRoutes);
+await app.register(uiStateRoutes);
 await app.register(uiRoutes);
 
 app.addHook("onClose", async () => {

@@ -1,10 +1,118 @@
+import { createReadStream } from "node:fs";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import { analyzePdfPageAsset } from "../services/pageClassifierService.js";
+import { parseTagList } from "../utils/tags.js";
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  return ["1", "true", "yes", "on", "да"].includes(String(value).toLowerCase());
+}
+
+function parsePositiveInt(value, fallback, { min = 1, max = 100 } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function parseOcrMode(value) {
+  const normalized = String(value ?? "off").trim().toLowerCase();
+  return ["off", "try", "require"].includes(normalized) ? normalized : "off";
+}
+
+function parsePageSelection(value, totalPages, { maxPages = 20 } = {}) {
+  const safeTotal = Math.max(0, Number(totalPages || 0));
+  const safeMax = Math.max(1, Math.min(100, Number(maxPages || 20)));
+  const addPage = (set, page) => {
+    if (Number.isInteger(page) && page >= 1 && (safeTotal === 0 || page <= safeTotal)) {
+      set.add(page);
+    }
+  };
+
+  if (Array.isArray(value)) {
+    const set = new Set();
+    value.forEach((item) => addPage(set, Number(item)));
+    return Array.from(set).sort((a, b) => a - b).slice(0, safeMax);
+  }
+
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) {
+    return Array.from({ length: Math.min(safeTotal || 5, Math.min(5, safeMax)) }, (_, index) => index + 1);
+  }
+  if (["all", "все", "*"].includes(raw)) {
+    return Array.from({ length: Math.min(safeTotal, safeMax) }, (_, index) => index + 1);
+  }
+
+  const set = new Set();
+  for (const part of raw.split(",")) {
+    const chunk = part.trim();
+    if (!chunk) {
+      continue;
+    }
+
+    const range = chunk.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      const min = Math.min(start, end);
+      const max = Math.max(start, end);
+      for (let page = min; page <= max && set.size < safeMax; page += 1) {
+        addPage(set, page);
+      }
+      continue;
+    }
+
+    addPage(set, Number(chunk));
+  }
+
+  return Array.from(set).sort((a, b) => a - b).slice(0, safeMax);
+}
 
 function mimeTypeForAsset(fileName) {
   const ext = path.extname(fileName).toLowerCase();
+  if (ext === ".png") {
+    return "image/png";
+  }
+  if (ext === ".jpg" || ext === ".jpeg") {
+    return "image/jpeg";
+  }
+  return "application/octet-stream";
+}
+
+function mimeTypeForDocument(fileName) {
+  const ext = path.extname(fileName).toLowerCase();
+  if (ext === ".pdf") {
+    return "application/pdf";
+  }
+  if (ext === ".txt" || ext === ".md") {
+    return "text/plain; charset=utf-8";
+  }
+  if (ext === ".csv") {
+    return "text/csv; charset=utf-8";
+  }
+  if (ext === ".docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (ext === ".xlsx") {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  if (ext === ".xls") {
+    return "application/vnd.ms-excel";
+  }
   if (ext === ".png") {
     return "image/png";
   }
@@ -23,29 +131,190 @@ function sanitizeFileName(name) {
     .slice(0, 160);
 }
 
+function contentDispositionFileName(name) {
+  const fallback = sanitizeFileName(name || "document") || "document";
+  const asciiFallback = fallback.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
+  return `inline; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(name || fallback)}`;
+}
+
+async function resolveOriginalDocumentFile(app, document) {
+  const originalPath = String(document.original_file_path || "");
+  if (!originalPath || path.isAbsolute(originalPath)) {
+    throw new Error("Исходный файл документа недоступен");
+  }
+
+  const normalized = path.normalize(originalPath);
+  if (normalized.startsWith("..") || normalized.includes(`..${path.sep}`)) {
+    throw new Error("Недопустимый путь к исходному файлу");
+  }
+
+  const rawRoot = path.resolve(app.config.rawRoot);
+  const fullPath = path.resolve(rawRoot, normalized);
+  const [rootRealPath, fileRealPath] = await Promise.all([
+    fs.realpath(rawRoot),
+    fs.realpath(fullPath),
+  ]);
+
+  const relativeToRoot = path.relative(rootRealPath, fileRealPath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    throw new Error("Файл находится вне рабочей папки data/raw");
+  }
+
+  const stat = await fs.stat(fileRealPath);
+  if (!stat.isFile()) {
+    throw new Error("Исходный файл документа не найден");
+  }
+
+  return fileRealPath;
+}
+
+function joinHostRawPath(hostRawRoot, relativePath) {
+  const cleanParts = String(relativePath || "")
+    .split(/[\\/]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (!hostRawRoot || cleanParts.length === 0) {
+    return null;
+  }
+
+  const usesWindowsPath = /^[a-zA-Z]:[\\/]/.test(hostRawRoot) || hostRawRoot.includes("\\");
+  return usesWindowsPath
+    ? path.win32.join(hostRawRoot, ...cleanParts)
+    : path.join(hostRawRoot, ...cleanParts);
+}
+
+function signLocalOpenToken(app, payload) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", app.config.localOpen.tokenSecret)
+    .update(encodedPayload)
+    .digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+
+function buildLocalOpenContract(app, document, containerFilePath) {
+  const relativePath = String(document.original_file_path || "");
+  const hostPath = joinHostRawPath(app.config.hostRawRoot, relativePath) || containerFilePath;
+  const expiresAt = new Date(
+    Date.now() + Math.max(5, Number(app.config.localOpen.tokenTtlSeconds || 30)) * 1000
+  ).toISOString();
+  const token = signLocalOpenToken(app, {
+    documentId: document.id,
+    path: hostPath,
+    exp: expiresAt,
+  });
+
+  return {
+    helperUrl: app.config.localOpen.helperUrl,
+    helper_url: app.config.localOpen.helperUrl,
+    token,
+    path: hostPath,
+    expiresAt,
+  };
+}
+
 function parseCategories(rawValue) {
   if (!rawValue) {
     return [];
   }
 
   if (Array.isArray(rawValue)) {
-    return rawValue;
+    return parseTagList(rawValue);
   }
 
   try {
     const normalized = String(rawValue).replace(/\\"/g, '"');
     const parsed = JSON.parse(normalized);
     if (Array.isArray(parsed)) {
-      return parsed;
+      return parseTagList(parsed);
     }
   } catch (error) {
     // Ignore and fall back to comma-separated parsing.
   }
 
-  return String(rawValue)
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return parseTagList(rawValue);
+}
+
+function parseUuidArray(rawValue, fieldName, label) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return [];
+  }
+
+  let values = rawValue;
+  if (typeof rawValue === "string") {
+    try {
+      values = JSON.parse(rawValue);
+    } catch (error) {
+      values = rawValue.split(",");
+    }
+  }
+
+  if (!Array.isArray(values)) {
+    throw Object.assign(new Error(`${fieldName} должен быть массивом UUID`), {
+      statusCode: 400,
+    });
+  }
+
+  const ids = Array.from(
+    new Set(values.map((item) => String(item ?? "").trim()).filter(Boolean))
+  );
+  const invalidId = ids.find((id) => !isUuid(id));
+  if (invalidId) {
+    throw Object.assign(new Error(`Некорректный UUID ${label}: ${invalidId}`), {
+      statusCode: 400,
+    });
+  }
+
+  return ids;
+}
+
+function parseNodeIds(rawValue) {
+  return parseUuidArray(rawValue, "nodeIds", "раздела");
+}
+
+function parseDocumentIds(rawValue) {
+  return parseUuidArray(rawValue, "documentIds", "документа");
+}
+
+function parsePrimaryNodeId(body = {}) {
+  const rawValue = Object.prototype.hasOwnProperty.call(body, "primaryNodeId")
+    ? body.primaryNodeId
+    : body.primary;
+
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return null;
+  }
+
+  const primaryNodeId = String(rawValue).trim();
+  if (!isUuid(primaryNodeId)) {
+    throw Object.assign(new Error("primaryNodeId должен быть UUID раздела"), {
+      statusCode: 400,
+    });
+  }
+
+  return primaryNodeId;
+}
+
+function assertImportNodeIdsAllowed(app, nodeIds) {
+  if (
+    app.config.knowledgeNodes.requireNodeIdsForImport === true &&
+    (!Array.isArray(nodeIds) || nodeIds.length === 0)
+  ) {
+    throw Object.assign(new Error("Выберите раздел базы перед импортом документа"), {
+      statusCode: 400,
+    });
+  }
+}
+
+function normalizeImportPayload(app, body = {}) {
+  const nodeIds = parseNodeIds(body.nodeIds);
+  assertImportNodeIdsAllowed(app, nodeIds);
+  return {
+    ...body,
+    nodeIds,
+    primaryNodeId: parsePrimaryNodeId(body),
+  };
 }
 
 function localizePageTitle(value) {
@@ -137,6 +406,100 @@ function summarizeSignalTags(items, limit = 20) {
     .slice(0, limit);
 }
 
+function mapDocumentRow(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    sourceType: row.source_type,
+    originalFileName: row.original_file_name,
+    originalFilePath: row.original_file_path,
+    categories: row.categories,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    chunkCount: Number(row.chunk_count || 0),
+    pageCount: Number(row.page_count || 0),
+  };
+}
+
+function mapNodeLinkRow(row) {
+  return {
+    documentId: row.document_id,
+    nodeId: row.node_id,
+    isPrimary: row.is_primary,
+    linkedAt: row.linked_at,
+    node: {
+      id: row.node_id,
+      parentId: row.parent_id,
+      name: row.name,
+      typeLabel: row.type_label,
+      color: row.color,
+      sortOrder: Number(row.sort_order ?? 0),
+      isActive: row.is_active,
+      isSystem: row.is_system,
+      description: row.description,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    },
+  };
+}
+
+function handleDocumentNodeError(reply, error) {
+  if (error.statusCode) {
+    reply.code(error.statusCode);
+    return {
+      ok: false,
+      error: error.message,
+    };
+  }
+
+  if (error.code === "DOCUMENT_NOT_FOUND") {
+    reply.code(404);
+    return {
+      ok: false,
+      error: error.message,
+    };
+  }
+
+  if (error.code === "NODE_NOT_FOUND") {
+    reply.code(400);
+    return {
+      ok: false,
+      error: error.message,
+      details: error.details ?? undefined,
+    };
+  }
+
+  if (error.code === "TARGET_NODE_NOT_FOUND") {
+    reply.code(500);
+    return {
+      ok: false,
+      error: error.message,
+    };
+  }
+
+  if (error.code === "22P02") {
+    reply.code(400);
+    return {
+      ok: false,
+      error: "Некорректный UUID",
+    };
+  }
+
+  throw error;
+}
+
+async function updateDocumentNodePayload(app, documentId) {
+  const payload = await app.postgresProvider.buildDocumentNodePayload(documentId);
+  const pointIds = await app.postgresProvider.getDocumentPointIds(documentId);
+  await app.qdrantProvider.setPayload(pointIds, payload);
+
+  return {
+    payload,
+    updatedPoints: pointIds.length,
+  };
+}
+
 function groupDuplicateRows(rows) {
   const groups = new Map();
 
@@ -180,9 +543,42 @@ function runDetached(task) {
 }
 
 export async function documentRoutes(app) {
-  app.get("/documents", async () => {
+  app.get("/documents", async (request, reply) => {
+    const nodeId = String(request.query?.nodeId ?? "").trim();
+    if (nodeId) {
+      if (!isUuid(nodeId)) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Некорректный UUID раздела",
+        };
+      }
+
+      const includeChildren = parseBoolean(request.query?.includeChildren, true);
+      const documents = await app.postgresProvider.listDocumentsForKnowledgeNode(nodeId, {
+        includeChildren,
+        limit: request.query?.limit,
+      });
+      if (!documents) {
+        reply.code(404);
+        return {
+          ok: false,
+          error: "Раздел не найден",
+        };
+      }
+
+      return {
+        ok: true,
+        nodeId,
+        includeChildren,
+        items: documents,
+      };
+    }
+
     return {
-      items: await app.postgresProvider.listDocuments(),
+      items: await app.postgresProvider.listDocuments({
+        limit: request.query?.limit,
+      }),
     };
   });
 
@@ -198,6 +594,355 @@ export async function documentRoutes(app) {
       totalDocuments: rows.length,
       groups,
     };
+  });
+
+  app.post("/documents/bulk-link", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const documentIds = parseDocumentIds(body.documentIds);
+      const nodeIds = parseNodeIds(body.nodeIds);
+      const mode = String(body.mode ?? "add");
+
+      if (documentIds.length === 0) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Выберите документы для привязки",
+        };
+      }
+      if (nodeIds.length === 0) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Выберите разделы для привязки",
+        };
+      }
+      if (!["add", "replace"].includes(mode)) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "mode должен быть add или replace",
+        };
+      }
+
+      const results = [];
+      for (const documentId of documentIds) {
+        const links =
+          mode === "replace"
+            ? await app.postgresProvider.replaceDocumentNodeLinks(documentId, {
+                nodeIds,
+                primaryNodeId: parsePrimaryNodeId(body),
+              })
+            : await app.postgresProvider.addDocumentNodeLinks(documentId, {
+                nodeIds,
+                primaryNodeId: parsePrimaryNodeId(body),
+              });
+        const reindex = await updateDocumentNodePayload(app, documentId);
+        results.push({
+          documentId,
+          links: links.map((row) => mapNodeLinkRow(row)),
+          updatedPoints: reindex.updatedPoints,
+          payload: reindex.payload,
+        });
+      }
+
+      return {
+        ok: true,
+        mode,
+        updatedDocuments: results.length,
+        items: results,
+      };
+    } catch (error) {
+      return handleDocumentNodeError(reply, error);
+    }
+  });
+
+  app.post("/documents/bulk-unlink", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const documentIds = parseDocumentIds(body.documentIds);
+      const nodeIds = parseNodeIds(body.nodeIds);
+
+      if (documentIds.length === 0) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Выберите документы для отвязки",
+        };
+      }
+      if (nodeIds.length === 0) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Выберите разделы для отвязки",
+        };
+      }
+
+      const results = [];
+      for (const documentId of documentIds) {
+        let links = [];
+        for (const nodeId of nodeIds) {
+          links = await app.postgresProvider.unlinkDocumentNode(documentId, nodeId);
+        }
+        const reindex = await updateDocumentNodePayload(app, documentId);
+        results.push({
+          documentId,
+          links: links.map((row) => mapNodeLinkRow(row)),
+          updatedPoints: reindex.updatedPoints,
+          payload: reindex.payload,
+        });
+      }
+
+      return {
+        ok: true,
+        updatedDocuments: results.length,
+        items: results,
+      };
+    } catch (error) {
+      return handleDocumentNodeError(reply, error);
+    }
+  });
+
+  app.patch("/documents/:id", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    if (!document) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Документ не найден",
+      };
+    }
+
+    const hasTitle = Object.prototype.hasOwnProperty.call(request.body ?? {}, "title");
+    const hasCategories = Object.prototype.hasOwnProperty.call(request.body ?? {}, "categories");
+    const title = String(request.body?.title ?? "").trim();
+    if (hasTitle && !title) {
+      reply.code(400);
+      return {
+        ok: false,
+        error: "Введите новое название документа",
+      };
+    }
+
+    let updatedDocument = document;
+    if (hasTitle) {
+      updatedDocument = await app.postgresProvider.updateDocumentTitle(document.id, title);
+    }
+    if (hasCategories) {
+      const categories = parseCategories(request.body?.categories);
+      updatedDocument = await app.postgresProvider.updateDocumentCategories(
+        document.id,
+        categories
+      );
+      const pointIds = await app.postgresProvider.getDocumentPointIds(document.id);
+      try {
+        await app.qdrantProvider.setPayload(pointIds, { categories });
+      } catch (error) {
+        request.log.warn(
+          { documentId: document.id, error: error.message },
+          "Document categories saved in PostgreSQL, but Qdrant payload update failed"
+        );
+        return {
+          ok: true,
+          document: mapDocumentRow(updatedDocument),
+          qdrantSync: {
+            ok: false,
+            expectedPoints: pointIds.length,
+            error:
+              "Теги сохранены в PostgreSQL, но Qdrant сейчас недоступен. Payload обновится после восстановления Qdrant.",
+            details: error.message,
+          },
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      document: mapDocumentRow(updatedDocument),
+      qdrantSync: hasCategories
+        ? {
+            ok: true,
+            message: "Payload Qdrant обновлён.",
+          }
+        : null,
+    };
+  });
+
+  app.delete("/documents/:id", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    if (!document) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Документ не найден",
+      };
+    }
+
+    const pointIds = await app.postgresProvider.getDocumentPointIds(document.id);
+    await app.qdrantProvider.deletePoints(pointIds);
+    const removedDocuments = await app.postgresProvider.deleteDocumentsByIds([document.id]);
+    let removedStoredFile = false;
+    const shouldRemoveStoredFile = String(request.query?.removeStoredFile ?? "") === "true";
+    const storedRelativePath = String(document.original_file_path || "");
+    if (shouldRemoveStoredFile && /^\d+-[^/\\]+$/.test(storedRelativePath)) {
+      try {
+        await fs.rm(path.join(app.config.rawRoot, storedRelativePath), { force: true });
+        removedStoredFile = true;
+      } catch (error) {
+        app.log.warn({ error, documentId: document.id }, "failed to remove uploaded raw file");
+      }
+    }
+
+    return {
+      ok: true,
+      document: mapDocumentRow(document),
+      removedDocuments,
+      removedVectors: pointIds.length,
+      removedStoredFile,
+    };
+  });
+
+  app.get("/documents/:id/nodes", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    if (!document) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Документ не найден",
+      };
+    }
+
+    const links = await app.postgresProvider.listDocumentNodeLinks(document.id);
+    const payload = await app.postgresProvider.buildDocumentNodePayload(document.id);
+
+    return {
+      ok: true,
+      document: mapDocumentRow(document),
+      links: links.map((row) => mapNodeLinkRow(row)),
+      payload,
+      implicitUnsorted: links.length === 0,
+    };
+  });
+
+  app.post("/documents/:id/nodes", async (request, reply) => {
+    try {
+      const document = await app.postgresProvider.getDocumentById(request.params.id);
+      if (!document) {
+        reply.code(404);
+        return {
+          ok: false,
+          error: "Документ не найден",
+        };
+      }
+
+      const links = await app.postgresProvider.addDocumentNodeLinks(document.id, {
+        nodeIds: parseNodeIds(request.body?.nodeIds),
+        primaryNodeId: parsePrimaryNodeId(request.body ?? {}),
+      });
+      const reindex = await updateDocumentNodePayload(app, document.id);
+
+      return {
+        ok: true,
+        mode: "add",
+        document: mapDocumentRow(document),
+        links: links.map((row) => mapNodeLinkRow(row)),
+        updatedPoints: reindex.updatedPoints,
+        payload: reindex.payload,
+      };
+    } catch (error) {
+      return handleDocumentNodeError(reply, error);
+    }
+  });
+
+  app.patch("/documents/:id/nodes", async (request, reply) => {
+    try {
+      const document = await app.postgresProvider.getDocumentById(request.params.id);
+      if (!document) {
+        reply.code(404);
+        return {
+          ok: false,
+          error: "Документ не найден",
+        };
+      }
+
+      const links = await app.postgresProvider.replaceDocumentNodeLinks(document.id, {
+        nodeIds: parseNodeIds(request.body?.nodeIds),
+        primaryNodeId: parsePrimaryNodeId(request.body ?? {}),
+      });
+      const reindex = await updateDocumentNodePayload(app, document.id);
+
+      return {
+        ok: true,
+        mode: "replace",
+        document: mapDocumentRow(document),
+        links: links.map((row) => mapNodeLinkRow(row)),
+        updatedPoints: reindex.updatedPoints,
+        payload: reindex.payload,
+      };
+    } catch (error) {
+      return handleDocumentNodeError(reply, error);
+    }
+  });
+
+  app.delete("/documents/:id/nodes/:nodeId", async (request, reply) => {
+    try {
+      if (!isUuid(request.params.nodeId)) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Некорректный UUID раздела",
+        };
+      }
+
+      const document = await app.postgresProvider.getDocumentById(request.params.id);
+      if (!document) {
+        reply.code(404);
+        return {
+          ok: false,
+          error: "Документ не найден",
+        };
+      }
+
+      const links = await app.postgresProvider.unlinkDocumentNode(
+        document.id,
+        request.params.nodeId
+      );
+      const reindex = await updateDocumentNodePayload(app, document.id);
+
+      return {
+        ok: true,
+        document: mapDocumentRow(document),
+        links: links.map((row) => mapNodeLinkRow(row)),
+        updatedPoints: reindex.updatedPoints,
+        payload: reindex.payload,
+      };
+    } catch (error) {
+      return handleDocumentNodeError(reply, error);
+    }
+  });
+
+  app.post("/documents/:id/reindex-payload", async (request, reply) => {
+    try {
+      const document = await app.postgresProvider.getDocumentById(request.params.id);
+      if (!document) {
+        reply.code(404);
+        return {
+          ok: false,
+          error: "Документ не найден",
+        };
+      }
+
+      const reindex = await updateDocumentNodePayload(app, document.id);
+
+      return {
+        ok: true,
+        document: mapDocumentRow(document),
+        updatedPoints: reindex.updatedPoints,
+        payload: reindex.payload,
+      };
+    } catch (error) {
+      return handleDocumentNodeError(reply, error);
+    }
   });
 
   app.post("/documents/deduplicate", async (request) => {
@@ -237,6 +982,65 @@ export async function documentRoutes(app) {
     return {
       items: await app.postgresProvider.getDocumentChunks(request.params.id),
     };
+  });
+
+  app.get("/documents/:id/original", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    if (!document) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Документ не найден",
+      };
+    }
+
+    try {
+      const filePath = await resolveOriginalDocumentFile(app, document);
+      const fileName = document.original_file_name || path.basename(filePath);
+      reply.header("Content-Type", mimeTypeForDocument(fileName));
+      reply.header("Content-Disposition", contentDispositionFileName(fileName));
+      return reply.send(createReadStream(filePath));
+    } catch (error) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: error.message,
+      };
+    }
+  });
+
+  app.post("/documents/:id/open-local", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    const fallbackUrl = `/documents/${encodeURIComponent(request.params.id)}/original`;
+    if (!document) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Документ не найден",
+      };
+    }
+
+    try {
+      const filePath = await resolveOriginalDocumentFile(app, document);
+      const helper = buildLocalOpenContract(app, document, filePath);
+
+      return {
+        ok: true,
+        opened: false,
+        mode: "local-helper",
+        ...helper,
+        fallbackUrl,
+        message:
+          "Для открытия в Windows-приложении отправьте token и path в локальный helper. Если helper не установлен, откройте полный файл через браузер.",
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        opened: false,
+        fallbackUrl,
+        error: error.message,
+      };
+    }
   });
 
   app.get("/documents/:id/assets", async (request, reply) => {
@@ -366,7 +1170,7 @@ export async function documentRoutes(app) {
         asset.page_number,
         {
           ...classification,
-          classifierVersion: "v2",
+          classifierVersion: "v3",
         }
       );
 
@@ -416,6 +1220,144 @@ export async function documentRoutes(app) {
       ),
       assets: updates,
     };
+  });
+
+  app.post("/documents/:id/rebuild-visual-assets", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    if (!document) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Документ не найден",
+      };
+    }
+
+    if (document.source_type !== "pdf") {
+      reply.code(400);
+      return {
+        ok: false,
+        error: "Точечный preview/OCR сейчас поддерживается только для PDF-документов",
+      };
+    }
+
+    const body = request.body ?? {};
+    const maxPages = parsePositiveInt(body.maxPages ?? request.query?.maxPages, 20, {
+      min: 1,
+      max: 100,
+    });
+    const createPreview = parseBoolean(body.createPreview ?? request.query?.createPreview, true);
+    const ocrMode = parseOcrMode(body.ocrMode ?? request.query?.ocrMode);
+
+    try {
+      const fullPath = await resolveOriginalDocumentFile(app, document);
+      const extracted = await app.extractorService.extractFromFile(
+        fullPath,
+        document.original_file_path
+      );
+      const totalPages = Array.isArray(extracted.pageTexts) ? extracted.pageTexts.length : 0;
+      const pages = parsePageSelection(body.pages ?? request.query?.pages, totalPages, {
+        maxPages,
+      });
+
+      if (pages.length === 0) {
+        reply.code(400);
+        return {
+          ok: false,
+          error: "Не удалось определить страницы для обработки",
+        };
+      }
+
+      const visualAssets = await app.visualAssetService.extractTargetedPdfPageAssets({
+        fullPath,
+        documentId: document.id,
+        title: document.title,
+        pageTexts: extracted.pageTexts,
+        pages,
+        createPreview,
+        ocrMode,
+      });
+
+      const preparedItems = (visualAssets.items ?? []).map((item) => {
+        const classification = analyzePdfPageAsset({
+          pageNumber: item.page,
+          title: item.title,
+          text: item.text,
+        });
+
+        return {
+          ...item,
+          assetClass: classification.assetClass,
+          confidence: classification.confidence,
+          engineeringTopics: classification.engineeringTopics,
+          signalTags: classification.signalTags,
+          scores: classification.scores,
+          classifierVersion: "v3",
+        };
+      });
+
+      const upsertedAssets = [];
+      for (const item of preparedItems) {
+        const asset = await app.postgresProvider.upsertDocumentAsset(document.id, item);
+        if (asset) {
+          upsertedAssets.push(asset);
+        }
+      }
+
+      const nodePayload = await app.postgresProvider.buildDocumentNodePayload(document.id);
+      if (upsertedAssets.length > 0) {
+        await app.ingestionService.embedAndUpsertRecords({
+          records: upsertedAssets,
+          totalItems: upsertedAssets.length,
+          progressLabel: "Индексирование PDF-страниц",
+          getText: (asset) =>
+            `${asset.title ?? document.title}\n\n${asset.text_content ?? asset.text_excerpt ?? ""}`.trim(),
+          buildPayload: (asset) => ({
+            document_id: document.id,
+            asset_id: asset.id,
+            resource_type: "asset",
+            asset_type: asset.asset_type,
+            page_number: asset.page_number,
+            chunk_index: asset.page_number ? asset.page_number - 1 : 0,
+            title: asset.title ?? document.title,
+            asset_class: asset.metadata_json?.assetClass ?? null,
+            asset_confidence: asset.metadata_json?.confidence ?? null,
+            engineering_topics: asset.metadata_json?.engineeringTopics ?? [],
+            signal_tags: asset.metadata_json?.signalTags ?? [],
+            text: asset.text_excerpt ?? "",
+            context: `PDF-страница ${asset.page_number ?? ""}`.trim(),
+            text_with_context: `${asset.title ?? document.title}\n\n${asset.text_content ?? asset.text_excerpt ?? ""}`.trim(),
+            categories: document.categories ?? [],
+            source_path: document.original_file_path,
+            file_name: asset.file_name,
+            relative_path: asset.relative_path,
+            mime_type: asset.mime_type,
+            ...nodePayload,
+          }),
+        });
+      }
+
+      const items = buildAssetItems(document.id, upsertedAssets, visualAssets);
+      return {
+        ok: true,
+        documentId: document.id,
+        title: document.title,
+        pages,
+        totalPages,
+        createPreview,
+        ocrMode,
+        updated: upsertedAssets.length,
+        byType: summarizeAssetClasses(items),
+        byTopic: summarizeEngineeringTopics(items),
+        bySignalTag: summarizeSignalTags(items),
+        items,
+      };
+    } catch (error) {
+      reply.code(500);
+      return {
+        ok: false,
+        error: error.message,
+      };
+    }
   });
 
   app.get("/documents/:id/assets/:fileName", async (request, reply) => {
@@ -534,11 +1476,18 @@ export async function documentRoutes(app) {
 
       const title = file.fields?.title?.value || originalName;
       const categories = parseCategories(file.fields?.categories?.value);
+      const nodeIds = parseNodeIds(file.fields?.nodeIds?.value);
+      assertImportNodeIdsAllowed(app, nodeIds);
+      const primaryNodeId = parsePrimaryNodeId({
+        primaryNodeId: file.fields?.primaryNodeId?.value,
+      });
 
       const result = await app.ingestionService.ingestFileFromRaw({
         relativePath: storedRelativePath,
         title,
         categories,
+        nodeIds,
+        primaryNodeId,
       });
 
       return {
@@ -559,7 +1508,9 @@ export async function documentRoutes(app) {
 
   app.post("/documents/ingest-file", async (request, reply) => {
     try {
-      const result = await app.ingestionService.ingestFileFromRaw(request.body ?? {});
+      const result = await app.ingestionService.ingestFileFromRaw(
+        normalizeImportPayload(app, request.body ?? {})
+      );
       return {
         ok: true,
         mode: "file",
@@ -576,7 +1527,7 @@ export async function documentRoutes(app) {
 
   app.post("/documents/ingest-file-async", async (request, reply) => {
     try {
-      const payload = request.body ?? {};
+      const payload = normalizeImportPayload(app, request.body ?? {});
       runDetached(async () => {
         await app.ingestionService.ingestFileFromRaw(payload);
       });
@@ -601,7 +1552,9 @@ export async function documentRoutes(app) {
 
   app.post("/documents/ingest-folder", async (request, reply) => {
     try {
-      const result = await app.ingestionService.ingestFolderFromRaw(request.body ?? {});
+      const result = await app.ingestionService.ingestFolderFromRaw(
+        normalizeImportPayload(app, request.body ?? {})
+      );
       return {
         ok: true,
         mode: "folder",
@@ -618,7 +1571,7 @@ export async function documentRoutes(app) {
 
   app.post("/documents/ingest-folder-async", async (request, reply) => {
     try {
-      const payload = request.body ?? {};
+      const payload = normalizeImportPayload(app, request.body ?? {});
       runDetached(async () => {
         await app.ingestionService.ingestFolderFromRaw(payload);
       });
@@ -643,7 +1596,7 @@ export async function documentRoutes(app) {
 
   app.post("/documents/ingest-text", async (request, reply) => {
     try {
-      const body = request.body ?? {};
+      const body = normalizeImportPayload(app, request.body ?? {});
       const result = await app.ingestionService.ingestTextDocument(body);
       return {
         ok: true,

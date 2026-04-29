@@ -1,0 +1,1303 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Эскизы интерфейса LOCAL RAG</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef2f5;
+      --surface: #ffffff;
+      --surface-soft: #f7f9fb;
+      --ink: #1e2933;
+      --muted: #637282;
+      --line: #d7e0e8;
+      --blue: #1f6fb2;
+      --blue-soft: #e6f1fb;
+      --green: #1f8a62;
+      --green-soft: #e6f6ef;
+      --amber: #a66714;
+      --amber-soft: #fff3db;
+      --red: #b23b3b;
+      --red-soft: #fbe8e8;
+      --violet: #7057a8;
+      --violet-soft: #f0edfa;
+      --shadow: 0 12px 28px rgba(24, 39, 55, 0.09);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    .page {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 20px;
+      align-items: stretch;
+      margin-bottom: 20px;
+    }
+
+    .intro-main,
+    .intro-side,
+    .mockup {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .intro-main {
+      padding: 24px;
+    }
+
+    .intro-side {
+      padding: 18px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+      font-size: 30px;
+      line-height: 1.15;
+      font-weight: 680;
+    }
+
+    h2 {
+      margin-bottom: 14px;
+      font-size: 22px;
+      line-height: 1.2;
+      font-weight: 670;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+      line-height: 1.3;
+      font-weight: 650;
+    }
+
+    p {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .note-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .note-list li {
+      padding-left: 16px;
+      position: relative;
+    }
+
+    .note-list li::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      position: absolute;
+      left: 0;
+      top: 0.65em;
+      background: var(--blue);
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .tag {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 5px 8px;
+      color: var(--muted);
+      background: var(--surface-soft);
+      font-size: 13px;
+    }
+
+    .section {
+      margin-top: 22px;
+    }
+
+    .mockup {
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .mockup-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    }
+
+    .mockup-header p {
+      margin-bottom: 0;
+      max-width: 820px;
+    }
+
+    .variant-label {
+      flex: 0 0 auto;
+      align-self: start;
+      border-radius: 6px;
+      padding: 7px 10px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-weight: 650;
+      font-size: 13px;
+    }
+
+    .app-frame {
+      display: grid;
+      min-height: 650px;
+      background: #f3f6f9;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 58px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-weight: 700;
+    }
+
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      background: #214f7a;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .status-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      flex: 0 0 auto;
+    }
+
+    .dot.warn {
+      background: var(--amber);
+    }
+
+    .dot.bad {
+      background: var(--red);
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 6px;
+      min-height: 36px;
+      padding: 8px 12px;
+      color: #ffffff;
+      background: var(--blue);
+      cursor: default;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .btn.secondary {
+      color: var(--ink);
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .btn.warn {
+      color: #482900;
+      background: var(--amber-soft);
+      border: 1px solid #e5c17e;
+    }
+
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      padding: 16px 12px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 38px;
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: var(--muted);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .nav-item.active {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .nav-icon {
+      width: 22px;
+      text-align: center;
+      color: inherit;
+    }
+
+    .content {
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .panel.pad {
+      padding: 16px;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-soft);
+    }
+
+    .panel-title {
+      margin: 0;
+      font-size: 15px;
+      color: var(--ink);
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .input,
+    .select,
+    .textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--ink);
+      padding: 10px 11px;
+    }
+
+    .textarea {
+      min-height: 118px;
+      resize: none;
+      line-height: 1.45;
+    }
+
+    .filter-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .answer-box {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+    }
+
+    .answer-text {
+      min-height: 128px;
+      border-left: 3px solid var(--blue);
+      padding-left: 12px;
+      line-height: 1.55;
+      color: #24313d;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .source {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--surface);
+    }
+
+    .source strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .source p {
+      margin-bottom: 0;
+      font-size: 13px;
+    }
+
+    .meta-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 6px;
+      padding: 3px 7px;
+      background: var(--surface-soft);
+      border: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .chip.blue {
+      color: var(--blue);
+      background: var(--blue-soft);
+      border-color: #c7def3;
+    }
+
+    .chip.green {
+      color: var(--green);
+      background: var(--green-soft);
+      border-color: #c4ead9;
+    }
+
+    .chip.amber {
+      color: var(--amber);
+      background: var(--amber-soft);
+      border-color: #e8cd94;
+    }
+
+    .chip.violet {
+      color: var(--violet);
+      background: var(--violet-soft);
+      border-color: #d8cef1;
+    }
+
+    .doc-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 98px 110px;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .doc-row:last-child {
+      border-bottom: 0;
+    }
+
+    .doc-name {
+      min-width: 0;
+      font-weight: 650;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .doc-sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .progress {
+      height: 8px;
+      border-radius: 6px;
+      background: #e4ebf1;
+      overflow: hidden;
+    }
+
+    .progress span {
+      display: block;
+      height: 100%;
+      background: var(--blue);
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--surface);
+    }
+
+    .metric-value {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 22px;
+      font-weight: 750;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .preview-page {
+      aspect-ratio: 4 / 5.3;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(#ffffff, #ffffff) padding-box,
+        repeating-linear-gradient(0deg, #d8e2ea 0 1px, transparent 1px 18px);
+      padding: 16px;
+      overflow: hidden;
+    }
+
+    .preview-title {
+      height: 18px;
+      width: 72%;
+      border-radius: 3px;
+      background: #cbd9e5;
+      margin-bottom: 14px;
+    }
+
+    .preview-line {
+      height: 8px;
+      border-radius: 3px;
+      background: #dce5ed;
+      margin-bottom: 9px;
+    }
+
+    .preview-line.short {
+      width: 64%;
+    }
+
+    .table-preview {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .table-preview div {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr) 90px;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    .table-preview div:last-child {
+      border-bottom: 0;
+    }
+
+    .table-preview .head {
+      color: var(--muted);
+      background: var(--surface-soft);
+      font-weight: 650;
+    }
+
+    .drop-zone {
+      display: grid;
+      place-items: center;
+      min-height: 170px;
+      border: 2px dashed #b9cad8;
+      border-radius: 8px;
+      background: #f8fbfd;
+      text-align: center;
+      padding: 18px;
+    }
+
+    .drop-zone strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+
+    .drop-zone p {
+      margin-bottom: 0;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--surface);
+    }
+
+    .step-no {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      color: #ffffff;
+      background: var(--blue);
+      font-weight: 700;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .variant-a .app-frame {
+      grid-template-columns: 210px minmax(0, 1fr);
+      grid-template-rows: 58px minmax(0, 1fr);
+    }
+
+    .variant-a .topbar {
+      grid-column: 1 / -1;
+    }
+
+    .variant-a .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+      gap: 14px;
+    }
+
+    .variant-a .main-stack,
+    .variant-a .side-stack {
+      display: grid;
+      align-content: start;
+      gap: 14px;
+    }
+
+    .variant-b .app-frame {
+      grid-template-rows: 58px minmax(0, 1fr);
+    }
+
+    .variant-b .library-grid {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr) 340px;
+      gap: 14px;
+    }
+
+    .variant-b .search-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 140px 120px;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .variant-c .app-frame {
+      grid-template-rows: 58px minmax(0, 1fr);
+    }
+
+    .variant-c .ingest-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 14px;
+    }
+
+    .variant-c .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .mode-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--surface);
+    }
+
+    .mode-card.active {
+      border-color: #9bc7eb;
+      background: var(--blue-soft);
+    }
+
+    .variant-d .app-frame {
+      grid-template-rows: 58px minmax(0, 1fr);
+    }
+
+    .variant-d .focus {
+      display: grid;
+      align-content: start;
+      gap: 14px;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .command {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px;
+      gap: 10px;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .compact-source {
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 10px;
+    }
+
+    .thumb {
+      aspect-ratio: 1 / 1.28;
+      border-radius: 6px;
+      background:
+        linear-gradient(180deg, #f9fbfd 0%, #eef4f8 100%);
+      border: 1px solid var(--line);
+    }
+
+    @media (max-width: 1180px) {
+      .intro,
+      .variant-a .workspace,
+      .variant-b .library-grid,
+      .variant-c .ingest-grid,
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .variant-b .library-grid,
+      .variant-c .ingest-grid {
+        align-items: start;
+      }
+    }
+
+    @media (max-width: 860px) {
+      .page {
+        padding: 12px;
+      }
+
+      .mockup-header,
+      .topbar,
+      .status-strip {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .variant-a .app-frame {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto minmax(0, 1fr);
+      }
+
+      .variant-a .topbar {
+        grid-column: auto;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .filter-grid,
+      .metric-grid,
+      .variant-c .mode-grid,
+      .variant-b .search-row,
+      .command {
+        grid-template-columns: 1fr;
+      }
+
+      .doc-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="intro-main">
+        <h1>Эскизы нового интерфейса локальной базы документов</h1>
+        <p>
+          Это статичные варианты без привязки к API. Их смысл: вернуть проект к простой рабочей идее,
+          где пользователь загружает документацию, задаёт вопрос, находит нужный документ или страницу
+          и сразу видит источники.
+        </p>
+        <div class="tag-row">
+          <span class="tag">локально</span>
+          <span class="tag">документы АСУ ТП</span>
+          <span class="tag">источники на виду</span>
+          <span class="tag">лёгкий режим для слабого ноутбука</span>
+          <span class="tag">без декоративного шума</span>
+        </div>
+      </div>
+      <aside class="intro-side">
+        <h3>Общее направление</h3>
+        <ul class="note-list">
+          <li>Один главный рабочий экран вместо набора разрозненных технических страниц.</li>
+          <li>Поиск, ответ и источники должны быть видны одновременно.</li>
+          <li>Импорт документов нужен как понятный мастер, а не форма с JSON-результатом.</li>
+          <li>Статус диска, Qdrant, Ollama и задач должен быть заметен до ошибки.</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="section mockup variant-a">
+      <div class="mockup-header">
+        <div>
+          <h2>Вариант A. Пульт консультанта</h2>
+          <p>
+            Основной экран для ежедневной работы: слева разделы, в центре вопрос и ответ,
+            справа источники, документы и состояние системы.
+          </p>
+        </div>
+        <div class="variant-label">Главный кандидат</div>
+      </div>
+
+      <div class="app-frame">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark">KB</div>
+            <span>Локальная база АСУ ТП</span>
+          </div>
+          <div class="status-strip">
+            <span class="dot"></span><span>API работает</span>
+            <span class="dot"></span><span>Qdrant работает</span>
+            <span class="dot warn"></span><span>Диск C: 4.5 ГБ</span>
+          </div>
+          <button class="btn">Загрузить документы</button>
+        </header>
+
+        <aside class="sidebar">
+          <div class="nav-item active"><span class="nav-icon">⌕</span><span>Консультант</span></div>
+          <div class="nav-item"><span class="nav-icon">▤</span><span>Документы</span></div>
+          <div class="nav-item"><span class="nav-icon">▦</span><span>Страницы PDF</span></div>
+          <div class="nav-item"><span class="nav-icon">⇧</span><span>Импорт</span></div>
+          <div class="nav-item"><span class="nav-icon">◷</span><span>Задачи</span></div>
+          <div class="nav-item"><span class="nav-icon">⚙</span><span>Настройки</span></div>
+        </aside>
+
+        <div class="content">
+          <div class="workspace">
+            <div class="main-stack">
+              <div class="panel pad">
+                <div class="field">
+                  <label class="label">Вопрос по базе</label>
+                  <textarea class="textarea">Как работает блок calc и где описаны ограничения вычислений?</textarea>
+                </div>
+                <div class="filter-grid" style="margin-top: 12px;">
+                  <div class="field">
+                    <label class="label">Документ</label>
+                    <select class="select"><option>Все документы</option></select>
+                  </div>
+                  <div class="field">
+                    <label class="label">Режим</label>
+                    <select class="select"><option>Ответ + источники</option></select>
+                  </div>
+                  <div class="field">
+                    <label class="label">Материал</label>
+                    <select class="select"><option>Текст и PDF-страницы</option></select>
+                  </div>
+                  <div class="field">
+                    <label class="label">Тег / сигнал</label>
+                    <input class="input" value="" placeholder="LIT-101" />
+                  </div>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap;">
+                  <button class="btn">Получить ответ</button>
+                  <button class="btn secondary">Только найти источники</button>
+                  <button class="btn secondary">Очистить фильтры</button>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head">
+                  <h3 class="panel-title">Ответ</h3>
+                  <span class="chip green">по 4 источникам</span>
+                </div>
+                <div class="answer-box">
+                  <div class="answer-text">
+                    Блок calc используется для вычислений в функциональных блоках произвольной формы.
+                    Он поддерживает арифметические операции и математические функции. Ограничения
+                    точности описаны в разделе про вычисления с типами ana, ints и intl.
+                  </div>
+                  <div>
+                    <span class="chip blue">Источник 1: g2043_ru_04-2.pdf, стр. 4</span>
+                    <span class="chip blue">Источник 2: g2043_ru_04-2.pdf, стр. 7</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="side-stack">
+              <div class="panel">
+                <div class="panel-head">
+                  <h3 class="panel-title">Источники ответа</h3>
+                  <span class="chip">проверка фактов</span>
+                </div>
+                <div class="source-list">
+                  <div class="source">
+                    <strong>g2043_ru_04-2.pdf - Страница 4</strong>
+                    <p>Блок calc позволяет выполнять различные вычисления. Тип входных данных: ana, ints или intl.</p>
+                    <div class="meta-line">
+                      <span class="chip blue">PDF</span>
+                      <span class="chip violet">text</span>
+                      <span class="chip">semantic + lexical</span>
+                    </div>
+                  </div>
+                  <div class="source">
+                    <strong>g2043_ru_04-2.pdf - Страница 7</strong>
+                    <p>Описаны точность вычисления и примеры использования функционального блока calc.</p>
+                    <div class="meta-line">
+                      <span class="chip blue">PDF</span>
+                      <span class="chip">страница 7</span>
+                    </div>
+                  </div>
+                  <div class="source">
+                    <strong>Предупреждение</strong>
+                    <p>Если источников нет, показывается честное сообщение без ответа из общих знаний.</p>
+                    <div class="meta-line">
+                      <span class="chip amber">fallback-empty</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel pad">
+                <h3>База сейчас</h3>
+                <div class="metric-grid">
+                  <div class="metric">
+                    <span class="metric-value">5</span>
+                    <span class="metric-label">документов</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-value">705</span>
+                    <span class="metric-label">чанков</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-value">22</span>
+                    <span class="metric-label">PDF-страницы</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section mockup variant-b">
+      <div class="mockup-header">
+        <div>
+          <h2>Вариант B. Библиотека документов</h2>
+          <p>
+            Для сценария “найди мне нужный документ или страницу”. Документы, результаты,
+            предпросмотр и короткий вопрос по выбранному источнику собраны рядом.
+          </p>
+        </div>
+        <div class="variant-label">Для поиска документов</div>
+      </div>
+
+      <div class="app-frame">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark">DL</div>
+            <span>Библиотека документации</span>
+          </div>
+          <div class="status-strip">
+            <span class="dot"></span><span>5 документов в индексе</span>
+            <span class="dot warn"></span><span>9 старых векторов требуют чистки</span>
+          </div>
+          <button class="btn secondary">Проверить индекс</button>
+        </header>
+
+        <div class="content">
+          <div class="search-row">
+            <input class="input" value="calc вычисления ограничения точности" />
+            <select class="select"><option>Все типы</option></select>
+            <button class="btn">Найти</button>
+          </div>
+
+          <div class="library-grid">
+            <div class="panel">
+              <div class="panel-head">
+                <h3 class="panel-title">Документы</h3>
+                <span class="chip">сортировка по дате</span>
+              </div>
+              <div class="doc-row">
+                <div>
+                  <div class="doc-name">g2043_ru_04-1.pdf</div>
+                  <div class="doc-sub">655 чанков, preview нет</div>
+                </div>
+                <span class="chip green">indexed</span>
+                <button class="btn secondary">Открыть</button>
+              </div>
+              <div class="doc-row">
+                <div>
+                  <div class="doc-name">g2043_ru_04-2.pdf</div>
+                  <div class="doc-sub">8 чанков, 10 страниц</div>
+                </div>
+                <span class="chip green">indexed</span>
+                <button class="btn secondary">Открыть</button>
+              </div>
+              <div class="doc-row">
+                <div>
+                  <div class="doc-name">g2043_ru_04-3.pdf</div>
+                  <div class="doc-sub">33 чанка, preview нет</div>
+                </div>
+                <span class="chip green">indexed</span>
+                <button class="btn secondary">Открыть</button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h3 class="panel-title">Найденные фрагменты</h3>
+                <span class="chip blue">5 результатов</span>
+              </div>
+              <div class="source-list">
+                <div class="source">
+                  <strong>Страница 4. calc - ВЫЧИСЛИТЬ</strong>
+                  <p>Операции: +, -, *, /, **. Функции: ABS, SIN, SQRT, EXP, LN...</p>
+                  <div class="meta-line">
+                    <span class="chip blue">страница PDF</span>
+                    <span class="chip">точное совпадение calc</span>
+                  </div>
+                </div>
+                <div class="source">
+                  <strong>Страница 7. Точность вычисления</strong>
+                  <p>Примеры использования функционального блока и ограничения представления float.</p>
+                  <div class="meta-line">
+                    <span class="chip violet">text</span>
+                    <span class="chip">semantic + lexical</span>
+                  </div>
+                </div>
+                <div class="table-preview">
+                  <div class="head"><span>Тип</span><span>Название</span><span>Стр.</span></div>
+                  <div><span>PDF</span><span>Функции calc</span><span>5</span></div>
+                  <div><span>chunk</span><span>doublepreccalc</span><span>6</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel pad">
+              <h3>Предпросмотр источника</h3>
+              <div class="preview-page">
+                <div class="preview-title"></div>
+                <div class="preview-line"></div>
+                <div class="preview-line"></div>
+                <div class="preview-line short"></div>
+                <div class="preview-line"></div>
+                <div class="preview-line"></div>
+                <div class="preview-line short"></div>
+              </div>
+              <div style="display: grid; gap: 10px; margin-top: 12px;">
+                <button class="btn">Спросить по этой странице</button>
+                <button class="btn secondary">Показать соседние страницы</button>
+                <button class="btn secondary">Открыть PNG preview</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section mockup variant-c">
+      <div class="mockup-header">
+        <div>
+          <h2>Вариант C. Мастер загрузки</h2>
+          <p>
+            Для сценария “закинул разные документы в базу”. Акцент на безопасный импорт:
+            сначала текстовый слой, потом точечные preview, затем контроль задач.
+          </p>
+        </div>
+        <div class="variant-label">Для импорта</div>
+      </div>
+
+      <div class="app-frame">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark">IN</div>
+            <span>Загрузка документов</span>
+          </div>
+          <div class="status-strip">
+            <span class="dot"></span><span>Ollama доступен</span>
+            <span class="dot warn"></span><span>Preview лучше включать точечно</span>
+          </div>
+          <button class="btn secondary">История задач</button>
+        </header>
+
+        <div class="content">
+          <div class="ingest-grid">
+            <div class="panel pad">
+              <div class="drop-zone">
+                <div>
+                  <strong>Перетащите файл или выберите папку из data/raw</strong>
+                  <p>PDF, DOCX, TXT, MD, CSV, XLSX, XLS. Фото и сканы будут отдельным этапом через OCR.</p>
+                </div>
+              </div>
+
+              <div class="mode-grid">
+                <div class="mode-card active">
+                  <h3>Большая папка</h3>
+                  <p>Фоново, без preview. Лучший режим для первого прохода.</p>
+                  <span class="chip green">рекомендуется</span>
+                </div>
+                <div class="mode-card">
+                  <h3>Один PDF</h3>
+                  <p>Можно включить preview, если документ важный.</p>
+                  <span class="chip blue">точечный анализ</span>
+                </div>
+                <div class="mode-card">
+                  <h3>Таблица</h3>
+                  <p>Строки таблицы превращаются в отдельные фрагменты для точного поиска.</p>
+                  <span class="chip violet">CSV/XLSX</span>
+                </div>
+              </div>
+
+              <div class="filter-grid" style="margin-top: 14px;">
+                <div class="field">
+                  <label class="label">Путь</label>
+                  <input class="input" value="КС новая/Документация metsoDNA CR/2 Функциональные блоки" />
+                </div>
+                <div class="field">
+                  <label class="label">Категории</label>
+                  <input class="input" value="metso,dna,functional-blocks" />
+                </div>
+                <div class="field">
+                  <label class="label">Preview PDF</label>
+                  <select class="select"><option>Не создавать</option></select>
+                </div>
+                <div class="field">
+                  <label class="label">Запуск</label>
+                  <button class="btn">Поставить в фон</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel pad">
+              <h3>Очередь и контроль</h3>
+              <div class="steps">
+                <div class="step">
+                  <div class="step-no">1</div>
+                  <div><strong>Проверка файла</strong><span>формат, дубли, путь внутри data/raw</span></div>
+                </div>
+                <div class="step">
+                  <div class="step-no">2</div>
+                  <div><strong>Извлечение текста</strong><span>PDF/DOCX/XLSX разбираются без LLM</span></div>
+                </div>
+                <div class="step">
+                  <div class="step-no">3</div>
+                  <div><strong>Индексация</strong><span>PostgreSQL + Qdrant, маленькими batch</span></div>
+                </div>
+                <div class="step">
+                  <div class="step-no">4</div>
+                  <div><strong>Проверка поиска</strong><span>тестовый запрос по новому документу</span></div>
+                </div>
+              </div>
+
+              <div style="margin-top: 16px;">
+                <div class="doc-row">
+                  <div>
+                    <div class="doc-name">g2043_ru_04-1.pdf</div>
+                    <div class="doc-sub">655 / 655, готово</div>
+                  </div>
+                  <div class="progress"><span style="width: 100%;"></span></div>
+                  <span class="chip green">готово</span>
+                </div>
+                <div class="doc-row">
+                  <div>
+                    <div class="doc-name">Следующая папка</div>
+                    <div class="doc-sub">ожидает запуска</div>
+                  </div>
+                  <div class="progress"><span style="width: 0%;"></span></div>
+                  <span class="chip">ожидает</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section mockup variant-d">
+      <div class="mockup-header">
+        <div>
+          <h2>Вариант D. Компактный рабочий режим</h2>
+          <p>
+            Самый простой экран: одна строка запроса, быстрый ответ, найденные документы и
+            понятное состояние базы. Подходит, если хочется меньше переключателей.
+          </p>
+        </div>
+        <div class="variant-label">Минимум шума</div>
+      </div>
+
+      <div class="app-frame">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark">QA</div>
+            <span>Консультант</span>
+          </div>
+          <div class="status-strip">
+            <span class="dot"></span><span>готов к вопросам</span>
+            <span class="dot warn"></span><span>мало места на диске</span>
+          </div>
+          <button class="btn secondary">Расширенный режим</button>
+        </header>
+
+        <div class="content">
+          <div class="focus">
+            <div class="panel pad">
+              <div class="command">
+                <input class="input" value="Найди описание блока calc и ограничения точности" />
+                <button class="btn">Спросить</button>
+              </div>
+              <div class="tag-row">
+                <span class="chip blue">Все документы</span>
+                <span class="chip">Текст + PDF-страницы</span>
+                <span class="chip green">только с источниками</span>
+                <span class="chip amber">без внешнего облака</span>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h3 class="panel-title">Короткий ответ</h3>
+                <span class="chip green">проверено источниками</span>
+              </div>
+              <div class="answer-box">
+                <div class="answer-text">
+                  Описание блока calc находится в документе g2043_ru_04-2.pdf. Основные сведения на страницах
+                  4-7: назначение блока, доступные операции, математические функции и примеры точности вычисления.
+                </div>
+              </div>
+            </div>
+
+            <div class="result-grid">
+              <div class="compact-source">
+                <div class="thumb"></div>
+                <div>
+                  <h3>g2043_ru_04-2.pdf, стр. 4</h3>
+                  <p>calc - ВЫЧИСЛИТЬ. Операции и функции.</p>
+                  <span class="chip blue">открыть страницу</span>
+                </div>
+              </div>
+              <div class="compact-source">
+                <div class="thumb"></div>
+                <div>
+                  <h3>g2043_ru_04-2.pdf, стр. 7</h3>
+                  <p>Примеры использования и точность вычисления.</p>
+                  <span class="chip blue">открыть страницу</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel pad">
+              <h3>Что видно сразу</h3>
+              <div class="metric-grid">
+                <div class="metric">
+                  <span class="metric-value">5</span>
+                  <span class="metric-label">документов готовы</span>
+                </div>
+                <div class="metric">
+                  <span class="metric-value">0</span>
+                  <span class="metric-label">активных задач</span>
+                </div>
+                <div class="metric">
+                  <span class="metric-value">4.5 ГБ</span>
+                  <span class="metric-label">свободно на C:</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

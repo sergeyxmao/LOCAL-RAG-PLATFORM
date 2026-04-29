@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вариант A - Загрузка документов</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="index.html"><span class="brand-mark">LR</span><span>LOCAL-RAG-PLATFORM</span></a>
+      <nav class="main-nav">
+        <a class="nav-link" href="variant-a-consultant.html">Консультант</a>
+        <a class="nav-link active" href="variant-a-upload.html">Загрузка документов</a>
+        <a class="nav-link" href="variant-a-admin.html">Админ / состояние базы</a>
+      </nav>
+      <div class="variant-switch">
+        <a class="switch-link active" href="variant-a-upload.html">A</a>
+        <a class="switch-link" href="variant-b-upload.html">B</a>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="workspace upload-layout">
+        <aside class="left-rail">
+          <div class="rail-head">
+            <h2>Импорт</h2>
+            <div class="meta-line"><span class="status ok">локальный режим</span><span>без облака</span></div>
+          </div>
+          <div class="doc-list">
+            <a class="doc-item active" href="#"><div class="doc-title">Новая загрузка</div><div class="meta-line"><span>файл или папка</span></div></a>
+            <a class="doc-item" href="#"><div class="doc-title">Очередь</div><div class="meta-line"><span>5 задач</span><span>2 ошибки</span></div></a>
+            <a class="doc-item" href="#"><div class="doc-title">История</div><div class="meta-line"><span>последние 24 часа</span></div></a>
+            <a class="doc-item" href="#"><div class="doc-title">Настройки OCR</div><div class="meta-line"><span>сканы</span><span>фото страниц</span></div></a>
+          </div>
+        </aside>
+
+        <section class="work-main">
+          <div class="upload-grid">
+            <div class="work-main">
+              <section class="dropzone">
+                <div>
+                  <h1 style="margin:0 0 8px;">Перетащите документы или папку сюда</h1>
+                  <p class="muted">PDF, DOCX, TXT/MD, XLSX/CSV, изображения, фото страниц и сканы. Для большой папки включайте фоновый импорт.</p>
+                  <div class="filter-row" style="justify-content:center;">
+                    <button class="btn primary" type="button">Выбрать файлы</button>
+                    <button class="btn soft" type="button">Выбрать папку</button>
+                    <button class="btn warn" type="button">Поставить в фон</button>
+                  </div>
+                </div>
+              </section>
+
+            </div>
+
+            <aside class="work-main">
+              <section class="panel">
+                <div class="section-head"><h2>Диск C:</h2></div>
+                <div style="padding:12px;">
+                  <div class="metric-value">10.4 ГБ</div>
+                  <div class="muted">свободно</div>
+                  <div class="progress"><span style="width:72%;"></span></div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="section-head"><h2>Очередь загрузки</h2></div>
+                <div class="queue" style="padding:12px;">
+                  <div class="queue-item">
+                    <div class="task-title">2 Функциональные блоки</div>
+                    <div class="meta-line"><span class="status ok">выполняется</span><span>PDF</span><span>без preview</span></div>
+                    <div class="progress"><span style="width:64%;"></span></div>
+                  </div>
+                  <div class="queue-item">
+                    <div class="task-title">Сигналы насосной станции.xlsx</div>
+                    <div class="meta-line"><span class="status ok">готово</span><span>184 строки</span></div>
+                    <div class="progress"><span style="width:100%;"></span></div>
+                  </div>
+                  <div class="queue-item">
+                    <div class="task-title">Скан паспорта шкафа 03.jpg</div>
+                    <div class="meta-line"><span class="status bad">ошибка</span><span>OCR не включён</span></div>
+                    <p class="muted">Документ похож на скан. Включите OCR или импортируйте как изображение без текста.</p>
+                  </div>
+                  <div class="queue-item">
+                    <div class="task-title">КС новая / Документация metsoDNA CR</div>
+                    <div class="meta-line"><span class="status warn">ожидает</span><span>папка</span><span>1 146 файлов</span></div>
+                  </div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

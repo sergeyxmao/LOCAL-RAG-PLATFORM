@@ -62,6 +62,10 @@ export class AnswerService {
       lines.push(`Путь: ${source.source_path}`);
     }
 
+    if (Array.isArray(source.node_paths) && source.node_paths.length > 0) {
+      lines.push(`Разделы: ${source.node_paths.join("; ")}`);
+    }
+
     if (source.resource_type === "asset") {
       if (typeof source.page_number === "number") {
         lines.push(`Страница: ${source.page_number}`);
@@ -86,10 +90,12 @@ export class AnswerService {
     return lines.join("\n");
   }
 
-  buildFallbackAnswer(question, sources) {
+  buildFallbackAnswer(question, sources, { nodeId = null, nodeName = null } = {}) {
     if (!sources.length) {
       return {
-        answer: "Для этого вопроса не найдено подходящих источников.",
+        answer: nodeId
+          ? `В выбранном разделе${nodeName ? ` «${nodeName}»` : ""} подходящие источники не найдены.`
+          : "Для этого вопроса не найдено подходящих источников.",
         mode: "fallback-empty",
       };
     }
@@ -138,6 +144,10 @@ export class AnswerService {
       engineeringTopic = "all",
       signalTag = "all",
       documentId = null,
+      documentIds = [],
+      selectedTags = [],
+      nodeId = null,
+      includeChildren = true,
     } = {}
   ) {
     const startedAt = Date.now();
@@ -148,11 +158,18 @@ export class AnswerService {
       engineeringTopic,
       signalTag,
       documentId,
+      documentIds,
+      selectedTags,
+      nodeId,
+      includeChildren,
     });
     const sources = hybrid.items;
 
     if (sources.length === 0) {
-      const fallback = this.buildFallbackAnswer(question, sources);
+      const fallback = this.buildFallbackAnswer(question, sources, {
+        nodeId: hybrid.debug?.node_id,
+        nodeName: hybrid.debug?.node_name,
+      });
       const answer = fallback.answer;
 
       await this.postgresProvider.logQuery({
@@ -191,7 +208,10 @@ export class AnswerService {
         },
       ]);
     } catch (error) {
-      const fallback = this.buildFallbackAnswer(question, sources);
+      const fallback = this.buildFallbackAnswer(question, sources, {
+        nodeId: hybrid.debug?.node_id,
+        nodeName: hybrid.debug?.node_name,
+      });
       answer = `${fallback.answer}\n\nСтатус модели: ${this.translateModelStatus(error.message)}`;
       mode = fallback.mode;
     }

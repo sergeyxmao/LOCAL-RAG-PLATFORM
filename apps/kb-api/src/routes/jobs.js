@@ -6,15 +6,44 @@ function runDetached(task) {
   }, 0);
 }
 
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  return ["1", "true", "yes", "on", "да"].includes(String(value).toLowerCase());
+}
+
 export async function jobRoutes(app) {
-  app.get("/jobs", async (request) => {
+  app.get("/jobs", async (request, reply) => {
     const query = request.query ?? {};
+    const items = await app.postgresProvider.listJobs({
+      statusMode: query.statusMode,
+      search: query.search,
+      limit: query.limit,
+      nodeId: query.nodeId,
+      includeChildren: parseBoolean(query.includeChildren, true),
+    });
+
+    if (!items) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Раздел не найден",
+      };
+    }
+
+    if (query.nodeId) {
+      return {
+        ok: true,
+        nodeId: query.nodeId,
+        includeChildren: parseBoolean(query.includeChildren, true),
+        items,
+      };
+    }
+
     return {
-      items: await app.postgresProvider.listJobs({
-        statusMode: query.statusMode,
-        search: query.search,
-        limit: query.limit,
-      }),
+      items,
     };
   });
 
@@ -28,7 +57,7 @@ export async function jobRoutes(app) {
       };
     }
 
-    const cancellableStatuses = new Set(["running", "cancel_requested"]);
+    const cancellableStatuses = new Set(["queued", "running", "cancel_requested"]);
     if (!cancellableStatuses.has(job.status)) {
       return {
         ok: true,
@@ -43,7 +72,10 @@ export async function jobRoutes(app) {
       ok: true,
       changed: true,
       job: updatedJob,
-      message: "Запрос на остановку отправлен. Текущий batch завершится и задача остановится.",
+      message:
+        job.status === "queued"
+          ? "Задача отменена."
+          : "Запрос на остановку отправлен. Текущий batch завершится и задача остановится.",
     };
   });
 

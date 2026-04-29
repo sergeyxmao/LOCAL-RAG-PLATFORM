@@ -8,6 +8,7 @@
 - `kb-api health`: `http://localhost:8787/health`
 - `Консультант`: `http://localhost:8787/ui/consult`
 - `Импорт`: `http://localhost:8787/ui/ingest`
+- `Разделы базы`: `http://localhost:8787/ui/nodes`
 - `Поиск по страницам PDF`: `http://localhost:8787/ui/pages-search`
 - `Статусы задач`: `http://localhost:8787/ui/jobs`
 
@@ -130,6 +131,66 @@ metso,dna,functional-blocks
 3. Для точечного анализа можно включить:
    - `Создавать карточки и предпросмотр PDF-страниц`
 
+### Точечный preview/OCR после лёгкого импорта
+
+Если большой PDF уже импортирован без preview:
+
+1. Открыть `http://localhost:8787/ui/pages-search`
+2. Выбрать PDF-документ
+3. В поле `Страницы для preview/OCR` указать, например:
+
+```text
+1-5, 12
+```
+
+4. Оставить `Preview` включённым
+5. OCR оставить `выкл.` или выбрать `OCR если доступен`
+6. Нажать `Создать preview/OCR`
+
+OCR не отправляет документы наружу. Он использует только локальную команду `tesseract`, если она установлена в контейнере. Если `tesseract` не установлен, preview всё равно создаётся, а OCR помечается как недоступный.
+
+### Визуальный поиск по PDF-страницам
+
+На `http://localhost:8787/ui/pages-search` кнопка `Визуальный поиск` ищет только среди page assets классов:
+
+- `scheme`
+- `screen`
+- `table`
+- `signals`
+
+Это лёгкий локальный визуальный слой: поиск идёт по тексту страницы, OCR-тексту при наличии и классификации страницы. Полноценные image embeddings для схем и картинок пока не включены, чтобы не перегрузить текущий ноутбук.
+
+## Очистка тестовой базы
+
+Если все загруженные документы были тестовыми и нужно начать с пустого проекта:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\reset-rag-content.ps1
+```
+
+Что очищается:
+
+- документы, chunks, PDF page assets, jobs, query logs в PostgreSQL
+- Qdrant collection `local_rag_chunks`
+- файлы в `data/raw`, `data/parsed`, `data/assets`
+- пользовательские разделы базы
+
+Что сохраняется:
+
+- схема PostgreSQL
+- настройки
+- системный раздел `Без раздела`
+- код проекта и Docker volumes
+
+API-вариант:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8787/admin/reset-content `
+  -ContentType "application/json" `
+  -Body '{"confirm":"RESET_LOCAL_RAG_CONTENT"}'
+```
+
 ## Нормальная работа через браузер
 
 ### Консультант по документам
@@ -237,6 +298,127 @@ No space left on device: WAL buffer size exceeds available disk space
 ```powershell
 Get-PSDrive C
 ```
+
+## Восстановление Qdrant после переполнения диска
+
+Если `localrag-qdrant` постоянно перезапускается, а в логах есть `OffsetOutOfBounds`, сначала не удалять данные вручную.
+
+Проверить статус:
+
+```powershell
+Invoke-RestMethod http://localhost:8787/admin/qdrant-status
+docker logs localrag-qdrant --tail 100
+```
+
+Нормальный восстановленный статус выглядит так:
+
+- `qdrant.ok = true`
+- `qdrant.exists = true`
+- `qdrant.status = green`
+- `qdrant.pointsCount` совпадает с `postgresIndexed.totalCount`
+- `qdrant.payloadIndexedFields` содержит поля `document_id`, `node_scope_ids`, `categories`, `asset_class`, `engineering_topics` и `signal_tags`
+
+## Проверка разделов базы знаний
+
+Полный smoke-прогон:
+
+```powershell
+node scripts/knowledge-nodes-smoke.mjs
+```
+
+Быстрые health-check endpoints:
+
+```powershell
+Invoke-RestMethod http://localhost:8787/admin/knowledge-nodes-status
+Invoke-RestMethod http://localhost:8787/admin/qdrant-status
+```
+
+Нормальный статус `knowledge_nodes`:
+
+- `status = ready`
+- `progressPercent = 100`
+- `nodeCountersMissingRows = 0`
+- `qdrant.status = green`
+- активных задач нет
+
+Опасное удаление документов вместе с разделом доступно только через API и только с двойным подтверждением:
+
+```powershell
+Invoke-RestMethod -Method Delete `
+  -Uri "http://localhost:8787/nodes/<node-id>?strategy=cascade_documents" `
+  -ContentType "application/json" `
+  -Body '{"confirm":"DELETE_DOCUMENTS_AND_NODE","confirmName":"Точное название раздела"}'
+```
+
+Через UI `/ui/nodes` штатно удаляются только пустые пользовательские разделы.
+
+Безопасный dry-run переноса повреждённой коллекции:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\recover-qdrant-collection.ps1
+```
+
+После явного решения восстановить Qdrant:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\recover-qdrant-collection.ps1 -Apply
+```
+
+Скрипт не удаляет коллекцию, а переносит `workspace\qdrant_data\collections\local_rag_chunks` в `workspace\qdrant_recovery_backups`.
+
+Затем проверить, сколько точек можно восстановить из PostgreSQL:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8787/admin/rebuild-qdrant `
+  -ContentType "application/json" `
+  -Body '{"dryRun":true}'
+```
+
+По умолчанию пересборка берёт только документы со статусом `indexed`. Это нормальный рабочий режим: старые failed/cancelled импорты не должны раздувать восстановление Qdrant.
+
+Запуск фоновой пересборки Qdrant:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8787/admin/rebuild-qdrant `
+  -ContentType "application/json" `
+  -Body '{"dryRun":false,"confirm":"REBUILD_QDRANT","batchSize":25}'
+```
+
+Прогресс смотреть на `http://localhost:8787/ui/jobs`.
+
+## Regression smoke для knowledge_nodes
+
+После изменений в разделах базы, scoped search, Qdrant payload или UI-разделах можно прогнать безопасный smoke:
+
+```powershell
+node scripts\knowledge-nodes-smoke.mjs
+```
+
+Скрипт создаёт только временные разделы и документы с префиксом `kn-smoke-*`, проверяет 15 сценариев из `docs/knowledge-nodes-spec.md`, затем удаляет свои временные документы, Qdrant points и разделы. Рабочие документы АСУ ТП он не трогает.
+
+На `2026-04-28` полный smoke прошёл `15/15`. Дополнительно проверены:
+
+- `/ui/state` сохраняет и возвращает выбранный рабочий раздел;
+- системный раздел `Без раздела` сохраняется с `includeChildren=false`;
+- Qdrant после восстановления зелёный: `957` точек в `local_rag_chunks`;
+- на `/ui/jobs` нет активных задач.
+
+Live-статус готовности разделов базы:
+
+```powershell
+Invoke-RestMethod http://localhost:8787/admin/knowledge-nodes-status
+```
+
+Нормально, когда:
+
+- `status = ready`;
+- `progressPercent = 100`;
+- `qdrant.pointsCount` совпадает с `postgresIndexed.totalCount`;
+- все проверки в `checks` имеют `ok = true`.
+
+То же самое видно на странице `http://localhost:8787/ui/nodes` в блоке `Готовность разделов базы`.
 
 ## Проверка Docker / WSL
 

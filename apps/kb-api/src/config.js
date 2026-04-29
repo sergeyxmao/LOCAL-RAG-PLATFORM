@@ -17,7 +17,7 @@ function readYamlFile(filePath, fallback) {
 
 const configDir = process.env.CONFIG_DIR || "/app/config";
 
-const modelsConfig = readYamlFile(path.join(configDir, "models.yaml"), {
+const defaultModelsConfig = {
   chat: {
     provider: "ollama",
     model: process.env.CHAT_MODEL || "qwen3:4b",
@@ -27,8 +27,38 @@ const modelsConfig = readYamlFile(path.join(configDir, "models.yaml"), {
     provider: "ollama",
     model: process.env.EMBEDDING_MODEL || "qwen3-embedding:0.6b",
     base_url: process.env.OLLAMA_BASE_URL || "http://host.docker.internal:11434",
+    batch_size: Number(process.env.EMBEDDING_BATCH_SIZE || 8),
+    max_input_chars: Number(process.env.EMBEDDING_MAX_INPUT_CHARS || 400),
   },
-});
+};
+
+const rawModelsConfig = readYamlFile(path.join(configDir, "models.yaml"), {});
+const embeddingBatchSize = Number(
+  process.env.EMBEDDING_BATCH_SIZE ??
+    rawModelsConfig.embedding?.batch_size ??
+    defaultModelsConfig.embedding.batch_size
+);
+const embeddingMaxInputChars = Number(
+  process.env.EMBEDDING_MAX_INPUT_CHARS ??
+    rawModelsConfig.embedding?.max_input_chars ??
+    defaultModelsConfig.embedding.max_input_chars
+);
+const modelsConfig = {
+  chat: {
+    ...defaultModelsConfig.chat,
+    ...(rawModelsConfig.chat ?? {}),
+  },
+  embedding: {
+    ...defaultModelsConfig.embedding,
+    ...(rawModelsConfig.embedding ?? {}),
+    batch_size: Number.isFinite(embeddingBatchSize)
+      ? embeddingBatchSize
+      : defaultModelsConfig.embedding.batch_size,
+    max_input_chars: Number.isFinite(embeddingMaxInputChars)
+      ? embeddingMaxInputChars
+      : defaultModelsConfig.embedding.max_input_chars,
+  },
+};
 
 const retrievalConfig = readYamlFile(path.join(configDir, "retrieval.yaml"), {
   semantic: { top_k: 12 },
@@ -45,6 +75,10 @@ const ingestionConfig = readYamlFile(path.join(configDir, "ingestion.yaml"), {
     enabled: true,
     pdf_preview_pages: 4,
     pdf_scale: 2,
+    ocr_command: "tesseract",
+    ocr_lang: "rus+eng",
+    ocr_timeout_ms: 60000,
+    ocr_max_chars: 12000,
   },
   extractors: {
     txt: true,
@@ -57,9 +91,25 @@ export const appConfig = {
   host: "0.0.0.0",
   dataRoot: process.env.DATA_ROOT || "/app/data",
   rawRoot: process.env.RAW_ROOT || "/app/data/raw",
+  hostRawRoot: process.env.HOST_RAW_ROOT || "",
   parsedRoot: process.env.PARSED_ROOT || "/app/data/parsed",
   assetRoot: process.env.ASSET_ROOT || "/app/data/assets",
   qdrantCollection: process.env.QDRANT_COLLECTION || "local_rag_chunks",
+  knowledgeNodes: {
+    requireNodeIdsForImport: ["1", "true", "yes", "on", "да"].includes(
+      String(process.env.REQUIRE_NODE_IDS_FOR_IMPORT || "").toLowerCase()
+    ),
+    nodeTreeCacheMaxEntries: Number(process.env.NODE_TREE_CACHE_MAX_ENTRIES || 8),
+    reconciliationIntervalMs: Number(
+      process.env.NODE_RECONCILIATION_INTERVAL_MS || 6 * 60 * 60 * 1000
+    ),
+    reconciliationSampleLimit: Number(process.env.NODE_RECONCILIATION_SAMPLE_LIMIT || 25),
+  },
+  localOpen: {
+    helperUrl: process.env.LOCAL_OPEN_HELPER_URL || "http://127.0.0.1:8788/open",
+    tokenSecret: process.env.LOCAL_OPEN_TOKEN_SECRET || "local-rag-platform-dev-open-helper",
+    tokenTtlSeconds: Number(process.env.LOCAL_OPEN_TOKEN_TTL_SECONDS || 30),
+  },
   postgres: {
     host: process.env.POSTGRES_HOST || "postgres",
     port: Number(process.env.POSTGRES_PORT || 5432),

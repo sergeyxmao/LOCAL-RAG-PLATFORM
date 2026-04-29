@@ -1,8 +1,163 @@
+import {
+  expandTagSearchVariants,
+  normalizeTagForCompare,
+  parseTagList,
+} from "../utils/tags.js";
+
 export class SearchService {
   constructor({ embeddingProvider, qdrantProvider, retrievalConfig }) {
     this.embeddingProvider = embeddingProvider;
     this.qdrantProvider = qdrantProvider;
     this.retrievalConfig = retrievalConfig;
+  }
+
+  isUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      String(value ?? "")
+    );
+  }
+
+  normalizeBoolean(value, defaultValue = true) {
+    if (value === undefined || value === null || value === "") {
+      return defaultValue;
+    }
+
+    return ["1", "true", "yes", "on", "да"].includes(String(value).toLowerCase());
+  }
+
+  normalizeDocumentIds(documentId, documentIds = []) {
+    const ids = Array.isArray(documentIds)
+      ? documentIds.map((id) => String(id ?? "").trim()).filter(Boolean)
+      : [];
+
+    if (ids.length === 0 && documentId) {
+      ids.push(String(documentId).trim());
+    }
+
+    return Array.from(new Set(ids));
+  }
+
+  normalizeTags(values = []) {
+    return parseTagList(values);
+  }
+
+  normalizeTagForCompare(value) {
+    return normalizeTagForCompare(value);
+  }
+
+  qdrantMatchCondition(key, values) {
+    const normalizedValues = Array.from(
+      new Set((Array.isArray(values) ? values : [values]).map((value) => String(value ?? "").trim()).filter(Boolean))
+    );
+
+    if (normalizedValues.length === 0) {
+      return null;
+    }
+
+    if (normalizedValues.length === 1) {
+      return {
+        key,
+        match: { value: normalizedValues[0] },
+      };
+    }
+
+    return {
+      key,
+      match: { any: normalizedValues },
+    };
+  }
+
+  buildQdrantFilter({
+    nodeId = null,
+    includeChildren = true,
+    scope = "all",
+    assetClass = "all",
+    engineeringTopic = "all",
+    signalTag = "all",
+    documentId = null,
+    documentIds = [],
+    selectedTags = [],
+  } = {}) {
+    const must = [];
+    const selectedDocumentIds = this.normalizeDocumentIds(documentId, documentIds);
+    const normalizedSelectedTags = this.normalizeTags(selectedTags);
+    const qdrantSelectedTags = expandTagSearchVariants(normalizedSelectedTags);
+
+    if (nodeId) {
+      must.push(
+        this.qdrantMatchCondition(includeChildren ? "node_scope_ids" : "node_ids", nodeId)
+      );
+    }
+
+    const documentCondition = this.qdrantMatchCondition("document_id", selectedDocumentIds);
+    if (documentCondition) {
+      must.push(documentCondition);
+    }
+
+    const tagCondition = this.qdrantMatchCondition("categories", qdrantSelectedTags);
+    if (tagCondition) {
+      must.push(tagCondition);
+    }
+
+    if (scope === "assets") {
+      must.push({
+        key: "resource_type",
+        match: { value: "asset" },
+      });
+    }
+
+    if (assetClass && assetClass !== "all") {
+      must.push({
+        key: "asset_class",
+        match: { value: assetClass },
+      });
+    }
+
+    if (engineeringTopic && engineeringTopic !== "all") {
+      must.push(this.qdrantMatchCondition("engineering_topics", engineeringTopic));
+    }
+
+    const normalizedSignalTag = String(signalTag ?? "").trim().toUpperCase();
+    if (normalizedSignalTag && normalizedSignalTag !== "ALL") {
+      must.push(this.qdrantMatchCondition("signal_tags", normalizedSignalTag));
+    }
+
+    const compactMust = must.filter(Boolean);
+    if (compactMust.length === 0) {
+      return undefined;
+    }
+
+    return { must: compactMust };
+  }
+
+  async resolveNodeScope({ nodeId = null, includeChildren = true } = {}) {
+    const normalizedNodeId = String(nodeId ?? "").trim();
+    if (!normalizedNodeId) {
+      return {
+        nodeId: null,
+        includeChildren: this.normalizeBoolean(includeChildren, true),
+        node: null,
+      };
+    }
+
+    if (!this.isUuid(normalizedNodeId)) {
+      throw Object.assign(new Error("Некорректный UUID раздела"), {
+        statusCode: 400,
+      });
+    }
+
+    const node = await this.qdrantProvider.postgresProvider.getKnowledgeNodeById(normalizedNodeId);
+    if (!node) {
+      throw Object.assign(new Error("Раздел не найден"), {
+        statusCode: 404,
+      });
+    }
+
+    return {
+      nodeId: normalizedNodeId,
+      includeChildren: this.normalizeBoolean(includeChildren, true),
+      node,
+    };
   }
 
   enrichResult(item) {
@@ -44,12 +199,37 @@ export class SearchService {
     return items.filter((item) => item.resource_type === "asset" && item.asset_class === assetClass);
   }
 
-  filterItemsByDocument(items, documentId) {
+  filterItemsByDocument(items, documentId, documentIds = []) {
+    const selectedDocumentIds = Array.isArray(documentIds)
+      ? documentIds.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+
+    if (selectedDocumentIds.length > 0) {
+      return items.filter((item) => selectedDocumentIds.includes(String(item.document_id)));
+    }
+
     if (!documentId) {
       return items;
     }
 
     return items.filter((item) => item.document_id === documentId);
+  }
+
+  filterItemsByTags(items, selectedTags = []) {
+    const normalizedSelectedTags = this.normalizeTags(selectedTags)
+      .map((tag) => this.normalizeTagForCompare(tag))
+      .filter(Boolean);
+
+    if (normalizedSelectedTags.length === 0) {
+      return items;
+    }
+
+    return items.filter((item) => {
+      const categories = Array.isArray(item.categories) ? item.categories : [];
+      return categories.some((category) =>
+        normalizedSelectedTags.includes(this.normalizeTagForCompare(category))
+      );
+    });
   }
 
   filterItemsByEngineeringTopic(items, engineeringTopic = "all") {
@@ -93,10 +273,10 @@ export class SearchService {
     });
   }
 
-  async semanticSearch(query, limit) {
+  async semanticSearch(query, limit, { filter = undefined } = {}) {
     const [vector] = await this.embeddingProvider.embed(query);
     const topK = limit || this.retrievalConfig.fusion.top_k_final || 6;
-    const results = await this.qdrantProvider.search(vector, topK);
+    const results = await this.qdrantProvider.search(vector, topK, { filter });
 
     return results.map((result) =>
       this.enrichResult({
@@ -294,8 +474,14 @@ export class SearchService {
       engineeringTopic = "all",
       signalTag = "all",
       documentId = null,
+      documentIds = [],
+      selectedTags = [],
+      nodeId = null,
+      includeChildren = true,
     } = {}
   ) {
+    const nodeScope = await this.resolveNodeScope({ nodeId, includeChildren });
+    const normalizedSelectedTags = this.normalizeTags(selectedTags);
     const semanticTopK =
       semanticSearch ??
       this.retrievalConfig.semantic?.top_k ??
@@ -315,39 +501,74 @@ export class SearchService {
       this.retrievalConfig.reranking?.candidate_pool ??
       Math.max(finalTopK * 2, 8);
 
+    const qdrantFilter = this.buildQdrantFilter({
+      nodeId: nodeScope.nodeId,
+      includeChildren: nodeScope.includeChildren,
+      scope,
+      assetClass,
+      engineeringTopic,
+      signalTag,
+      documentId,
+      documentIds,
+      selectedTags: normalizedSelectedTags,
+    });
+
+    let semanticError = null;
     const [rawSemanticItems, rawLexicalItems] = await Promise.all([
-      this.semanticSearch(query, semanticTopK),
-      this.qdrantProvider.postgresProvider.lexicalSearch(query, lexicalTopK),
+      this.semanticSearch(query, semanticTopK, { filter: qdrantFilter }).catch((error) => {
+        semanticError = error;
+        return [];
+      }),
+      this.qdrantProvider.postgresProvider.lexicalSearch(query, lexicalTopK, {
+        nodeId: nodeScope.nodeId,
+        includeChildren: nodeScope.includeChildren,
+        includeUnlinked: nodeScope.node?.is_system === true,
+        scope,
+        assetClass,
+        engineeringTopic,
+        signalTag,
+        documentId,
+        documentIds,
+        selectedTags: normalizedSelectedTags,
+      }),
     ]);
 
-    const semanticItems = this.filterItemsByDocument(
-      this.filterItemsBySignalTag(
-        this.filterItemsByEngineeringTopic(
-          this.filterItemsByAssetClass(
-            this.filterItemsByScope(rawSemanticItems, scope),
-            assetClass
-          ),
-          engineeringTopic
-        ),
-        signalTag
-      ),
-      documentId
-    );
-    const lexicalItems = this.filterItemsByDocument(
-      this.filterItemsBySignalTag(
-        this.filterItemsByEngineeringTopic(
-          this.filterItemsByAssetClass(
-            this.filterItemsByScope(
-              rawLexicalItems.map((item) => this.enrichResult(item)),
-              scope
+    const semanticItems = this.filterItemsByTags(
+      this.filterItemsByDocument(
+        this.filterItemsBySignalTag(
+          this.filterItemsByEngineeringTopic(
+            this.filterItemsByAssetClass(
+              this.filterItemsByScope(rawSemanticItems, scope),
+              assetClass
             ),
-            assetClass
+            engineeringTopic
           ),
-          engineeringTopic
+          signalTag
         ),
-        signalTag
+        documentId,
+        documentIds
       ),
-      documentId
+      normalizedSelectedTags
+    );
+    const lexicalItems = this.filterItemsByTags(
+      this.filterItemsByDocument(
+        this.filterItemsBySignalTag(
+          this.filterItemsByEngineeringTopic(
+            this.filterItemsByAssetClass(
+              this.filterItemsByScope(
+                rawLexicalItems.map((item) => this.enrichResult(item)),
+                scope
+              ),
+              assetClass
+            ),
+            engineeringTopic
+          ),
+          signalTag
+        ),
+        documentId,
+        documentIds
+      ),
+      normalizedSelectedTags
     );
 
     const fusedItems = this.reciprocalRankFusion(
@@ -374,6 +595,13 @@ export class SearchService {
         engineering_topic: engineeringTopic,
         signal_tag: signalTag,
         document_id: documentId,
+        document_ids: Array.isArray(documentIds) ? documentIds : [],
+        selected_tags: normalizedSelectedTags,
+        node_id: nodeScope.nodeId,
+        include_children: nodeScope.includeChildren,
+        node_name: nodeScope.node?.name ?? null,
+        qdrant_filter: qdrantFilter ?? null,
+        semantic_error: semanticError?.message ?? null,
         reranking: reranked.reranking,
       },
     };

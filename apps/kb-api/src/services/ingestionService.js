@@ -155,6 +155,26 @@ export class IngestionService {
     }
   }
 
+  async prepareDocumentNodePayload(documentId, { nodeIds = [], primaryNodeId = null } = {}) {
+    await this.postgresProvider.replaceDocumentNodeLinks(documentId, {
+      nodeIds,
+      primaryNodeId,
+    });
+
+    return this.postgresProvider.buildDocumentNodePayload(documentId);
+  }
+
+  async syncDocumentNodePayload(documentId) {
+    const nodePayload = await this.postgresProvider.buildDocumentNodePayload(documentId);
+    const pointIds = await this.postgresProvider.getDocumentPointIds(documentId);
+    await this.qdrantProvider.setPayload(pointIds, nodePayload);
+
+    return {
+      nodePayload,
+      updatedPoints: pointIds.length,
+    };
+  }
+
   async embedAndUpsertRecords({
     records,
     jobId = null,
@@ -198,7 +218,14 @@ export class IngestionService {
     return processedItems;
   }
 
-  async ingestTextDocument({ title, text, sourceLabel = "manual", categories = [] }) {
+  async ingestTextDocument({
+    title,
+    text,
+    sourceLabel = "manual",
+    categories = [],
+    nodeIds = [],
+    primaryNodeId = null,
+  }) {
     const checksum = crypto.createHash("sha256").update(text, "utf8").digest("hex");
     const chunks = chunkTextDocument({
       text,
@@ -221,6 +248,7 @@ export class IngestionService {
       progressMessage: "Подготовка текста",
       startedAt: new Date(),
     });
+    await this.postgresProvider.replaceJobNodeLinks(job.id, nodeIds);
 
     try {
       await this.ensureJobActive(job.id);
@@ -235,6 +263,10 @@ export class IngestionService {
         checksum,
         categories,
         status: "indexed",
+      });
+      const nodePayload = await this.prepareDocumentNodePayload(document.id, {
+        nodeIds,
+        primaryNodeId,
       });
 
       const insertedChunks = await this.postgresProvider.createChunks(document.id, chunks);
@@ -254,6 +286,7 @@ export class IngestionService {
           text_with_context: chunk.text_with_context,
           categories: chunk.categories,
           source_path: document.original_file_path,
+          ...nodePayload,
         }),
       });
 
@@ -262,6 +295,7 @@ export class IngestionService {
       return {
         document,
         chunksIndexed: insertedChunks.length,
+        nodePayload,
       };
     } catch (error) {
       if (error instanceof JobCancelledError) {
@@ -278,6 +312,8 @@ export class IngestionService {
     relativePath,
     title,
     categories = [],
+    nodeIds = [],
+    primaryNodeId = null,
     force = false,
     createVisualAssets = true,
   }) {
@@ -294,6 +330,18 @@ export class IngestionService {
         checksum
       );
       if (existingDocument) {
+        let nodePayload = null;
+        let nodePayloadUpdatedPoints = 0;
+        if (Array.isArray(nodeIds) && nodeIds.length > 0) {
+          await this.postgresProvider.addDocumentNodeLinks(existingDocument.id, {
+            nodeIds,
+            primaryNodeId,
+          });
+          const nodeSync = await this.syncDocumentNodePayload(existingDocument.id);
+          nodePayload = nodeSync.nodePayload;
+          nodePayloadUpdatedPoints = nodeSync.updatedPoints;
+        }
+
         return {
           documentId: existingDocument.id,
           title: existingDocument.title,
@@ -301,6 +349,8 @@ export class IngestionService {
           chunksIndexed: null,
           skipped: true,
           skipReason: "already-indexed",
+          nodePayload,
+          nodePayloadUpdatedPoints,
         };
       }
     }
@@ -339,9 +389,14 @@ export class IngestionService {
       progressMessage: "Подготовка документа",
       startedAt: new Date(),
     });
+    await this.postgresProvider.replaceJobNodeLinks(job.id, nodeIds);
 
     try {
       await this.ensureJobActive(job.id);
+      const nodePayload = await this.prepareDocumentNodePayload(document.id, {
+        nodeIds,
+        primaryNodeId,
+      });
 
       const insertedChunks = await this.postgresProvider.createChunks(document.id, chunks);
       let processedItems = await this.embedAndUpsertRecords({
@@ -360,6 +415,7 @@ export class IngestionService {
           text_with_context: chunk.text_with_context,
           categories: chunk.categories,
           source_path: document.original_file_path,
+          ...nodePayload,
         }),
       });
 
@@ -396,7 +452,8 @@ export class IngestionService {
                 confidence: classification.confidence,
                 engineeringTopics: classification.engineeringTopics,
                 signalTags: classification.signalTags,
-                classifierVersion: "v2",
+                scores: classification.scores,
+                classifierVersion: "v3",
               };
             });
           }
@@ -440,6 +497,7 @@ export class IngestionService {
                 file_name: asset.file_name,
                 relative_path: asset.relative_path,
                 mime_type: asset.mime_type,
+                ...nodePayload,
               }),
             });
           }
@@ -472,6 +530,7 @@ export class IngestionService {
         relativePath: safeRelativePath,
         chunksIndexed: insertedChunks.length,
         visualAssets,
+        nodePayload,
       };
     } catch (error) {
       if (error instanceof JobCancelledError) {
@@ -491,6 +550,8 @@ export class IngestionService {
   async ingestFolderFromRaw({
     relativeDir,
     categories = [],
+    nodeIds = [],
+    primaryNodeId = null,
     recursive = true,
     force = false,
     createVisualAssets = true,
@@ -547,6 +608,8 @@ export class IngestionService {
         const result = await this.ingestFileFromRaw({
           relativePath,
           categories,
+          nodeIds,
+          primaryNodeId,
           force,
           createVisualAssets,
         });
@@ -558,6 +621,7 @@ export class IngestionService {
           chunksIndexed: result.chunksIndexed,
           skipped: result.skipped === true,
           skipReason: result.skipReason ?? null,
+          nodePayload: result.nodePayload ?? null,
           sourceType: path.extname(relativePath).slice(1).toLowerCase(),
         });
       } catch (error) {
