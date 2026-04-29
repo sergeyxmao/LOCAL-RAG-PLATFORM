@@ -5,3 +5,7 @@ workspace/openwebui_data/
 data/logs/
 data/tmp/
 node_modules/
+data/raw/
+data/parsed/
+data/assets/
+workspace/
