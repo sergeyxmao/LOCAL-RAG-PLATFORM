@@ -1171,17 +1171,17 @@ function renderChatScript(initialStateJson) {
       function parseSseChunk(buffer) {
         var events = [];
         var sepIndex;
-        while ((sepIndex = buffer.indexOf("\n\n")) >= 0) {
+        while ((sepIndex = buffer.indexOf("\\n\\n")) >= 0) {
           var rawEvent = buffer.slice(0, sepIndex);
           buffer = buffer.slice(sepIndex + 2);
           var eventName = "message";
           var dataLines = [];
-          rawEvent.split("\n").forEach(function (line) {
+          rawEvent.split("\\n").forEach(function (line) {
             if (line.indexOf("event:") === 0) eventName = line.slice(6).trim();
             else if (line.indexOf("data:") === 0) dataLines.push(line.slice(5).replace(/^ /, ""));
           });
           if (dataLines.length > 0) {
-            var dataStr = dataLines.join("\n");
+            var dataStr = dataLines.join("\\n");
             var parsed;
             try { parsed = JSON.parse(dataStr); } catch (err) { parsed = null; }
             events.push({ event: eventName, data: parsed });
