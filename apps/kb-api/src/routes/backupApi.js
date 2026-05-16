@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import { adminFlagPreHandler } from "./adminFlag.js";
 
 function respondError(reply, statusCode, message, extras = {}) {
   reply.code(statusCode);
@@ -7,8 +6,6 @@ function respondError(reply, statusCode, message, extras = {}) {
 }
 
 export async function backupApiRoutes(app) {
-  app.addHook("preHandler", adminFlagPreHandler);
-
   app.get("/api/v2/backups", async (request, reply) => {
     try {
       const limit = Number(request.query?.limit ?? 50);
