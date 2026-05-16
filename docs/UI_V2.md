@@ -29,8 +29,8 @@ UI скрыт за `?admin=1`.
   маскирование API-ключа.
 - `apps/kb-api/src/services/backupService.js` — pg_dump/psql через spawn,
   список бэкапов в `data/backups/`. Добавлен в полировке.
-- `apps/kb-api/src/routes/backupApi.js` — REST API `/api/v2/backups/*` под
-  админ-флагом. Добавлен в полировке.
+- `apps/kb-api/src/routes/backupApi.js` — REST API `/api/v2/backups/*`,
+  доступен напрямую как и остальные `/api/v2/*`. Добавлен в полировке.
 - `apps/kb-api/src/providers/cloudChatProvider.js` — универсальный
   OpenAI-совместимый клиент (без SDK). С полировки умеет streaming
   (`generateStream` через SSE) и распознаёт thinking-mode ответы.
@@ -256,9 +256,12 @@ UI скрыт за `?admin=1`.
    совместимости.
 3. **Бэкапы БД из UI.** В Настройки добавлен блок «Бэкапы»: «Создать бэкап»,
    список с кнопками «Скачать»/«Восстановить»/«Удалить», восстановление из
-   загружаемого файла. Эндпоинты `/api/v2/backups/*` защищены админ-флагом.
-   Подробности — `docs/BACKUP_RESTORE.md`. В контейнер kb-api добавлены
-   `postgresql16-client` и `gzip`.
+   загружаемого файла. Эндпоинты `/api/v2/backups/*` доступны напрямую (как
+   и остальные `/api/v2/*`) — в проекте по архитектуре нет авторизации,
+   проект локальный без сетевого доступа. В первой версии полировки они
+   были по ошибке закрыты админ-флагом, из-за чего SPA не мог ими
+   пользоваться; снято hotfix-коммитом. Подробности — `docs/BACKUP_RESTORE.md`.
+   В контейнер kb-api добавлены `postgresql16-client` и `gzip`.
 4. **Тест подключения облака больше не даёт false-negative на reasoning-моделях.**
    `max_tokens` поднят с 10 до 50. Если модель ответила пустым `content`, но
    `finish_reason === 'length'` или есть `reasoning_content`/`reasoning`/
@@ -407,3 +410,9 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
   `request.raw.on("aborted")` (deprecated, но корректное) и
   `reply.raw.on("close")` (response-сокет — реальный сигнал «соединение
   закрыто»). Диагностические `console.log` из коммита f607388 удалены.
+- 2026-05-16: hotfix #4 — снят `adminFlagPreHandler` с `/api/v2/backups/*`.
+  В первой версии полировки эндпоинты бэкапов были по ошибке защищены тем
+  же флагом, что и старый UI, из-за чего блок «Бэкапы» на `/ui/v2/settings`
+  возвращал «Эта страница перенесена…». Теперь `/api/v2/backups/*` доступны
+  напрямую, как и остальные `/api/v2/*`. Старый UI остался под `?admin=1`
+  как был.

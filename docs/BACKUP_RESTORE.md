@@ -33,34 +33,37 @@
 4. **«Восстановить из файла»** — загрузить `.sql` или `.sql.gz`, нажать
    «Восстановить», ввести слово `ВОССТАНОВИТЬ`.
 
-Все эндпоинты `/api/v2/backups/*` доступны только из админ-режима (`?admin=1`
-или cookie `admin_mode=1`). Внутри Fastify-плагина регистрируется хук
-`adminFlagPreHandler`.
+Эндпоинты `/api/v2/backups/*` доступны напрямую, как и остальные
+`/api/v2/*` (sessions, settings, ...) — это API нового UI, не legacy.
+В проекте по архитектуре нет авторизации: он локальный, на одном ноуте,
+без внешнего доступа. Если в будущем добавится сетевой доступ — нужно
+будет вводить полноценную авторизацию сразу для всех `/api/v2/*`, а не
+только бэкапов.
 
 ## Через REST API
 
 ```bash
 # Список
-curl 'http://localhost:8787/api/v2/backups?admin=1'
+curl http://localhost:8787/api/v2/backups
 # → { ok: true, backups: [{ filename, size, createdAt }, ...] }
 
 # Создать
-curl -X POST 'http://localhost:8787/api/v2/backups?admin=1'
+curl -X POST http://localhost:8787/api/v2/backups
 # → { ok: true, filename: 'backup_20260516_180000.sql.gz', size: 12345678, durationMs: 4200 }
 
 # Скачать
-curl -O 'http://localhost:8787/api/v2/backups/backup_20260516_180000.sql.gz/download?admin=1'
+curl -O http://localhost:8787/api/v2/backups/backup_20260516_180000.sql.gz/download
 
 # Удалить
-curl -X DELETE 'http://localhost:8787/api/v2/backups/backup_20260516_180000.sql.gz?admin=1'
+curl -X DELETE http://localhost:8787/api/v2/backups/backup_20260516_180000.sql.gz
 
 # Восстановить из существующего файла
-curl -X POST 'http://localhost:8787/api/v2/backups/backup_20260516_180000.sql.gz/restore?admin=1' \
+curl -X POST http://localhost:8787/api/v2/backups/backup_20260516_180000.sql.gz/restore \
   -H 'Content-Type: application/json' \
   -d '{"confirm":"ВОССТАНОВИТЬ"}'
 
 # Восстановить из загружаемого файла (multipart)
-curl -X POST 'http://localhost:8787/api/v2/backups/restore-upload?admin=1' \
+curl -X POST http://localhost:8787/api/v2/backups/restore-upload \
   -F 'file=@./backup_20260516_180000.sql.gz' \
   -F 'confirm=ВОССТАНОВИТЬ'
 ```
@@ -92,9 +95,15 @@ curl -X POST 'http://localhost:8787/api/v2/backups/restore-upload?admin=1' \
 - После восстановления может потребоваться пересборка Qdrant (Настройки →
   Пересобрать Qdrant), потому что Qdrant не бэкапится этим механизмом.
 - Файлы в `data/raw/` остаются нетронутыми.
-- Эндпоинты `/api/v2/backups/*` НЕ доступны без админ-флага. Если их открыть
-  без флага — придёт 404 (как и весь старый UI).
+- Эндпоинты `/api/v2/backups/*` доступны напрямую (без админ-флага), как и
+  остальные `/api/v2/*` в проекте. Это сознательное решение: проект
+  локальный, без сетевого доступа, авторизации нет ни для каких API.
 
 ## История изменений
 
 - 2026-05-16: добавлен UI и REST API для бэкапов (полировка после итерации 3).
+- 2026-05-16: hotfix — снят `adminFlagPreHandler` с `/api/v2/backups/*`.
+  В предыдущей версии эндпоинты были по ошибке защищены тем же флагом, что
+  и старый UI; из-за этого блок «Бэкапы» в новом `/ui/v2/settings` падал
+  с сообщением «Эта страница перенесена…». Старый UI остался под флагом
+  `?admin=1` как раньше — это две независимые группы.

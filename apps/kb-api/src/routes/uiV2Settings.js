@@ -456,7 +456,7 @@ function renderSettingsScript(initialStateJson) {
           return '<div class="service-row">' +
             '<span class="service-row__name mono">' + escapeHtml(b.filename) + '</span>' +
             '<span class="service-row__status mono">' + fmtBytes(b.size) + ' · ' + escapeHtml((b.createdAt || "").replace("T", " ").slice(0, 16)) + '</span>' +
-            '<a class="btn btn--ghost" href="/api/v2/backups/' + encodeURIComponent(b.filename) + '/download?admin=1" target="_blank">Скачать</a>' +
+            '<a class="btn btn--ghost" href="/api/v2/backups/' + encodeURIComponent(b.filename) + '/download" target="_blank">Скачать</a>' +
             '<button type="button" class="btn btn--ghost" data-action="restore-backup" data-name="' + escapeAttr(b.filename) + '">Восстановить</button>' +
             '<button type="button" class="btn btn--danger" data-action="delete-backup" data-name="' + escapeAttr(b.filename) + '">Удалить</button>' +
             '</div>';
