@@ -67,6 +67,42 @@ export class PostgresProvider {
     `);
 
     await this.ensureKnowledgeNodeSchema();
+    await this.ensureChatSessionSchema();
+  }
+
+  async ensureChatSessionSchema() {
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        title TEXT NOT NULL DEFAULT 'Новый чат',
+        mode TEXT NOT NULL DEFAULT 'answer',
+        filters JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at
+      ON chat_sessions(updated_at DESC)
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
+      ON chat_messages(session_id, created_at)
+    `);
   }
 
   async ensureKnowledgeNodeSchema() {

@@ -32,6 +32,16 @@
 - GET /ui/jobs
 - GET /ui/pages-search
 - GET /ui/state
+- GET /ui/v2
+- GET /ui/v2/chat
+- GET /ui/v2/knowledge
+- GET /ui/v2/settings
+- GET /api/v2/chat/sessions
+- GET /api/v2/chat/sessions/:id
+- POST /api/v2/chat/sessions
+- PATCH /api/v2/chat/sessions/:id
+- DELETE /api/v2/chat/sessions/:id
+- POST /api/v2/chat/sessions/:id/messages
 - POST /documents/deduplicate
 - POST /documents/upload
 - POST /documents/ingest-file
@@ -241,3 +251,71 @@
 - Semantic search фильтруется в Qdrant по `node_scope_ids` или `node_ids`.
 - Lexical search фильтруется в PostgreSQL по тем же `nodeId/includeChildren`, тегам документов, document scope, page scope и инженерным фильтрам.
 - `/ui/consult` загружает теги через scoped `/tags`, поэтому окно `#` показывает теги выбранного раздела, а не всей базы.
+
+## UI v2 — API чата
+
+Эти эндпоинты используются страницей `/ui/v2/chat`. Все ответы возвращают
+`{ ok: true, ... }` или `{ ok: false, error: "..." }` с HTTP-кодом ошибки.
+
+- `GET /api/v2/chat/sessions`
+- `POST /api/v2/chat/sessions`
+- `GET /api/v2/chat/sessions/:id`
+- `PATCH /api/v2/chat/sessions/:id`
+- `DELETE /api/v2/chat/sessions/:id`
+- `POST /api/v2/chat/sessions/:id/messages`
+
+И статические HTML-страницы UI v2:
+
+- `GET /ui/v2` — редирект на `/ui/v2/chat`.
+- `GET /ui/v2/chat` — страница «Чат» (готова в итерации 1).
+- `GET /ui/v2/knowledge` — плейсхолдер «В разработке» (итерация 2).
+- `GET /ui/v2/settings` — плейсхолдер «В разработке» (итерация 3).
+
+### Примеры
+
+Список сессий:
+
+```bash
+curl http://localhost:8787/api/v2/chat/sessions
+# → { ok: true, sessions: [ { id, title, mode, filters, createdAt, updatedAt }, ... ] }
+```
+
+Создать пустую сессию:
+
+```bash
+curl -X POST http://localhost:8787/api/v2/chat/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Тестовый чат","mode":"answer","filters":{"nodeIds":[],"documentIds":[]}}'
+# → { ok: true, session: { id, title, mode, filters, createdAt, updatedAt } }
+```
+
+Получить сессию вместе с сообщениями:
+
+```bash
+curl http://localhost:8787/api/v2/chat/sessions/<id>
+# → { ok: true, session: {...}, messages: [ { id, role, content, sources, metadata, createdAt }, ... ] }
+```
+
+Обновить режим/фильтры:
+
+```bash
+curl -X PATCH http://localhost:8787/api/v2/chat/sessions/<id> \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"pages","filters":{"nodeIds":["<node-uuid>"],"documentIds":[]}}'
+```
+
+Отправить сообщение пользователя и получить ответ ассистента:
+
+```bash
+curl -X POST http://localhost:8787/api/v2/chat/sessions/<id>/messages \
+  -H 'Content-Type: application/json' \
+  -d '{"content":"Какие документы есть в базе?"}'
+# → { ok: true, userMessage: {...}, assistantMessage: { content, sources, metadata } }
+```
+
+Удалить сессию (каскадом удалятся сообщения):
+
+```bash
+curl -X DELETE http://localhost:8787/api/v2/chat/sessions/<id>
+# → { ok: true }
+```
