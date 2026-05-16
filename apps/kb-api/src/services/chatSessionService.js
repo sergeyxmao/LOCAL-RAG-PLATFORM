@@ -1,6 +1,10 @@
+import { CloudProviderError } from "../providers/cloudChatProvider.js";
+
 const DEFAULT_TITLE = "Новый чат";
 const MAX_TITLE_LENGTH = 60;
 const SUPPORTED_MODES = new Set(["answer", "pages"]);
+const SUPPORTED_PROVIDERS = new Set(["local", "cloud"]);
+const CLOUD_HISTORY_PAIRS = 6;
 
 function buildTitleFromContent(content) {
   if (typeof content !== "string") {
@@ -19,6 +23,11 @@ function buildTitleFromContent(content) {
 function normalizeMode(value) {
   const text = String(value ?? "").trim().toLowerCase();
   return SUPPORTED_MODES.has(text) ? text : "answer";
+}
+
+function normalizeProvider(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  return SUPPORTED_PROVIDERS.has(text) ? text : "local";
 }
 
 function normalizeFilters(value) {
@@ -58,6 +67,7 @@ function mapSessionRow(row) {
     title: row.title,
     mode: row.mode,
     filters: row.filters ?? { nodeIds: [], documentIds: [] },
+    provider: row.provider || "local",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -94,10 +104,22 @@ function compactSourceForStorage(source) {
 }
 
 export class ChatSessionService {
-  constructor({ postgresProvider, answerService, searchService }) {
+  constructor({
+    postgresProvider,
+    answerService,
+    searchService,
+    chatProvider,
+    cloudChatProvider,
+    appSettingsService,
+    modelsConfig,
+  }) {
     this.postgresProvider = postgresProvider;
     this.answerService = answerService;
     this.searchService = searchService;
+    this.chatProvider = chatProvider;
+    this.cloudChatProvider = cloudChatProvider;
+    this.appSettingsService = appSettingsService;
+    this.modelsConfig = modelsConfig;
   }
 
   get pool() {
@@ -107,7 +129,7 @@ export class ChatSessionService {
   async listSessions({ limit = 50 } = {}) {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     const { rows } = await this.pool.query(
-      `SELECT id, title, mode, filters, created_at, updated_at
+      `SELECT id, title, mode, filters, provider, created_at, updated_at
        FROM chat_sessions
        ORDER BY updated_at DESC
        LIMIT $1`,
@@ -116,23 +138,24 @@ export class ChatSessionService {
     return rows.map(mapSessionRow);
   }
 
-  async createSession({ title, mode, filters } = {}) {
+  async createSession({ title, mode, filters, provider } = {}) {
     const safeTitle = title && String(title).trim() ? String(title).trim() : DEFAULT_TITLE;
     const safeMode = normalizeMode(mode);
     const safeFilters = normalizeFilters(filters);
+    const safeProvider = normalizeProvider(provider);
 
     const { rows } = await this.pool.query(
-      `INSERT INTO chat_sessions (title, mode, filters)
-       VALUES ($1, $2, $3::jsonb)
-       RETURNING id, title, mode, filters, created_at, updated_at`,
-      [safeTitle, safeMode, JSON.stringify(safeFilters)]
+      `INSERT INTO chat_sessions (title, mode, filters, provider)
+       VALUES ($1, $2, $3::jsonb, $4)
+       RETURNING id, title, mode, filters, provider, created_at, updated_at`,
+      [safeTitle, safeMode, JSON.stringify(safeFilters), safeProvider]
     );
     return mapSessionRow(rows[0]);
   }
 
   async getSessionById(id) {
     const { rows } = await this.pool.query(
-      `SELECT id, title, mode, filters, created_at, updated_at
+      `SELECT id, title, mode, filters, provider, created_at, updated_at
        FROM chat_sessions
        WHERE id = $1`,
       [id]
@@ -160,7 +183,7 @@ export class ChatSessionService {
     return { session, messages };
   }
 
-  async updateSession(id, { title, mode, filters } = {}) {
+  async updateSession(id, { title, mode, filters, provider } = {}) {
     const session = await this.getSessionById(id);
     if (!session) {
       return null;
@@ -186,6 +209,11 @@ export class ChatSessionService {
       params.push(JSON.stringify(normalizeFilters(filters)));
     }
 
+    if (provider !== undefined) {
+      sets.push(`provider = $${index++}`);
+      params.push(normalizeProvider(provider));
+    }
+
     if (sets.length === 0) {
       return session;
     }
@@ -197,7 +225,7 @@ export class ChatSessionService {
       `UPDATE chat_sessions
        SET ${sets.join(", ")}
        WHERE id = $${index}
-       RETURNING id, title, mode, filters, created_at, updated_at`,
+       RETURNING id, title, mode, filters, provider, created_at, updated_at`,
       params
     );
     return mapSessionRow(rows[0] ?? null);
@@ -293,6 +321,7 @@ export class ChatSessionService {
           content,
           sources: items,
           metadata: {
+            provider: "local",
             mode,
             filters,
             durationMs: Date.now() - startedAt,
@@ -304,14 +333,19 @@ export class ChatSessionService {
           content: `Не удалось выполнить поиск страниц: ${this.describeError(error)}`,
           sources: [],
           metadata: {
+            provider: "local",
             mode: "error",
             filters,
             durationMs: Date.now() - startedAt,
             searchMode: "pages",
-            error: String(error?.message ?? error),
+            error: { code: "search_error", message: String(error?.message ?? error) },
           },
         };
       }
+    }
+
+    if (session.provider === "cloud") {
+      return this.generateCloudAnswer(session, question, { options, filters, startedAt });
     }
 
     try {
@@ -320,6 +354,8 @@ export class ChatSessionService {
         content: result.answer,
         sources: Array.isArray(result.sources) ? result.sources : [],
         metadata: {
+          provider: "local",
+          model: this.modelsConfig?.chat?.model || null,
           mode: result.mode ?? "llm",
           filters,
           durationMs: Date.now() - startedAt,
@@ -331,14 +367,170 @@ export class ChatSessionService {
         content: `Не удалось получить ответ: ${this.describeError(error)}`,
         sources: [],
         metadata: {
+          provider: "local",
+          model: this.modelsConfig?.chat?.model || null,
           mode: "error",
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
-          error: String(error?.message ?? error),
+          error: { code: "local_error", message: String(error?.message ?? error) },
         },
       };
     }
+  }
+
+  async generateCloudAnswer(session, question, { options, filters, startedAt }) {
+    if (!this.appSettingsService || !this.cloudChatProvider) {
+      return {
+        content: "Облачный провайдер не подключён в сборке kb-api.",
+        sources: [],
+        metadata: {
+          provider: "cloud",
+          mode: "error",
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+          error: { code: "no_credentials", message: "Облачный провайдер не подключён." },
+        },
+      };
+    }
+
+    const cloud = await this.appSettingsService.getCloudProvider();
+    if (!cloud.baseUrl || !cloud.apiKey || !cloud.model) {
+      return {
+        content: "Облако не настроено. Откройте «Настройки» и заполните параметры облачного провайдера.",
+        sources: [],
+        metadata: {
+          provider: "cloud",
+          mode: "error",
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+          error: {
+            code: "no_credentials",
+            message: "Облако не настроено. Заполните Base URL, API-ключ и модель.",
+          },
+        },
+      };
+    }
+
+    let sources = [];
+    try {
+      const hybrid = await this.searchService.hybridSearch(question, options);
+      sources = Array.isArray(hybrid?.items) ? hybrid.items : [];
+    } catch (error) {
+      return {
+        content: `Не удалось выполнить поиск перед обращением к облаку: ${this.describeError(error)}`,
+        sources: [],
+        metadata: {
+          provider: "cloud",
+          model: cloud.model,
+          mode: "error",
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+          error: { code: "search_error", message: String(error?.message ?? error) },
+        },
+      };
+    }
+
+    const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
+    const messages = this.buildCloudMessages({ question, sources, history });
+
+    try {
+      const result = await this.cloudChatProvider.generate({
+        messages,
+        model: cloud.model,
+        baseUrl: cloud.baseUrl,
+        apiKey: cloud.apiKey,
+        maxTokens: 1024,
+      });
+      return {
+        content: result.content,
+        sources,
+        metadata: {
+          provider: "cloud",
+          providerName: cloud.name || "Cloud",
+          model: result.model || cloud.model,
+          mode: "llm",
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+          tokensIn: result.usage?.promptTokens ?? 0,
+          tokensOut: result.usage?.completionTokens ?? 0,
+        },
+      };
+    } catch (error) {
+      const isCloudErr = error instanceof CloudProviderError;
+      return {
+        content: isCloudErr
+          ? error.userMessage
+          : `Сбой облачного провайдера: ${this.describeError(error)}`,
+        sources,
+        metadata: {
+          provider: "cloud",
+          providerName: cloud.name || "Cloud",
+          model: cloud.model,
+          mode: "error",
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+          error: {
+            code: isCloudErr ? error.code : "server_error",
+            message: isCloudErr ? error.userMessage : String(error?.message ?? error),
+          },
+        },
+      };
+    }
+  }
+
+  async loadRecentHistoryForCloud(sessionId, pairs) {
+    const limit = Math.max(1, Math.min(20, Number(pairs) || 6)) * 2;
+    const { rows } = await this.pool.query(
+      `SELECT role, content
+       FROM chat_messages
+       WHERE session_id = $1 AND role IN ('user', 'assistant')
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2`,
+      [sessionId, limit]
+    );
+    return rows
+      .reverse()
+      .map((row) => ({ role: row.role, content: String(row.content || "") }));
+  }
+
+  buildCloudMessages({ question, sources, history }) {
+    const contextBlock = (sources || [])
+      .slice(0, 6)
+      .map((source, index) => {
+        const lines = [`Источник ${index + 1}:`];
+        if (source.title) lines.push(`Заголовок: ${source.title}`);
+        if (source.source_path) lines.push(`Путь: ${source.source_path}`);
+        if (Array.isArray(source.node_paths) && source.node_paths.length) {
+          lines.push(`Разделы: ${source.node_paths.join("; ")}`);
+        }
+        if (typeof source.page_number === "number") {
+          lines.push(`Страница: ${source.page_number}`);
+        }
+        if (typeof source.text === "string") {
+          lines.push(source.text.slice(0, 1200));
+        }
+        return lines.join("\n");
+      })
+      .join("\n\n---\n\n");
+
+    const systemContent = [
+      "Ты локальный консультант по рабочим документам АСУ ТП.",
+      "Отвечай только на основе предоставленных источников. Если источников недостаточно — скажи об этом прямо.",
+      "Добавляй ссылки на источники в виде [1], [2]. Отвечай по-русски.",
+      contextBlock ? `Источники:\n${contextBlock}` : "Источники не найдены.",
+    ].join("\n\n");
+
+    return [
+      { role: "system", content: systemContent },
+      ...(history || []),
+      { role: "user", content: question },
+    ];
   }
 
   describeError(error) {
@@ -378,7 +570,7 @@ export class ChatSessionService {
       role: "user",
       content: trimmed,
       sources: [],
-      metadata: { mode: session.mode },
+      metadata: { mode: session.mode, provider: session.provider },
     });
 
     await this.maybeUpdateTitleFromFirstMessage(sessionId, trimmed);

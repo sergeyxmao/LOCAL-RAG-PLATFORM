@@ -1,4 +1,5 @@
 import { renderNodesHtml } from "./uiNodes.js";
+import { adminFlagPreHandler } from "./adminFlag.js";
 
 function renderConsultantHtml() {
   return `<!doctype html>
@@ -7955,6 +7956,8 @@ function renderJobsHtml() {
 }
 
 export async function uiRoutes(app) {
+  app.addHook("preHandler", adminFlagPreHandler);
+
   app.get("/ui/consult", async (_request, reply) => {
     reply.type("text/html; charset=utf-8");
     return renderConsultantHtml();

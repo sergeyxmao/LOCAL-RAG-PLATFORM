@@ -1,0 +1,193 @@
+import { CloudProviderError } from "../providers/cloudChatProvider.js";
+import { isMaskOrEmpty } from "../services/appSettingsService.js";
+
+function respondError(reply, statusCode, message, extras = {}) {
+  reply.code(statusCode);
+  return { ok: false, error: message, ...extras };
+}
+
+async function checkOllama(baseUrl) {
+  if (!baseUrl) return { ok: false, error: "Не задан Base URL Ollama" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/tags`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!response.ok) return { ok: false, status: response.status };
+    return { ok: true };
+  } catch (error) {
+    clearTimeout(timer);
+    return { ok: false, error: error?.message || "Ollama недоступна" };
+  }
+}
+
+async function checkPostgres(postgresProvider) {
+  try {
+    await postgresProvider.pool.query("SELECT 1");
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error?.message || "Postgres недоступен" };
+  }
+}
+
+async function checkQdrant(qdrantProvider) {
+  try {
+    const url = qdrantProvider?.url || qdrantProvider?.config?.url || null;
+    if (qdrantProvider?.client?.getCollections) {
+      await qdrantProvider.client.getCollections();
+      return { ok: true };
+    }
+    if (url) {
+      const response = await fetch(`${url.replace(/\/+$/, "")}/collections`, {
+        method: "GET",
+        signal: AbortSignal.timeout(4000),
+      });
+      return { ok: response.ok, status: response.status };
+    }
+    return { ok: false, error: "Qdrant провайдер не настроен" };
+  } catch (error) {
+    return { ok: false, error: error?.message || "Qdrant недоступен" };
+  }
+}
+
+export async function settingsApiRoutes(app) {
+  app.get("/api/v2/settings", async (request, reply) => {
+    try {
+      const settings = await app.appSettingsService.getAllPublic();
+      const models = {
+        chat: {
+          provider: app.config.models.chat.provider,
+          model: app.config.models.chat.model,
+          baseUrl: app.config.models.chat.base_url,
+        },
+        embedding: {
+          provider: app.config.models.embedding.provider,
+          model: app.config.models.embedding.model,
+          baseUrl: app.config.models.embedding.base_url,
+        },
+      };
+      const retrieval = {
+        semantic: app.config.retrieval?.semantic || null,
+        lexical: app.config.retrieval?.lexical || null,
+        fusion: app.config.retrieval?.fusion || null,
+      };
+      return { ok: true, settings, models, retrieval };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки");
+      return respondError(reply, 500, error.message || "Не удалось получить настройки");
+    }
+  });
+
+  app.get("/api/v2/settings/cloudProvider", async (request, reply) => {
+    try {
+      const cloudProvider = await app.appSettingsService.getCloudProviderPublic();
+      return { ok: true, cloudProvider };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки облака");
+      return respondError(reply, 500, error.message || "Не удалось получить настройки облака");
+    }
+  });
+
+  app.patch("/api/v2/settings/cloudProvider", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const payload = {};
+      if (body.name !== undefined) payload.name = body.name;
+      if (body.baseUrl !== undefined) payload.baseUrl = body.baseUrl;
+      if (body.model !== undefined) payload.model = body.model;
+      if (body.useByDefault !== undefined) payload.useByDefault = body.useByDefault === true;
+      if (body.apiKey !== undefined) payload.apiKey = body.apiKey;
+      const cloudProvider = await app.appSettingsService.updateCloudProvider(payload);
+      return { ok: true, cloudProvider };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сохранить настройки облака");
+      return respondError(reply, 500, error.message || "Не удалось сохранить настройки облака");
+    }
+  });
+
+  app.post("/api/v2/settings/cloudProvider/test", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const stored = await app.appSettingsService.getCloudProvider();
+
+      const baseUrl =
+        body.baseUrl !== undefined && String(body.baseUrl || "").trim()
+          ? String(body.baseUrl).trim()
+          : stored.baseUrl;
+      const model =
+        body.model !== undefined && String(body.model || "").trim()
+          ? String(body.model).trim()
+          : stored.model;
+      const apiKey =
+        body.apiKey !== undefined && !isMaskOrEmpty(body.apiKey)
+          ? String(body.apiKey)
+          : stored.apiKey;
+
+      if (!baseUrl || !apiKey || !model) {
+        reply.code(400);
+        return {
+          ok: false,
+          code: "no_credentials",
+          message: "Укажите Base URL, API-ключ и модель.",
+        };
+      }
+
+      const result = await app.cloudChatProvider.testConnection({
+        baseUrl,
+        apiKey,
+        model,
+      });
+      request.log.info(
+        { model, latencyMs: result.latencyMs, tokensUsed: result.tokensUsed },
+        "Cloud provider connectivity test succeeded"
+      );
+      return { ok: true, ...result };
+    } catch (error) {
+      const isCloudErr = error instanceof CloudProviderError;
+      request.log.warn(
+        { code: isCloudErr ? error.code : "unknown", message: isCloudErr ? error.userMessage : error.message },
+        "Cloud provider connectivity test failed"
+      );
+      reply.code(200);
+      return {
+        ok: false,
+        code: isCloudErr ? error.code : "server_error",
+        message: isCloudErr ? error.userMessage : `Сбой: ${error.message || error}`,
+      };
+    }
+  });
+
+  app.patch("/api/v2/settings/theme", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const theme = await app.appSettingsService.updateTheme({
+        defaultTheme: body.defaultTheme,
+      });
+      return { ok: true, theme };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сохранить тему");
+      return respondError(reply, 500, error.message || "Не удалось сохранить тему");
+    }
+  });
+
+  app.get("/api/v2/settings/services", async (request, reply) => {
+    const ollamaBase = app.config.models.chat.base_url;
+    const [postgres, qdrant, ollama] = await Promise.all([
+      checkPostgres(app.postgresProvider),
+      checkQdrant(app.qdrantProvider),
+      checkOllama(ollamaBase),
+    ]);
+    return {
+      ok: true,
+      services: {
+        kbApi: { ok: true, message: "kb-api запущен" },
+        postgres: postgres,
+        qdrant: qdrant,
+        ollama: { ...ollama, baseUrl: ollamaBase },
+      },
+    };
+  });
+}

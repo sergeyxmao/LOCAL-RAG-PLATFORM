@@ -25,10 +25,18 @@ export async function chatSessionRoutes(app) {
   app.post("/api/v2/chat/sessions", async (request, reply) => {
     try {
       const body = request.body ?? {};
+      let provider = body.provider;
+      if (!provider && app.appSettingsService) {
+        const cloud = await app.appSettingsService.getCloudProvider();
+        if (cloud.useByDefault && cloud.baseUrl && cloud.apiKey && cloud.model) {
+          provider = "cloud";
+        }
+      }
       const session = await app.chatSessionService.createSession({
         title: body.title,
         mode: body.mode,
         filters: body.filters,
+        provider,
       });
       reply.code(201);
       return { ok: true, session };
@@ -66,6 +74,7 @@ export async function chatSessionRoutes(app) {
         title: body.title,
         mode: body.mode,
         filters: body.filters,
+        provider: body.provider,
       });
       if (!updated) {
         return respondError(reply, 404, "Сессия чата не найдена");

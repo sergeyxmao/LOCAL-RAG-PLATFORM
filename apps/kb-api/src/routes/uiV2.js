@@ -1,5 +1,6 @@
 import { renderChatPage } from "./uiV2Chat.js";
 import { renderKnowledgePage } from "./uiV2Knowledge.js";
+import { renderSettingsPage } from "./uiV2Settings.js";
 
 export const ICONS = {
   messageCircle:
@@ -367,13 +368,23 @@ function renderLayoutCss() {
   `;
 }
 
-function renderThemeBootstrapScript() {
+function renderThemeBootstrapScript(themeDefault = "dark") {
+  const safeDefault = ["dark", "light", "system"].includes(themeDefault) ? themeDefault : "dark";
   return `
     (function () {
       try {
         var stored = localStorage.getItem("localrag.theme");
-        var theme = stored === "light" || stored === "dark" ? stored : "dark";
-        document.documentElement.setAttribute("data-theme", theme);
+        if (stored === "light" || stored === "dark") {
+          document.documentElement.setAttribute("data-theme", stored);
+          return;
+        }
+        var serverDefault = "${safeDefault}";
+        if (serverDefault === "system" && window.matchMedia) {
+          var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+        } else {
+          document.documentElement.setAttribute("data-theme", serverDefault === "light" ? "light" : "dark");
+        }
       } catch (err) {
         document.documentElement.setAttribute("data-theme", "dark");
       }
@@ -424,7 +435,7 @@ function renderSidebar({ activeNav, sidebarExtra = "" }) {
       <nav class="nav" aria-label="Главные разделы">${linksHtml}</nav>
       ${sidebarExtra}
       <div class="sidebar__footer">
-        <a class="sidebar__legacy-link" href="/ui/consult">${ICONS.arrowLeft}<span>Старый интерфейс</span></a>
+        <a class="sidebar__legacy-link" href="/ui/consult?admin=1" title="Включает админ-режим на 1 час">${ICONS.arrowLeft}<span>Админ-режим (старый интерфейс)</span></a>
       </div>
     </aside>
   `;
@@ -462,6 +473,7 @@ export function renderLayout({
   sidebarExtra = "",
   bodyClass = "",
   pageScript = "",
+  themeDefault = "dark",
 }) {
   const documentTitle = pageDocumentTitle || `${pageTitle} — LOCAL-RAG`;
 
@@ -475,7 +487,7 @@ export function renderLayout({
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
   <style>${renderLayoutCss()}</style>
-  <script>${renderThemeBootstrapScript()}</script>
+  <script>${renderThemeBootstrapScript(themeDefault)}</script>
 </head>
 <body class="${escapeAttr(bodyClass)}">
   <div class="app-shell">
@@ -503,29 +515,46 @@ function renderPlaceholderPage({ activeNav, pageTitle, heading, body }) {
   return renderLayout({ activeNav, pageTitle, content });
 }
 
+async function resolveThemeDefault(app, request) {
+  if (!app.appSettingsService) return "dark";
+  try {
+    const theme = await app.appSettingsService.getTheme();
+    return theme.defaultTheme;
+  } catch (error) {
+    request.log.warn({ err: error }, "Не удалось получить дефолтную тему");
+    return "dark";
+  }
+}
+
 export async function uiV2Routes(app) {
   app.get("/ui/v2", async (_request, reply) => {
     reply.redirect(302, "/ui/v2/chat");
   });
 
-  app.get("/ui/v2/chat", async (_request, reply) => {
+  app.get("/ui/v2/chat", async (request, reply) => {
     reply.type("text/html; charset=utf-8");
-    return renderChatPage({ ICONS, renderLayout });
+    const themeDefault = await resolveThemeDefault(app, request);
+    return renderChatPage({
+      ICONS,
+      renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
+    });
   });
 
-  app.get("/ui/v2/knowledge", async (_request, reply) => {
+  app.get("/ui/v2/knowledge", async (request, reply) => {
     reply.type("text/html; charset=utf-8");
-    return renderKnowledgePage({ ICONS, renderLayout });
+    const themeDefault = await resolveThemeDefault(app, request);
+    return renderKnowledgePage({
+      ICONS,
+      renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
+    });
   });
 
-  app.get("/ui/v2/settings", async (_request, reply) => {
+  app.get("/ui/v2/settings", async (request, reply) => {
     reply.type("text/html; charset=utf-8");
-    return renderPlaceholderPage({
-      activeNav: "settings",
-      pageTitle: "Настройки",
-      heading: "В разработке",
-      body:
-        "Раздел «Настройки» появится в финальной итерации UI v2. Здесь будут параметры моделей, диагностика Qdrant и Postgres, переключение тёмной/светлой темы по умолчанию и системные действия. Пока конфигурация управляется через файлы и старый интерфейс.",
+    const themeDefault = await resolveThemeDefault(app, request);
+    return renderSettingsPage({
+      ICONS,
+      renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
     });
   });
 }

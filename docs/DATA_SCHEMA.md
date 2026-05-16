@@ -150,3 +150,44 @@ Qdrant payload документа теперь можно пересчитать
 которая вызывается из `ensureRuntimeSchema()` при старте `kb-api`. Расширение
 `pgcrypto` уже включается выше для основного DDL, поэтому отдельно его создавать
 не требуется.
+
+## Таблица app_settings (итерация 3)
+
+Bag-O-Settings для произвольных настроек проекта. Идемпотентно создаётся в
+`PostgresProvider.ensureAppSettingsSchema()` вместе с колонкой
+`chat_sessions.provider`.
+
+`app_settings`:
+
+- `key TEXT PRIMARY KEY` — имя настройки;
+- `value JSONB NOT NULL DEFAULT '{}'::jsonb` — структурированное значение;
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
+
+Используемые сейчас ключи:
+
+- `cloudProvider` → `{ name, baseUrl, apiKey, model, useByDefault }`. См.
+  `docs/CLOUD_PROVIDER.md`. **Важно:** `apiKey` хранится в plaintext. В API
+  наружу всегда возвращается маска (`sk-•••••a3f9`).
+- `theme` → `{ defaultTheme: 'dark' | 'light' | 'system' }`. Применяется как
+  серверный дефолт для пользователей без `localStorage.localrag.theme`.
+
+Колонка `chat_sessions.provider`:
+
+- Тип `TEXT NOT NULL DEFAULT 'local'`.
+- Значения: `'local'` (генерация через `OllamaChatProvider`) или `'cloud'`
+  (генерация через `CloudChatProvider` с настройками из
+  `app_settings.cloudProvider`).
+- CHECK не ставится — чтобы можно было добавить новый провайдер без миграции.
+- Существующие до итерации 3 сессии автоматически получают `'local'` благодаря
+  DEFAULT.
+
+Дополнительные поля `chat_messages.metadata` (JSONB, без миграции):
+
+- `provider`: `'local'` / `'cloud'` — снимок провайдера на момент ответа.
+- `providerName`: имя провайдера (только для облака).
+- `model`: имя модели, которая отвечала.
+- `tokensIn`, `tokensOut`: количество входных/выходных токенов (только облако).
+- `durationMs`: число (для облака — время до получения ответа; для локалки —
+  суммарное время через `answerService`).
+- `error`: `{ code, message }` при ошибке провайдера. Коды описаны в
+  `docs/CLOUD_PROVIDER.md`.

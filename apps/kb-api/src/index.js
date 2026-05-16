@@ -6,12 +6,15 @@ import { PostgresProvider } from "./providers/postgresProvider.js";
 import { QdrantProvider } from "./providers/qdrantProvider.js";
 import { OllamaEmbeddingProvider } from "./providers/ollamaEmbeddingProvider.js";
 import { OllamaChatProvider } from "./providers/ollamaChatProvider.js";
+import { CloudChatProvider } from "./providers/cloudChatProvider.js";
 import { ExtractorService } from "./services/extractorService.js";
 import { IngestionService } from "./services/ingestionService.js";
 import { SearchService } from "./services/searchService.js";
 import { AnswerService } from "./services/answerService.js";
 import { VisualAssetService } from "./services/visualAssetService.js";
 import { ChatSessionService } from "./services/chatSessionService.js";
+import { AppSettingsService } from "./services/appSettingsService.js";
+import { settingsApiRoutes } from "./routes/settingsApi.js";
 import { healthRoutes } from "./routes/health.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { documentRoutes } from "./routes/documents.js";
@@ -78,10 +81,17 @@ const answerService = new AnswerService({
   modelsConfig: appConfig.models,
 });
 
+const appSettingsService = new AppSettingsService({ postgresProvider });
+const cloudChatProvider = new CloudChatProvider();
+
 const chatSessionService = new ChatSessionService({
   postgresProvider,
   answerService,
   searchService,
+  chatProvider,
+  cloudChatProvider,
+  appSettingsService,
+  modelsConfig: appConfig.models,
 });
 
 app.decorate("config", appConfig);
@@ -95,6 +105,8 @@ app.decorate("ingestionService", ingestionService);
 app.decorate("searchService", searchService);
 app.decorate("answerService", answerService);
 app.decorate("chatSessionService", chatSessionService);
+app.decorate("appSettingsService", appSettingsService);
+app.decorate("cloudChatProvider", cloudChatProvider);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -106,6 +118,7 @@ await app.register(jobRoutes);
 await app.register(nodeRoutes);
 await app.register(adminRoutes);
 await app.register(uiStateRoutes);
+await app.register(settingsApiRoutes);
 await app.register(chatSessionRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);

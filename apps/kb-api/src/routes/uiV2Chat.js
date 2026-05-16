@@ -53,6 +53,87 @@ function renderChatCss() {
       color: var(--text-muted);
     }
     .chat-mode-hint .mono { color: var(--text); }
+    .chat-mode-row__group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .provider-toggle {
+      display: inline-flex;
+      background: var(--surface-2);
+      border-radius: 8px;
+      padding: 4px;
+      gap: 2px;
+    }
+    .provider-toggle__btn {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      cursor: pointer;
+    }
+    .provider-toggle__btn.is-active {
+      background: var(--surface);
+      color: var(--text-strong);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    }
+    html[data-theme="dark"] .provider-toggle__btn.is-active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .provider-toggle__btn[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .cloud-banner {
+      margin: 8px 24px 0;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(245, 158, 11, 0.10);
+      color: #B45309;
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      font-size: 12px;
+      display: none;
+      align-items: center;
+      gap: 6px;
+    }
+    html[data-theme="dark"] .cloud-banner {
+      color: #FCD34D;
+      background: rgba(245, 158, 11, 0.10);
+      border-color: rgba(245, 158, 11, 0.30);
+    }
+    .cloud-banner.is-visible { display: flex; }
+    .msg__error {
+      margin-top: 6px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(239, 68, 68, 0.10);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.30);
+      font-size: 13px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .msg__error button {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .msg__error button:hover { background: var(--surface-2); }
     .filter-summary {
       font-size: 12px;
       color: var(--text-muted);
@@ -503,6 +584,7 @@ function renderChatScript(initialStateJson) {
         filtersOpen: false,
         loadingMessage: false,
         documentSearchTerm: "",
+        cloudProvider: { configured: false, name: "Cloud", useByDefault: false },
       };
 
       var dom = {
@@ -510,6 +592,8 @@ function renderChatScript(initialStateJson) {
         newChatBtn: document.getElementById("newChatBtn"),
         modeToggle: document.getElementById("modeToggle"),
         modeHint: document.getElementById("modeHint"),
+        providerToggle: document.getElementById("providerToggle"),
+        cloudBanner: document.getElementById("cloudBanner"),
         filterSummary: document.getElementById("filterSummary"),
         stream: document.getElementById("chatStream"),
         textarea: document.getElementById("composerInput"),
@@ -593,6 +677,74 @@ function renderChatScript(initialStateJson) {
         return s ? s.mode : "answer";
       }
 
+      function getActiveProvider() {
+        var s = getActiveSession();
+        return (s && s.provider) || (state.cloudProvider.useByDefault && state.cloudProvider.configured ? "cloud" : "local");
+      }
+
+      function renderProviderToggle() {
+        if (!dom.providerToggle) return;
+        var current = getActiveProvider();
+        var configured = state.cloudProvider.configured;
+        var name = state.cloudProvider.name || "Cloud";
+        var localBtn = dom.providerToggle.querySelector('[data-provider="local"]');
+        var cloudBtn = dom.providerToggle.querySelector('[data-provider="cloud"]');
+        if (localBtn) localBtn.classList.toggle("is-active", current === "local");
+        if (cloudBtn) {
+          cloudBtn.classList.toggle("is-active", current === "cloud");
+          cloudBtn.disabled = !configured;
+          cloudBtn.title = configured ? ("Облако: " + name) : "Настройте облако в разделе Настройки";
+          var labelSpan = cloudBtn.querySelector(".provider-toggle__name");
+          if (labelSpan) labelSpan.textContent = name;
+        }
+        if (dom.cloudBanner) {
+          if (current === "cloud" && configured) {
+            dom.cloudBanner.classList.add("is-visible");
+            dom.cloudBanner.innerHTML = "Фрагменты документов уйдут во внешний API (" + escapeHtml(name) + ").";
+          } else {
+            dom.cloudBanner.classList.remove("is-visible");
+            dom.cloudBanner.innerHTML = "";
+          }
+        }
+      }
+
+      function loadCloudProviderInfo() {
+        return fetch("/api/v2/settings/cloudProvider").then(function (r) {
+          return r.json().then(function (data) {
+            if (data && data.ok && data.cloudProvider) {
+              state.cloudProvider = {
+                configured: data.cloudProvider.configured === true,
+                name: data.cloudProvider.name || "Cloud",
+                useByDefault: data.cloudProvider.useByDefault === true,
+              };
+            }
+          });
+        }).catch(function () {
+          state.cloudProvider = { configured: false, name: "Cloud", useByDefault: false };
+        });
+      }
+
+      function setProvider(provider) {
+        if (provider === "cloud" && !state.cloudProvider.configured) {
+          showToast("Облако не настроено. Откройте раздел Настройки.", "error");
+          return Promise.resolve();
+        }
+        if (!state.activeSessionId) {
+          return createSession(getActiveMode() || "answer", provider).then(renderProviderToggle);
+        }
+        var session = getActiveSession();
+        if (!session) return Promise.resolve();
+        session.provider = provider;
+        renderProviderToggle();
+        return api("PATCH", "/api/v2/chat/sessions/" + state.activeSessionId, { provider: provider }).then(function (data) {
+          var idx = state.sessions.findIndex(function (s) { return s.id === state.activeSessionId; });
+          if (idx >= 0) state.sessions[idx] = data.session;
+          renderProviderToggle();
+        }).catch(function (err) {
+          showToast("Не удалось сохранить выбор провайдера: " + err.message, "error");
+        });
+      }
+
       function renderModeToggle() {
         if (!dom.modeToggle) return;
         var mode = getActiveMode();
@@ -673,16 +825,29 @@ function renderChatScript(initialStateJson) {
         }
         var metaParts = [];
         if (message.createdAt) metaParts.push('<span class="mono">' + fmtTime(message.createdAt) + '</span>');
+        var errorHtml = "";
         if (!isUser && message.metadata) {
-          if (message.metadata.mode) metaParts.push('<span>' + escapeHtml(message.metadata.mode) + '</span>');
-          if (typeof message.metadata.durationMs === "number") {
-            metaParts.push('<span class="mono">' + Math.round(message.metadata.durationMs) + ' мс</span>');
+          var meta = message.metadata;
+          if (meta.model) metaParts.push('<span class="mono">' + escapeHtml(meta.model) + '</span>');
+          else if (meta.mode) metaParts.push('<span>' + escapeHtml(meta.mode) + '</span>');
+          if (meta.provider === "cloud" && (typeof meta.tokensIn === "number" || typeof meta.tokensOut === "number")) {
+            metaParts.push('<span class="mono">' + (meta.tokensIn || 0) + ' in / ' + (meta.tokensOut || 0) + ' out</span>');
+          }
+          if (typeof meta.durationMs === "number") {
+            metaParts.push('<span class="mono">' + Math.round(meta.durationMs) + ' мс</span>');
+          }
+          if (meta.error && meta.error.code) {
+            var showSwitch = meta.provider === "cloud" && meta.error.code !== "no_credentials";
+            errorHtml = '<div class="msg__error">' +
+              '<span>' + escapeHtml(meta.error.message || ("Ошибка: " + meta.error.code)) + '</span>' +
+              (showSwitch ? '<button type="button" data-action="switch-to-local" data-msg-id="' + escapeHtml(message.id) + '">Переключиться на локальный ИИ</button>' : '') +
+              '</div>';
           }
         }
         var metaHtml = metaParts.length ? '<div class="msg__meta">' + metaParts.join("") + '</div>' : '';
         return '<article class="msg msg--' + (isUser ? "user" : "assistant") + '">' +
           '<div class="msg__avatar">' + avatar + '</div>' +
-          '<div class="msg__body">' + contentHtml + sourcesHtml + metaHtml + '</div>' +
+          '<div class="msg__body">' + contentHtml + errorHtml + sourcesHtml + metaHtml + '</div>' +
           '</article>';
       }
 
@@ -856,6 +1021,7 @@ function renderChatScript(initialStateJson) {
           ensureSessionFromInitial();
           renderHistory();
           renderModeToggle();
+          renderProviderToggle();
           renderFilterSummary();
         });
       }
@@ -871,8 +1037,11 @@ function renderChatScript(initialStateJson) {
           var session = data.session;
           state.selectedNodeIds = new Set((session.filters && session.filters.nodeIds) || []);
           state.selectedDocumentIds = new Set((session.filters && session.filters.documentIds) || []);
+          var idx = state.sessions.findIndex(function (s) { return s.id === state.activeSessionId; });
+          if (idx >= 0) state.sessions[idx] = session;
           renderHistory();
           renderModeToggle();
+          renderProviderToggle();
           renderFilterSummary();
           renderStream();
           renderNodeTree();
@@ -921,12 +1090,14 @@ function renderChatScript(initialStateJson) {
         });
       }
 
-      function createSession(mode) {
-        return api("POST", "/api/v2/chat/sessions", {
+      function createSession(mode, provider) {
+        var payload = {
           title: "Новый чат",
           mode: mode || "answer",
           filters: { nodeIds: [], documentIds: [] },
-        }).then(function (data) {
+        };
+        if (provider) payload.provider = provider;
+        return api("POST", "/api/v2/chat/sessions", payload).then(function (data) {
           state.sessions.unshift(data.session);
           state.activeSessionId = data.session.id;
           state.messages = [];
@@ -934,6 +1105,7 @@ function renderChatScript(initialStateJson) {
           state.selectedDocumentIds = new Set();
           renderHistory();
           renderModeToggle();
+          renderProviderToggle();
           renderFilterSummary();
           renderStream();
         });
@@ -1023,6 +1195,21 @@ function renderChatScript(initialStateJson) {
             renderStream();
             showToast("Ошибка запроса: " + err.message, "error");
           });
+        });
+      }
+
+      function switchToLocalAndRetry() {
+        if (!state.activeSessionId) return;
+        var lastUser = null;
+        for (var i = state.messages.length - 1; i >= 0; i--) {
+          if (state.messages[i].role === "user") { lastUser = state.messages[i]; break; }
+        }
+        setProvider("local").then(function () {
+          if (lastUser) {
+            dom.textarea.value = lastUser.content;
+            autoresizeTextarea();
+            sendMessage();
+          }
         });
       }
 
@@ -1130,14 +1317,26 @@ function renderChatScript(initialStateJson) {
             var sib = snippetToggle.previousElementSibling;
             if (sib) sib.classList.toggle("is-expanded");
           }
+          var switchBtn = event.target.closest("[data-action='switch-to-local']");
+          if (switchBtn) {
+            switchToLocalAndRetry();
+          }
         });
+
+        if (dom.providerToggle) {
+          dom.providerToggle.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-provider]");
+            if (!btn || btn.disabled) return;
+            setProvider(btn.getAttribute("data-provider"));
+          });
+        }
       }
 
       function bootstrap() {
         dom.chatPage.classList.add("is-filters-collapsed");
         renderEmpty();
         bindEvents();
-        loadSessions().then(loadActiveSession).then(loadNodes);
+        loadCloudProviderInfo().then(loadSessions).then(loadActiveSession).then(loadNodes);
       }
 
       bootstrap();
@@ -1164,12 +1363,19 @@ export function renderChatPage({ ICONS, renderLayout }) {
     <main class="chat-page" id="chatPage">
       <section class="chat-page__main">
         <div class="chat-mode-row">
-          <div class="chat-mode-toggle" id="modeToggle" role="tablist" aria-label="Режим работы">
-            <button type="button" class="chat-mode-toggle__btn is-active" data-mode="answer">Ответ ИИ</button>
-            <button type="button" class="chat-mode-toggle__btn" data-mode="pages">Найти страницы</button>
+          <div class="chat-mode-row__group">
+            <div class="chat-mode-toggle" id="modeToggle" role="tablist" aria-label="Режим работы">
+              <button type="button" class="chat-mode-toggle__btn is-active" data-mode="answer">Ответ ИИ</button>
+              <button type="button" class="chat-mode-toggle__btn" data-mode="pages">Найти страницы</button>
+            </div>
+            <div class="provider-toggle" id="providerToggle" role="tablist" aria-label="Провайдер модели">
+              <button type="button" class="provider-toggle__btn is-active" data-provider="local" title="Локальная Ollama"><span aria-hidden="true">🔒</span><span>Локально</span></button>
+              <button type="button" class="provider-toggle__btn" data-provider="cloud" title="Облачный провайдер"><span aria-hidden="true">⚡</span><span class="provider-toggle__name">Облако</span></button>
+            </div>
           </div>
           <div class="chat-mode-hint" id="modeHint">Режим: <span class="mono">ответ ИИ</span></div>
         </div>
+        <div class="cloud-banner" id="cloudBanner"></div>
         <div class="chat-mode-row" style="border-top:none;padding-top:0;padding-bottom:10px;">
           <div class="filter-summary" id="filterSummary"><span>Фильтры не заданы — поиск идёт по всей базе.</span></div>
         </div>
