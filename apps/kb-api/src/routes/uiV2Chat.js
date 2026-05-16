@@ -544,6 +544,49 @@ function renderChatCss() {
     }
     .toast--error { border-color: var(--danger); color: var(--danger); }
 
+    .chat-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .chat-modal-backdrop.is-open { display: flex; }
+    .chat-modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: min(460px, 92vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow);
+    }
+    .chat-modal__head {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      color: var(--text-strong);
+    }
+    .chat-modal__body {
+      padding: 16px 18px;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .chat-modal__body p { margin: 0 0 8px; }
+    .chat-modal__body p:last-child { margin-bottom: 0; }
+    .chat-modal__body .text-muted { color: var(--text-muted); font-size: 12px; }
+    .chat-modal__foot {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
     @media (max-width: 1100px) {
       .chat-page { grid-template-columns: 1fr; }
       .filters-panel {
@@ -630,9 +673,69 @@ function renderChatScript(initialStateJson) {
         setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 4200);
       }
 
+      function openConfirmModal({ title, bodyHtml, danger, confirmLabel, cancelLabel, onConfirm }) {
+        var backdrop = document.getElementById("chatModalBackdrop");
+        var titleEl = document.getElementById("chatModalTitle");
+        var bodyEl = document.getElementById("chatModalBody");
+        var footEl = document.getElementById("chatModalFoot");
+        if (!backdrop || !bodyEl || !footEl) return;
+        titleEl.textContent = title || "Подтверждение";
+        bodyEl.innerHTML = bodyHtml || "";
+        footEl.innerHTML = "";
+
+        var cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "btn btn--ghost";
+        cancelBtn.textContent = cancelLabel || "Отмена";
+        cancelBtn.addEventListener("click", closeConfirmModal);
+
+        var confirmBtn = document.createElement("button");
+        confirmBtn.type = "button";
+        confirmBtn.className = "btn " + (danger ? "btn--danger" : "btn--accent");
+        confirmBtn.textContent = confirmLabel || "OK";
+        confirmBtn.addEventListener("click", function () {
+          closeConfirmModal();
+          if (typeof onConfirm === "function") onConfirm();
+        });
+
+        footEl.appendChild(cancelBtn);
+        footEl.appendChild(confirmBtn);
+        backdrop.classList.add("is-open");
+      }
+
+      function closeConfirmModal() {
+        var backdrop = document.getElementById("chatModalBackdrop");
+        if (backdrop) backdrop.classList.remove("is-open");
+      }
+
+      function confirmDeleteSession(id, title) {
+        openConfirmModal({
+          title: "Удалить чат?",
+          bodyHtml: '<p>Чат «<strong>' + escapeHtml(title || "без названия") + '</strong>» и вся его история будут удалены без возможности восстановления.</p>' +
+                    '<p class="text-muted">Сообщения и вложенные источники удалятся каскадом.</p>',
+          danger: true,
+          confirmLabel: "Удалить чат",
+          onConfirm: function () {
+            api("DELETE", "/api/v2/chat/sessions/" + id).then(function () {
+              state.sessions = state.sessions.filter(function (s) { return s.id !== id; });
+              if (state.activeSessionId === id) {
+                state.activeSessionId = state.sessions[0] ? state.sessions[0].id : null;
+                loadActiveSession();
+              } else {
+                renderHistory();
+              }
+              showToast("Чат удалён");
+            }).catch(function (err) { showToast("Не удалось удалить: " + err.message, "error"); });
+          },
+        });
+      }
+
       function api(method, path, body) {
-        var opts = { method: method, headers: { "Content-Type": "application/json" } };
-        if (body !== undefined) opts.body = JSON.stringify(body);
+        var opts = { method: method, headers: {} };
+        if (body !== undefined) {
+          opts.headers["Content-Type"] = "application/json";
+          opts.body = JSON.stringify(body);
+        }
         return fetch(path, opts).then(function (response) {
           return response.json().then(function (data) {
             if (!response.ok || (data && data.ok === false)) {
@@ -1332,17 +1435,9 @@ function renderChatScript(initialStateJson) {
           var deleteBtn = event.target.closest("[data-action='delete-session']");
           if (deleteBtn) {
             event.stopPropagation();
-            var id = deleteBtn.getAttribute("data-session-id");
-            if (!confirm("Удалить этот чат?")) return;
-            api("DELETE", "/api/v2/chat/sessions/" + id).then(function () {
-              state.sessions = state.sessions.filter(function (s) { return s.id !== id; });
-              if (state.activeSessionId === id) {
-                state.activeSessionId = state.sessions[0] ? state.sessions[0].id : null;
-                loadActiveSession();
-              } else {
-                renderHistory();
-              }
-            }).catch(function (err) { showToast("Не удалось удалить: " + err.message, "error"); });
+            var delId = deleteBtn.getAttribute("data-session-id");
+            var sess = state.sessions.find(function (s) { return s.id === delId; });
+            confirmDeleteSession(delId, sess ? sess.title : "");
             return;
           }
           var item = event.target.closest("[data-session-id]");
@@ -1425,10 +1520,23 @@ function renderChatScript(initialStateJson) {
         }
       }
 
+      function bindModal() {
+        var backdrop = document.getElementById("chatModalBackdrop");
+        if (backdrop) {
+          backdrop.addEventListener("click", function (e) {
+            if (e.target === backdrop) closeConfirmModal();
+          });
+        }
+        document.addEventListener("keydown", function (e) {
+          if (e.key === "Escape") closeConfirmModal();
+        });
+      }
+
       function bootstrap() {
         dom.chatPage.classList.add("is-filters-collapsed");
         renderEmpty();
         bindEvents();
+        bindModal();
         loadCloudProviderInfo().then(loadSessions).then(loadActiveSession).then(loadNodes);
       }
 
@@ -1509,6 +1617,13 @@ export function renderChatPage({ ICONS, renderLayout }) {
         </div>
       </aside>
     </main>
+    <div class="chat-modal-backdrop" id="chatModalBackdrop">
+      <div class="chat-modal" role="dialog" aria-modal="true">
+        <div class="chat-modal__head" id="chatModalTitle">Подтверждение</div>
+        <div class="chat-modal__body" id="chatModalBody"></div>
+        <div class="chat-modal__foot" id="chatModalFoot"></div>
+      </div>
+    </div>
   `;
 
   const initialState = {
