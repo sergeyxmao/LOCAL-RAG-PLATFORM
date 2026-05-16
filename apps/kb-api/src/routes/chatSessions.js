@@ -129,10 +129,15 @@ export async function chatSessionRoutes(app) {
       }
     };
 
+    let serverClosing = false;
     const abortController = new AbortController();
-    request.raw.on("close", () => {
-      if (!reply.raw.writableEnded) abortController.abort();
-    });
+    const onClientGone = () => {
+      if (serverClosing) return;
+      if (abortController.signal.aborted) return;
+      abortController.abort();
+    };
+    request.raw.on("aborted", onClientGone);
+    request.raw.on("close", onClientGone);
 
     try {
       await app.chatSessionService.streamAssistantMessage(id, String(body.content), {
@@ -151,6 +156,7 @@ export async function chatSessionRoutes(app) {
         send("error", { code: "server_error", message: error.message || "Сбой стрима" });
       }
     } finally {
+      serverClosing = true;
       try { reply.raw.end(); } catch (err) {}
     }
   });

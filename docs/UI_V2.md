@@ -302,6 +302,53 @@ grep -nE '"\\n|"\\t|"\\r' apps/kb-api/src/routes/uiV2*.js
 парсинга или работы со строками внутри `renderXxxScript()` — всегда удваивать
 управляющие символы.
 
+### Событие `"close"` на raw-сокете ≠ «клиент ушёл»
+
+В роуте `POST /api/v2/chat/sessions/:id/messages/stream` мы должны отменять
+генерацию у провайдера (Ollama/Cloud), если клиент закрыл соединение
+во время стрима. Прямолинейная попытка:
+
+```js
+// СЛОМАНО — abort срабатывает почти сразу, до отправки токенов
+request.raw.on("close", () => {
+  if (!reply.raw.writableEnded) abortController.abort();
+});
+```
+
+Не работает: событие `'close'` в Node HTTP стреляет не только при разрыве
+клиентом, но и при штатном завершении ответа самим сервером, причём
+`writableEnded` к этому моменту ещё может быть `false`. В результате
+`abortController.abort()` срабатывает раньше, чем провайдер успевает
+сделать первый `fetch`, и ответ приходит со штампом `aborted: true` и
+длительностью ~5–15 мс.
+
+Правильный шаблон — флаг `serverClosing`, который ставится в `finally`
+**до** `reply.raw.end()`, плюс слушаем оба события:
+
+```js
+let serverClosing = false;
+const abortController = new AbortController();
+const onClientGone = () => {
+  if (serverClosing) return;
+  if (abortController.signal.aborted) return;
+  abortController.abort();
+};
+request.raw.on("aborted", onClientGone);
+request.raw.on("close", onClientGone);
+
+try {
+  await runStream({ abortSignal: abortController.signal });
+} finally {
+  serverClosing = true;          // ← ставим ДО end()
+  try { reply.raw.end(); } catch (err) {}
+}
+```
+
+Если разрыв реальный (клиент закрыл вкладку, нажал «Стоп», обрыв сети) —
+`onClientGone` отработает до `finally` и `abortController.abort()` пройдёт.
+Если же сервер сам дошёл до `finally` и поставил `serverClosing = true`,
+последующее `close`-событие от собственного `end()` будет проигнорировано.
+
 ## История изменений
 
 - 2026-05-16: создан, итерация 1 — каркас + страница Чата.
@@ -321,4 +368,8 @@ grep -nE '"\\n|"\\t|"\\r' apps/kb-api/src/routes/uiV2*.js
   literal `uiV2Chat.js`. До фикса страница чата падала с `Uncaught
   SyntaxError` сразу при загрузке, из-за чего не отрисовывались дерево
   разделов, история и документы. Зафиксировано в разделе «Известные
+  технические тонкости».
+- 2026-05-16: hotfix — `request.raw.on("close")` в SSE-эндпоинте ложно
+  отменял стрим до отправки токенов. Введён флаг `serverClosing` + слушаем
+  `"aborted"` и `"close"`. Урок про события Node HTTP — в «Известные
   технические тонкости».
