@@ -1,3 +1,34 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = path.resolve(__dirname, "..", "..");
+
+const VENDOR_CACHE = new Map();
+function loadVendorScript(relativePath) {
+  if (VENDOR_CACHE.has(relativePath)) return VENDOR_CACHE.get(relativePath);
+  const fullPath = path.join(APP_ROOT, "node_modules", relativePath);
+  try {
+    const content = fs.readFileSync(fullPath, "utf8");
+    VENDOR_CACHE.set(relativePath, content);
+    return content;
+  } catch (err) {
+    console.warn(`[uiV2Chat] vendor script not found: ${relativePath}. Markdown will fall back to plain text.`);
+    VENDOR_CACHE.set(relativePath, "");
+    return "";
+  }
+}
+
+function renderVendorScripts() {
+  const marked = loadVendorScript("marked/marked.min.js");
+  const purify = loadVendorScript("dompurify/dist/purify.min.js");
+  return [
+    marked ? `<script>${marked}</script>` : "",
+    purify ? `<script>${purify}</script>` : "",
+  ].join("\n");
+}
+
 function renderChatCss() {
   return `
     .chat-page {
@@ -232,6 +263,95 @@ function renderChatCss() {
       word-wrap: break-word;
       line-height: 1.55;
     }
+    .msg__bubble--md { white-space: normal; }
+    .msg__bubble--md > *:first-child { margin-top: 0; }
+    .msg__bubble--md > *:last-child { margin-bottom: 0; }
+    .msg__bubble--md p { margin: 0.5em 0; }
+    .msg__bubble--md h1, .msg__bubble--md h2, .msg__bubble--md h3,
+    .msg__bubble--md h4, .msg__bubble--md h5, .msg__bubble--md h6 {
+      margin: 0.8em 0 0.4em;
+      color: var(--text-strong);
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .msg__bubble--md h1 { font-size: 1.25em; }
+    .msg__bubble--md h2 { font-size: 1.15em; }
+    .msg__bubble--md h3 { font-size: 1.05em; }
+    .msg__bubble--md h4, .msg__bubble--md h5, .msg__bubble--md h6 { font-size: 1em; }
+    .msg__bubble--md ul, .msg__bubble--md ol {
+      margin: 0.4em 0;
+      padding-left: 1.4em;
+    }
+    .msg__bubble--md li { margin: 0.2em 0; }
+    .msg__bubble--md li > p { margin: 0.2em 0; }
+    .msg__bubble--md a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-decoration-color: rgba(59, 130, 246, 0.4);
+    }
+    .msg__bubble--md a:hover { text-decoration-color: var(--accent); }
+    .msg__bubble--md code {
+      font-family: "JetBrains Mono", ui-monospace, "Consolas", monospace;
+      font-size: 0.92em;
+      padding: 1px 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .msg__bubble--md pre {
+      margin: 0.6em 0;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+    .msg__bubble--md pre code {
+      padding: 0;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      font-size: 0.88em;
+    }
+    .msg__bubble--md blockquote {
+      margin: 0.5em 0;
+      padding: 4px 12px;
+      border-left: 3px solid var(--border-strong);
+      color: var(--text-muted);
+      background: var(--surface-2);
+      border-radius: 0 6px 6px 0;
+    }
+    .msg__bubble--md hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0.8em 0;
+    }
+    .msg__bubble--md table {
+      border-collapse: collapse;
+      margin: 0.6em 0;
+      width: 100%;
+      font-size: 0.95em;
+      display: block;
+      overflow-x: auto;
+    }
+    .msg__bubble--md table th,
+    .msg__bubble--md table td {
+      border: 1px solid var(--border);
+      padding: 6px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .msg__bubble--md table thead th {
+      background: var(--surface-2);
+      color: var(--text-strong);
+      font-weight: 600;
+    }
+    .msg__bubble--md table tbody tr:nth-child(even) td {
+      background: rgba(127, 127, 127, 0.04);
+    }
+    .msg__bubble--md strong { color: var(--text-strong); }
+    .msg__bubble--md em { font-style: italic; }
     .msg--user .msg__bubble {
       background: var(--accent);
       color: white;
@@ -629,6 +749,7 @@ function renderChatScript(initialStateJson) {
         documentSearchTerm: "",
         cloudProvider: { configured: false, name: "Cloud", useByDefault: false },
         streamingController: null,
+        streamRenderTimer: null,
       };
 
       var dom = {
@@ -661,6 +782,25 @@ function renderChatScript(initialStateJson) {
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#39;");
+      }
+
+      var MARKED_READY = typeof window.marked !== "undefined";
+      var PURIFY_READY = typeof window.DOMPurify !== "undefined";
+      if (MARKED_READY && window.marked.setOptions) {
+        window.marked.setOptions({ breaks: true, gfm: true, mangle: false, headerIds: false });
+      }
+      function renderMarkdown(text) {
+        var raw = String(text == null ? "" : text);
+        if (!raw.trim()) return "";
+        if (!MARKED_READY || !PURIFY_READY) {
+          return escapeHtml(raw).replace(/\\n/g, "<br>");
+        }
+        try {
+          var html = window.marked.parse(raw);
+          return window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+        } catch (err) {
+          return escapeHtml(raw).replace(/\\n/g, "<br>");
+        }
       }
 
       function showToast(message, kind) {
@@ -917,8 +1057,10 @@ function renderChatScript(initialStateJson) {
         var contentHtml;
         if (opts.typing) {
           contentHtml = '<div class="msg__bubble"><span class="typing-dots"><span></span><span></span><span></span></span></div>';
-        } else {
+        } else if (isUser) {
           contentHtml = '<div class="msg__bubble">' + escapeHtml(message.content) + '</div>';
+        } else {
+          contentHtml = '<div class="msg__bubble msg__bubble--md">' + renderMarkdown(message.content) + '</div>';
         }
         var sources = Array.isArray(message.sources) ? message.sources : [];
         var sourcesHtml = "";
@@ -956,6 +1098,10 @@ function renderChatScript(initialStateJson) {
       }
 
       function renderStream() {
+        if (state.streamRenderTimer) {
+          clearTimeout(state.streamRenderTimer);
+          state.streamRenderTimer = null;
+        }
         if (!state.activeSessionId) {
           renderEmpty();
           return;
@@ -970,6 +1116,14 @@ function renderChatScript(initialStateJson) {
         }).join("");
         dom.stream.innerHTML = html;
         dom.stream.scrollTop = dom.stream.scrollHeight;
+      }
+
+      function scheduleStreamRender() {
+        if (state.streamRenderTimer) return;
+        state.streamRenderTimer = setTimeout(function () {
+          state.streamRenderTimer = null;
+          renderStream();
+        }, 80);
       }
 
       function autoresizeTextarea() {
@@ -1350,7 +1504,7 @@ function renderChatScript(initialStateJson) {
                   if (!evt.data) return;
                   if (evt.event === "token") {
                     assistant.content += evt.data.text || "";
-                    renderStream();
+                    scheduleStreamRender();
                   } else if (evt.event === "sources") {
                     assistant.sources = evt.data || [];
                     renderStream();
@@ -1637,6 +1791,7 @@ export function renderChatPage({ ICONS, renderLayout }) {
     },
   };
 
+  const vendorScripts = renderVendorScripts();
   return renderLayout({
     activeNav: "chat",
     pageTitle: "Чат",
@@ -1646,5 +1801,7 @@ export function renderChatPage({ ICONS, renderLayout }) {
     sidebarExtra,
     pageScript: `${renderChatScript(renderChatStateJson(initialState))}`,
     bodyClass: "page-chat",
-  }).replace("</style>", `${renderChatCss()}</style>`);
+  })
+    .replace("</style>", () => `${renderChatCss()}</style>`)
+    .replace("</head>", () => `${vendorScripts}\n</head>`);
 }

@@ -36,6 +36,10 @@ UI скрыт за `?admin=1`.
   (`generateStream` через SSE) и распознаёт thinking-mode ответы.
 - `apps/kb-api/src/providers/ollamaChatProvider.js` — `generateStream` через
   NDJSON (`/api/chat` с `stream: true`). Добавлен в полировке.
+- npm-зависимости `marked` и `dompurify` — браузерные сборки
+  (`marked/marked.min.js`, `dompurify/dist/purify.min.js`) инжектируются
+  inline в `<head>` страницы чата через `fs.readFileSync` из `node_modules`.
+  Без сборщика, без CDN. Добавлено в hotfix #8.
 
 Использует существующие модули без изменения их сигнатур:
 
@@ -305,6 +309,53 @@ grep -nE '"\\n|"\\t|"\\r' apps/kb-api/src/routes/uiV2*.js
 парсинга или работы со строками внутри `renderXxxScript()` — всегда удваивать
 управляющие символы.
 
+### Markdown в ответах ассистента
+
+Ответы ассистента отрисовываются как HTML из Markdown с помощью двух
+браузерных библиотек, инжектируемых inline в `<head>` страницы:
+
+- `marked` — парсер Markdown (GFM, `breaks: true`).
+- `DOMPurify` — санитизация результирующего HTML.
+
+Поток данных:
+`message.content` (markdown в БД) → `marked.parse(...)` → `DOMPurify.sanitize(...)`
+→ `bubble.innerHTML`. Реализация — функция `renderMarkdown(text)` в
+клиентском IIFE-скрипте `uiV2Chat.js`.
+
+Особенности:
+
+- Пользовательские сообщения остаются `textContent` (через `escapeHtml`) —
+  иначе случайные `*`, `_`, `` ` `` в запросе превращаются в форматирование.
+- Во время стрима применяется `scheduleStreamRender()` с throttle 80 мс —
+  это даёт ~12 fps обновления HTML вместо парсинга на каждый токен.
+  `marked` стабильно работает на незакрытом markdown
+  (`**неза` отрендерится как обычный текст, а после прихода закрывающих
+  звёздочек — как `<strong>`).
+- Если в `node_modules` нет `marked` или `dompurify` (например, забыли
+  `npm install` в контейнере) — `renderMarkdown` фоллбэчит на
+  `escapeHtml(text).replace(/\n/g, "<br>")`. Страница не падает, текст
+  просто без форматирования. При старте в логи попадает `[uiV2Chat]
+  vendor script not found: marked/marked.min.js`.
+- Inline-загрузка через `fs.readFileSync` из `node_modules` — никакого
+  CDN, всё локально.
+- Подмена в HTML через `.replace("</head>", () => vendorScripts + ...)` —
+  именно функциональная форма, иначе `$&`, `$1` в минифицированных
+  библиотеках сломают результат.
+
+Стили markdown (`.msg__bubble--md`) включают: таблицы с границами и
+зебра-полосами, `pre`/`code` с моноширным `JetBrains Mono`, `blockquote`
+с левой полоской, заголовки h1–h6, списки, ссылки в акцентном цвете.
+Корректно адаптируются под обе темы через CSS-переменные.
+
+### Ссылки на источники `[N]`
+
+Модели часто пишут `[1]`, `[5]` как маркеры цитирования. По умолчанию
+Markdown НЕ интерпретирует одиночные `[N]` как ссылку (для этого нужен
+формат `[text][id]` с reference-определением). Поэтому такие пометки
+остаются обычным текстом — без перехода к карточке источника. Если в
+будущем понадобится скролл к карточке — можно после `marked.parse` пройти
+по DOM и обернуть `[N]` в `<a href="#source-N">`.
+
 ### DELETE-запросы не должны нести `Content-Type: application/json` без тела
 
 Fastify-парсер тела с настройками по умолчанию строго относится к
@@ -467,6 +518,13 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
   `CREATE SCHEMA public` + grants → накат с `ON_ERROR_STOP=1` →
   `process.exit(0)` с автоматическим рестартом контейнера и поллингом
   `/health` на фронте. Подробности — `docs/BACKUP_RESTORE.md`.
+- 2026-05-16: hotfix #8 — рендеринг Markdown в ответах ассистента.
+  Подключены `marked` (GFM) и `DOMPurify` (санитизация), инжектируются
+  inline из `node_modules` без CDN. Поддержаны таблицы, code-блоки,
+  списки, заголовки, цитаты, ссылки. Пользовательские сообщения остаются
+  plain text. В стриме применяется throttle 80 мс через
+  `scheduleStreamRender`. При отсутствии vendor-скриптов — graceful
+  fallback на `escapeHtml + <br>`. Стили адаптируются под обе темы.
 - 2026-05-16: hotfix #7 — удаление чата из истории падало с 400
   `FST_ERR_CTP_EMPTY_JSON_BODY`. Универсальная обёртка `api()` в трёх
   `uiV2*.js` ставила `Content-Type: application/json` всегда, даже когда
