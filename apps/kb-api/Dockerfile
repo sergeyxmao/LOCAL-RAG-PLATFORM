@@ -6,7 +6,9 @@ RUN apk add --no-cache \
   poppler-utils \
   tesseract-ocr \
   tesseract-ocr-data-eng \
-  tesseract-ocr-data-rus
+  tesseract-ocr-data-rus \
+  postgresql16-client \
+  gzip
 
 COPY package*.json ./
 RUN npm install

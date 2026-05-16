@@ -27,8 +27,15 @@ UI скрыт за `?admin=1`.
   `cloudChatProvider` (облако).
 - `apps/kb-api/src/services/appSettingsService.js` — CRUD над `app_settings`,
   маскирование API-ключа.
+- `apps/kb-api/src/services/backupService.js` — pg_dump/psql через spawn,
+  список бэкапов в `data/backups/`. Добавлен в полировке.
+- `apps/kb-api/src/routes/backupApi.js` — REST API `/api/v2/backups/*` под
+  админ-флагом. Добавлен в полировке.
 - `apps/kb-api/src/providers/cloudChatProvider.js` — универсальный
-  OpenAI-совместимый клиент (без SDK).
+  OpenAI-совместимый клиент (без SDK). С полировки умеет streaming
+  (`generateStream` через SSE) и распознаёт thinking-mode ответы.
+- `apps/kb-api/src/providers/ollamaChatProvider.js` — `generateStream` через
+  NDJSON (`/api/chat` с `stream: true`). Добавлен в полировке.
 
 Использует существующие модули без изменения их сигнатур:
 
@@ -229,6 +236,34 @@ UI скрыт за `?admin=1`.
 - В режиме «Облако» история чата при отправке обрезается до 6 последних
   сообщений + текущий вопрос (экономия токенов и приватность). Локальные
   сессии работают без обрезки.
+
+## Полировка после итерации 3
+
+После трёх основных итераций добавлены 4 точечных улучшения:
+
+1. **Множественный `nodeIds` в фильтрах чата.** `searchService.hybridSearch`
+   теперь принимает массив `nodeIds` и реально фильтрует и semantic, и
+   lexical-поиск по всем выбранным узлам через `match: { any: [...] }` в
+   Qdrant и `ANY($1::uuid[])` в Postgres. Старый параметр `nodeId` совместим
+   и совмещается с массивом.
+2. **Стриминг ответа.** Новый эндпоинт
+   `POST /api/v2/chat/sessions/:id/messages/stream` отдаёт SSE с событиями
+   `meta`, `sources`, `token`, `done`, `error`. Локальная Ollama использует
+   `/api/chat` с `stream: true` (NDJSON), облако — OpenAI-совместимый SSE с
+   `stream: true`. Кнопка «Отправить» в чате во время стрима превращается в
+   «Стоп» — клик отменяет генерацию, частичный текст сохраняется в БД с
+   `metadata.aborted = true`. Старый `POST /messages` остался для обратной
+   совместимости.
+3. **Бэкапы БД из UI.** В Настройки добавлен блок «Бэкапы»: «Создать бэкап»,
+   список с кнопками «Скачать»/«Восстановить»/«Удалить», восстановление из
+   загружаемого файла. Эндпоинты `/api/v2/backups/*` защищены админ-флагом.
+   Подробности — `docs/BACKUP_RESTORE.md`. В контейнер kb-api добавлены
+   `postgresql16-client` и `gzip`.
+4. **Тест подключения облака больше не даёт false-negative на reasoning-моделях.**
+   `max_tokens` поднят с 10 до 50. Если модель ответила пустым `content`, но
+   `finish_reason === 'length'` или есть `reasoning_content`/`reasoning`/
+   `tool_calls` — тест возвращает `ok: true` с поясняющим текстом, а не
+   `server_error`. Подробности — `docs/CLOUD_PROVIDER.md`.
 
 ## История изменений
 
