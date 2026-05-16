@@ -416,3 +416,12 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
   возвращал «Эта страница перенесена…». Теперь `/api/v2/backups/*` доступны
   напрямую, как и остальные `/api/v2/*`. Старый UI остался под `?admin=1`
   как был.
+- 2026-05-16: hotfix #5 — восстановление бэкапа на самом деле не
+  восстанавливало данные. `psql` накатывал дамп поверх существующей схемы
+  с `ON_ERROR_STOP=0`, поэтому все ошибки (objects already exist, PK
+  conflicts) глотались, exit 0, «успех», но в `documents`, `document_chunks`
+  и т.п. оставались старые/пустые значения. Чинено через
+  `pg_terminate_backend` других сессий → `DROP SCHEMA public CASCADE` →
+  `CREATE SCHEMA public` + grants → накат с `ON_ERROR_STOP=1` →
+  `process.exit(0)` с автоматическим рестартом контейнера и поллингом
+  `/health` на фронте. Подробности — `docs/BACKUP_RESTORE.md`.
