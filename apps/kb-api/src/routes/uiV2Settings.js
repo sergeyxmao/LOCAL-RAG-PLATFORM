@@ -492,6 +492,27 @@ function renderSettingsScript(initialStateJson) {
         });
       }
 
+      function waitForKbApiThenReload() {
+        var attempts = 0;
+        var maxAttempts = 30; // ~30 секунд
+        function tick() {
+          attempts++;
+          fetch("/health", { cache: "no-store" }).then(function (r) {
+            if (r.ok) {
+              window.location.reload();
+            } else if (attempts < maxAttempts) {
+              setTimeout(tick, 1000);
+            } else {
+              setBanner(dom.backupBanner, "kb-api не отвечает после восстановления. Проверьте контейнер и обновите страницу вручную.", "error");
+            }
+          }).catch(function () {
+            if (attempts < maxAttempts) setTimeout(tick, 1000);
+            else setBanner(dom.backupBanner, "kb-api не отвечает после восстановления. Проверьте контейнер и обновите страницу вручную.", "error");
+          });
+        }
+        setTimeout(tick, 1500);
+      }
+
       function restoreBackup(filename) {
         var word = prompt("Восстановление перезапишет ВСЮ PostgreSQL. Введите слово ВОССТАНОВИТЬ:");
         if (word !== "ВОССТАНОВИТЬ") {
@@ -501,8 +522,8 @@ function renderSettingsScript(initialStateJson) {
         if (!confirm("Точно восстановить из «" + filename + "»? Текущие данные будут заменены.")) return;
         setBanner(dom.backupBanner, "Идёт восстановление…", "success");
         api("POST", "/api/v2/backups/" + encodeURIComponent(filename) + "/restore", { confirm: "ВОССТАНОВИТЬ" }).then(function (data) {
-          setBanner(dom.backupBanner, "База восстановлена за " + (data.durationMs || 0) + " мс. Страница перезагрузится…", "success");
-          setTimeout(function () { window.location.reload(); }, 1500);
+          setBanner(dom.backupBanner, "База восстановлена за " + (data.durationMs || 0) + " мс. kb-api перезапускается, страница обновится автоматически…", "success");
+          waitForKbApiThenReload();
         }).catch(function (err) {
           setBanner(dom.backupBanner, "Не удалось восстановить: " + err.message, "error");
         });
@@ -528,8 +549,8 @@ function renderSettingsScript(initialStateJson) {
         fetch("/api/v2/backups/restore-upload", { method: "POST", body: fd }).then(function (r) {
           return r.json().then(function (data) {
             if (!r.ok || data.ok === false) throw new Error(data.error || ("HTTP " + r.status));
-            setBanner(dom.backupBanner, "База восстановлена. Страница перезагрузится…", "success");
-            setTimeout(function () { window.location.reload(); }, 1500);
+            setBanner(dom.backupBanner, "База восстановлена. kb-api перезапускается, страница обновится автоматически…", "success");
+            waitForKbApiThenReload();
           });
         }).catch(function (err) {
           setBanner(dom.backupBanner, "Не удалось восстановить из файла: " + err.message, "error");

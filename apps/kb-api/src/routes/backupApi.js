@@ -5,6 +5,19 @@ function respondError(reply, statusCode, message, extras = {}) {
   return { ok: false, error: message, ...extras };
 }
 
+let restartScheduled = false;
+function scheduleRestartAfterRestore(logger) {
+  if (restartScheduled) return;
+  restartScheduled = true;
+  setTimeout(() => {
+    try {
+      if (logger?.warn) logger.warn("Exiting after successful restore — Docker will restart the container.");
+      else console.warn("[backup] Exiting after restore");
+    } catch (err) {}
+    process.exit(0);
+  }, 800).unref();
+}
+
 export async function backupApiRoutes(app) {
   app.get("/api/v2/backups", async (request, reply) => {
     try {
@@ -58,7 +71,8 @@ export async function backupApiRoutes(app) {
       const result = await app.backupService.restoreFromExistingBackup(request.params.filename);
       await app.postgresProvider.ensureRuntimeSchema();
       if (app.appSettingsService) app.appSettingsService.invalidate();
-      return { ok: true, ...result };
+      scheduleRestartAfterRestore(request.log);
+      return { ok: true, ...result, restartingIn: 800 };
     } catch (error) {
       request.log.error({ err: error, filename: request.params.filename }, "Не удалось восстановить бэкап");
       return respondError(reply, error.statusCode || 500, error.message || "Не удалось восстановить бэкап");
@@ -85,7 +99,8 @@ export async function backupApiRoutes(app) {
       const result = await app.backupService.restoreFromBuffer(buffer, { compressed });
       await app.postgresProvider.ensureRuntimeSchema();
       if (app.appSettingsService) app.appSettingsService.invalidate();
-      return { ok: true, ...result };
+      scheduleRestartAfterRestore(request.log);
+      return { ok: true, ...result, restartingIn: 800 };
     } catch (error) {
       request.log.error({ err: error }, "Не удалось восстановить из загруженного файла");
       return respondError(reply, error.statusCode || 500, error.message || "Не удалось восстановить");

@@ -153,8 +153,50 @@ export class BackupService {
     await fsp.unlink(fullPath);
   }
 
+  async terminateOtherConnectionsAndResetSchema() {
+    const env = this.buildEnv();
+    const args = [
+      "-h",
+      this.postgresConfig.host,
+      "-p",
+      String(this.postgresConfig.port || 5432),
+      "-U",
+      this.postgresConfig.user,
+      "-d",
+      this.postgresConfig.database,
+      "-v",
+      "ON_ERROR_STOP=1",
+      "--quiet",
+      "--no-psqlrc",
+      "-c",
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${this.postgresConfig.database}' AND pid <> pg_backend_pid();`,
+      "-c",
+      "DROP SCHEMA IF EXISTS public CASCADE;",
+      "-c",
+      "CREATE SCHEMA public;",
+      "-c",
+      `GRANT ALL ON SCHEMA public TO ${this.postgresConfig.user};`,
+      "-c",
+      "GRANT ALL ON SCHEMA public TO public;",
+    ];
+
+    const psql = spawn("psql", args, { env });
+    let stderr = "";
+    psql.stdout.on("data", () => {});
+    psql.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    await new Promise((resolve, reject) => {
+      psql.on("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`psql (reset schema) exited with code ${code}: ${stderr.slice(0, 500)}`));
+      });
+      psql.on("error", reject);
+    });
+  }
+
   async restoreFromStream(sourceStream, { compressed = true } = {}) {
     const startedAt = Date.now();
+
+    await this.terminateOtherConnectionsAndResetSchema();
 
     const psql = spawn(
       "psql",
@@ -168,13 +210,15 @@ export class BackupService {
         "-d",
         this.postgresConfig.database,
         "-v",
-        "ON_ERROR_STOP=0",
+        "ON_ERROR_STOP=1",
         "--quiet",
+        "--no-psqlrc",
       ],
       { env: this.buildEnv() }
     );
 
     let stderr = "";
+    psql.stdout.on("data", () => {});
     psql.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
 
     try {
@@ -184,17 +228,18 @@ export class BackupService {
         new Promise((resolve, reject) => {
           psql.on("exit", (code) => {
             if (code === 0) resolve();
-            else reject(new Error(`psql exited with code ${code}: ${stderr.slice(0, 500)}`));
+            else reject(new Error(`Не удалось восстановить базу из дампа: psql завершился с кодом ${code}. ${stderr.slice(0, 500).trim()}`));
           });
           psql.on("error", reject);
         }),
       ]);
     } catch (error) {
-      this.logger.error({ err: error }, "Restore failed");
+      this.logger.error({ err: error, stderrTail: stderr.slice(-500) }, "Restore failed");
       throw error;
     }
 
-    return { durationMs: Date.now() - startedAt };
+    this.logger.info({ durationMs: Date.now() - startedAt, stderrTail: stderr.slice(-200) }, "Restore completed");
+    return { durationMs: Date.now() - startedAt, restartScheduled: true };
   }
 
   async restoreFromExistingBackup(filename) {
