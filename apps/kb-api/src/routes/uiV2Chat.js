@@ -31,11 +31,19 @@ function renderVendorScripts() {
 
 function renderChatCss() {
   return `
+    body.page-chat .main {
+      height: 100vh;
+      min-height: 100vh;
+      max-height: 100vh;
+      overflow: hidden;
+    }
+    body.page-chat .page-header { flex: 0 0 auto; }
     .chat-page {
-      flex: 1;
+      flex: 1 1 auto;
       display: grid;
       grid-template-columns: 1fr 320px;
       min-height: 0;
+      overflow: hidden;
     }
     .chat-page.is-filters-collapsed { grid-template-columns: 1fr 0; }
     .chat-page__main {
@@ -43,7 +51,12 @@ function renderChatCss() {
       flex-direction: column;
       min-width: 0;
       min-height: 0;
+      overflow: hidden;
     }
+    .chat-page__main > .chat-mode-row,
+    .chat-page__main > .cloud-banner,
+    .chat-page__main > .composer { flex: 0 0 auto; }
+    .chat-page__main > .chat-stream { flex: 1 1 auto; min-height: 0; }
     .chat-mode-row {
       padding: 12px 24px;
       border-bottom: 1px solid var(--border);
@@ -450,6 +463,134 @@ function renderChatCss() {
       font-size: 11px;
     }
 
+    .sources-compact {
+      margin-top: 6px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+    .sources-compact__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      color: var(--text-muted);
+      transition: background 0.12s ease;
+    }
+    .sources-compact__header:hover { background: var(--surface-hover); }
+    .sources-compact__label {
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .sources-compact__toggle {
+      color: var(--accent);
+      font-size: 11px;
+    }
+    .sources-compact__body {
+      display: none;
+      border-top: 1px solid var(--border);
+      padding: 8px 0;
+    }
+    .sources-compact.is-open .sources-compact__body { display: block; }
+    .sources-compact__group { padding: 6px 12px; }
+    .sources-compact__group + .sources-compact__group { border-top: 1px dashed var(--border); }
+    .sources-compact__doc {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-strong);
+      font-weight: 500;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .sources-compact__doc a {
+      color: var(--text-strong);
+      text-decoration: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+      flex: 1;
+    }
+    .sources-compact__doc a:hover { color: var(--accent); }
+    .sources-compact__count {
+      color: var(--text-muted);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      flex: 0 0 auto;
+    }
+    .sources-compact__items { display: flex; flex-direction: column; gap: 2px; }
+    .sources-compact__item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--text);
+      transition: background 0.12s ease;
+    }
+    .sources-compact__item[data-href] { cursor: pointer; }
+    .sources-compact__item:hover { background: var(--surface-hover); }
+    .sources-compact__item-index {
+      font-family: "JetBrains Mono", monospace;
+      color: var(--accent);
+      font-size: 11px;
+      flex: 0 0 auto;
+      min-width: 24px;
+    }
+    .sources-compact__item-label {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+    }
+    .sources-compact__item-link {
+      color: var(--accent);
+      font-size: 11px;
+      text-decoration: none;
+      flex: 0 0 auto;
+    }
+    .sources-compact__item-link:hover { text-decoration: underline; }
+    @keyframes sourcesCompactHighlight {
+      0%, 100% { background: transparent; box-shadow: inset 0 0 0 1px transparent; }
+      30%, 70% { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+    }
+    .sources-compact__item.is-highlighted {
+      animation: sourcesCompactHighlight 1.4s ease;
+    }
+
+    .msg__ref {
+      display: inline-block;
+      margin: 0 1px;
+      vertical-align: super;
+      font-size: 0.72em;
+      line-height: 1;
+    }
+    .msg__ref a {
+      color: var(--accent);
+      text-decoration: none;
+      padding: 0 3px;
+      border-radius: 4px;
+      background: var(--accent-soft);
+      cursor: pointer;
+      font-family: "JetBrains Mono", monospace;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+    .msg__ref a:hover {
+      background: var(--accent);
+      color: white;
+      text-decoration: none;
+    }
+
     .composer {
       border-top: 1px solid var(--border);
       padding: 14px 24px;
@@ -750,6 +891,7 @@ function renderChatScript(initialStateJson) {
         cloudProvider: { configured: false, name: "Cloud", useByDefault: false },
         streamingController: null,
         streamRenderTimer: null,
+        expandedSources: {},
       };
 
       var dom = {
@@ -1032,22 +1174,204 @@ function renderChatScript(initialStateJson) {
           '</div>';
       }
 
-      function renderSource(source, index) {
-        var title = source.documentName || source.sourcePath || "Источник " + (index + 1);
-        var pageBadge = source.page ? '<span class="mono">стр. ' + escapeHtml(source.page) + '</span>' : '';
+      function normalizeSources(items) {
+        if (!Array.isArray(items)) return [];
+        return items.map(function (s) {
+          if (!s || typeof s !== "object") return s;
+          if (s.documentName !== undefined || s.assetPreviewUrl !== undefined) {
+            return s;
+          }
+          return {
+            documentId: s.document_id ?? s.documentId ?? null,
+            documentName: s.title ?? s.document_name ?? s.documentName ?? null,
+            sourcePath: s.source_path ?? s.sourcePath ?? null,
+            resourceType: s.resource_type ?? s.resourceType ?? null,
+            page: s.page_number ?? s.page ?? null,
+            chunkIndex: s.chunk_index ?? s.chunkIndex ?? null,
+            snippet: typeof s.text === "string" ? s.text : (s.snippet ?? null),
+            score: s.score ?? null,
+            assetClass: s.asset_class ?? s.assetClass ?? null,
+            assetUrl: s.asset_url ?? s.assetUrl ?? null,
+            assetPreviewUrl: s.asset_preview_url ?? s.assetPreviewUrl ?? null,
+            nodePaths: Array.isArray(s.node_paths) ? s.node_paths : Array.isArray(s.nodePaths) ? s.nodePaths : [],
+            signalTags: Array.isArray(s.signal_tags) ? s.signal_tags : Array.isArray(s.signalTags) ? s.signalTags : [],
+          };
+        });
+      }
+
+      function sourceShortLabel(source, idx) {
+        if (source.page) return "Страница " + source.page;
+        if (source.chunkIndex !== null && source.chunkIndex !== undefined && source.chunkIndex !== "") {
+          return "Фрагмент #" + source.chunkIndex;
+        }
         var snippet = (source.snippet || "").replace(/\\s+/g, " ").trim();
-        var snippetHtml = snippet
-          ? '<div class="source-card__snippet">' + escapeHtml(snippet) + '</div>'
-          : '';
-        var link = source.assetUrl
-          ? '<a class="source-card__link" href="' + escapeHtml(source.assetUrl) + '" target="_blank" rel="noopener">Открыть' + INITIAL_STATE.icons.externalLink + '</a>'
-          : '';
-        return '<div class="source-card">' +
-          '<span class="source-card__icon">' + INITIAL_STATE.icons.fileText + '</span>' +
-          '<div class="source-card__main">' +
-          '<div class="source-card__title"><span>' + escapeHtml(title) + '</span>' + pageBadge + link + '</div>' +
-          snippetHtml +
-          '</div></div>';
+        if (snippet) {
+          var head = snippet.split(/[.\\n]/)[0] || snippet;
+          return head.length > 80 ? head.slice(0, 80) + "…" : head;
+        }
+        return "Фрагмент " + (idx + 1);
+      }
+
+      function sourceLink(source) {
+        return source.assetPreviewUrl || source.assetUrl
+          || (source.documentId ? "/documents/" + encodeURIComponent(source.documentId) + "/original" : "");
+      }
+
+      function sourceTooltip(source, idx) {
+        var parts = [];
+        var doc = source.documentName || source.sourcePath || ("Документ " + (idx + 1));
+        parts.push("Источник " + (idx + 1) + ": " + doc);
+        if (source.page) parts.push("страница " + source.page);
+        else if (source.chunkIndex !== null && source.chunkIndex !== undefined && source.chunkIndex !== "") {
+          parts.push("фрагмент #" + source.chunkIndex);
+        }
+        return parts.join(", ");
+      }
+
+      function pluralRu(n, forms) {
+        var mod10 = n % 10;
+        var mod100 = n % 100;
+        if (mod10 === 1 && mod100 !== 11) return forms[0];
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return forms[1];
+        return forms[2];
+      }
+
+      function groupSourcesByDocument(sources) {
+        var order = [];
+        var byDoc = {};
+        sources.forEach(function (src, idx) {
+          var key = src.documentId || src.documentName || src.sourcePath || ("__doc_" + idx);
+          if (!byDoc[key]) {
+            byDoc[key] = {
+              key: key,
+              documentId: src.documentId || null,
+              documentName: src.documentName || src.sourcePath || ("Документ " + (idx + 1)),
+              items: [],
+            };
+            order.push(key);
+          }
+          byDoc[key].items.push({ source: src, index: idx });
+        });
+        return order.map(function (k) { return byDoc[k]; });
+      }
+
+      function renderSourcesCompact(message) {
+        var sources = Array.isArray(message.sources) ? message.sources : [];
+        if (!sources.length) return "";
+        var groups = groupSourcesByDocument(sources);
+        var fragLabel = pluralRu(sources.length, ["фрагмент", "фрагмента", "фрагментов"]);
+        var docLabel = pluralRu(groups.length, ["документа", "документов", "документов"]);
+        var isOpen = state.expandedSources && state.expandedSources[message.id] === true;
+        var groupsHtml = groups.map(function (g) {
+          var docHref = g.documentId ? '/documents/' + encodeURIComponent(g.documentId) + '/original' : '#';
+          var itemsHtml = g.items.map(function (it) {
+            var src = it.source;
+            var label = sourceShortLabel(src, it.index);
+            var href = sourceLink(src);
+            var refNum = it.index + 1;
+            var linkPart = href
+              ? '<a class="sources-compact__item-link" href="' + escapeHtml(href) + '" target="_blank" rel="noopener" data-source-link="1">→ открыть</a>'
+              : '';
+            return '<div class="sources-compact__item" data-source-index="' + refNum + '"' +
+              (href ? ' data-href="' + escapeHtml(href) + '"' : '') +
+              ' id="src-' + escapeHtml(message.id) + '-' + refNum + '">' +
+              '<span class="sources-compact__item-index">[' + refNum + ']</span>' +
+              '<span class="sources-compact__item-label" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</span>' +
+              linkPart +
+              '</div>';
+          }).join("");
+          return '<div class="sources-compact__group">' +
+            '<div class="sources-compact__doc">' +
+            '<a href="' + escapeHtml(docHref) + '" target="_blank" rel="noopener" title="' + escapeHtml(g.documentName) + '">' + escapeHtml(g.documentName) + '</a>' +
+            '<span class="sources-compact__count">' + g.items.length + ' / ' + sources.length + '</span>' +
+            '</div>' +
+            '<div class="sources-compact__items">' + itemsHtml + '</div>' +
+            '</div>';
+        }).join("");
+        return '<div class="sources-compact' + (isOpen ? ' is-open' : '') + '" data-message-id="' + escapeHtml(message.id) + '">' +
+          '<div class="sources-compact__header" data-action="toggle-sources">' +
+          '<span class="sources-compact__label">ИСТОЧНИКИ · ' + sources.length + ' ' + fragLabel + ' из ' + groups.length + ' ' + docLabel + '</span>' +
+          '<span class="sources-compact__toggle">' + (isOpen ? "▴ Скрыть" : "▾ Показать") + '</span>' +
+          '</div>' +
+          '<div class="sources-compact__body">' + groupsHtml + '</div>' +
+          '</div>';
+      }
+
+      function decorateRefs(container, sourcesCount, messageId) {
+        if (!container || sourcesCount <= 0) return;
+        var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        var nodes = [];
+        var node;
+        while ((node = walker.nextNode())) {
+          if (node.parentNode && node.parentNode.closest("code, pre, a, .msg__ref")) continue;
+          if (/\\[(\\d+)\\]/.test(node.textContent)) nodes.push(node);
+        }
+        nodes.forEach(function (textNode) {
+          var text = textNode.textContent;
+          var frag = document.createDocumentFragment();
+          var lastIndex = 0;
+          var re = /\\[(\\d+)\\]/g;
+          var match;
+          while ((match = re.exec(text)) !== null) {
+            var n = parseInt(match[1], 10);
+            if (lastIndex < match.index) {
+              frag.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+            }
+            if (n >= 1 && n <= sourcesCount) {
+              var sup = document.createElement("sup");
+              sup.className = "msg__ref";
+              var a = document.createElement("a");
+              a.href = "#src-" + messageId + "-" + n;
+              a.setAttribute("data-source-index", String(n));
+              a.setAttribute("data-message-id", String(messageId));
+              a.textContent = "[" + n + "]";
+              sup.appendChild(a);
+              frag.appendChild(sup);
+            } else {
+              frag.appendChild(document.createTextNode(match[0]));
+            }
+            lastIndex = match.index + match[0].length;
+          }
+          if (lastIndex < text.length) {
+            frag.appendChild(document.createTextNode(text.slice(lastIndex)));
+          }
+          textNode.parentNode.replaceChild(frag, textNode);
+        });
+      }
+
+      function annotateRefsWithTooltips(container, sources) {
+        if (!container || !sources || !sources.length) return;
+        container.querySelectorAll(".msg__ref a").forEach(function (a) {
+          var idx = parseInt(a.getAttribute("data-source-index"), 10);
+          if (!Number.isFinite(idx) || idx < 1 || idx > sources.length) return;
+          var src = sources[idx - 1];
+          a.setAttribute("title", sourceTooltip(src, idx - 1));
+        });
+      }
+
+      function openSourcesAndHighlight(messageId, refIndex) {
+        if (!messageId || !refIndex) return;
+        var sel = window.CSS && CSS.escape ? CSS.escape(messageId) : messageId;
+        var article = dom.stream.querySelector('article[data-msg-id="' + sel + '"]');
+        if (!article) return;
+        var block = article.querySelector(".sources-compact");
+        if (!block) return;
+        if (!block.classList.contains("is-open")) {
+          block.classList.add("is-open");
+          state.expandedSources[messageId] = true;
+          var toggleEl = block.querySelector(".sources-compact__toggle");
+          if (toggleEl) toggleEl.textContent = "▴ Скрыть";
+        }
+        var item = block.querySelector(
+          '.sources-compact__item[data-source-index="' + refIndex + '"]'
+        );
+        if (item) {
+          item.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          item.classList.remove("is-highlighted");
+          void item.offsetWidth;
+          item.classList.add("is-highlighted");
+          setTimeout(function () { item.classList.remove("is-highlighted"); }, 1500);
+        }
       }
 
       function renderMessage(message, opts) {
@@ -1065,9 +1389,7 @@ function renderChatScript(initialStateJson) {
         var sources = Array.isArray(message.sources) ? message.sources : [];
         var sourcesHtml = "";
         if (!isUser && sources.length) {
-          sourcesHtml = '<div class="sources">' +
-            '<div class="sources__title">Источники (' + sources.length + ')</div>' +
-            sources.map(renderSource).join("") + '</div>';
+          sourcesHtml = renderSourcesCompact(message);
         }
         var metaParts = [];
         if (message.createdAt) metaParts.push('<span class="mono">' + fmtTime(message.createdAt) + '</span>');
@@ -1091,10 +1413,16 @@ function renderChatScript(initialStateJson) {
           }
         }
         var metaHtml = metaParts.length ? '<div class="msg__meta">' + metaParts.join("") + '</div>' : '';
-        return '<article class="msg msg--' + (isUser ? "user" : "assistant") + '">' +
+        return '<article class="msg msg--' + (isUser ? "user" : "assistant") + '" data-msg-id="' + escapeHtml(message.id) + '">' +
           '<div class="msg__avatar">' + avatar + '</div>' +
           '<div class="msg__body">' + contentHtml + errorHtml + sourcesHtml + metaHtml + '</div>' +
           '</article>';
+      }
+
+      function isStreamNearBottom() {
+        var el = dom.stream;
+        if (!el) return true;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 100;
       }
 
       function renderStream() {
@@ -1110,12 +1438,34 @@ function renderChatScript(initialStateJson) {
           renderEmpty();
           return;
         }
+        var shouldAutoscroll = isStreamNearBottom();
+        var prevScrollTop = dom.stream.scrollTop;
         var html = state.messages.map(function (msg) {
           if (msg.streaming === true && !msg.content) return renderMessage(msg, { typing: true });
           return renderMessage(msg, { streaming: msg.streaming === true });
         }).join("");
         dom.stream.innerHTML = html;
-        dom.stream.scrollTop = dom.stream.scrollHeight;
+        decorateAllRefs();
+        if (shouldAutoscroll) {
+          dom.stream.scrollTop = dom.stream.scrollHeight;
+        } else {
+          dom.stream.scrollTop = prevScrollTop;
+        }
+      }
+
+      function decorateAllRefs() {
+        state.messages.forEach(function (msg) {
+          if (msg.role !== "assistant") return;
+          var sources = Array.isArray(msg.sources) ? msg.sources : [];
+          if (!sources.length) return;
+          var article = dom.stream.querySelector('article[data-msg-id="' + (window.CSS && CSS.escape ? CSS.escape(msg.id) : msg.id) + '"]');
+          if (!article) return;
+          var bubble = article.querySelector(".msg__bubble--md");
+          if (bubble) {
+            decorateRefs(bubble, sources.length, msg.id);
+            annotateRefsWithTooltips(bubble, sources);
+          }
+        });
       }
 
       function scheduleStreamRender() {
@@ -1291,7 +1641,10 @@ function renderChatScript(initialStateJson) {
           return Promise.resolve();
         }
         return api("GET", "/api/v2/chat/sessions/" + state.activeSessionId).then(function (data) {
-          state.messages = data.messages || [];
+          state.messages = (data.messages || []).map(function (m) {
+            if (m && Array.isArray(m.sources)) m.sources = normalizeSources(m.sources);
+            return m;
+          });
           var session = data.session;
           state.selectedNodeIds = new Set((session.filters && session.filters.nodeIds) || []);
           state.selectedDocumentIds = new Set((session.filters && session.filters.documentIds) || []);
@@ -1506,7 +1859,7 @@ function renderChatScript(initialStateJson) {
                     assistant.content += evt.data.text || "";
                     scheduleStreamRender();
                   } else if (evt.event === "sources") {
-                    assistant.sources = evt.data || [];
+                    assistant.sources = normalizeSources(evt.data || []);
                     renderStream();
                   } else if (evt.event === "meta") {
                     if (evt.data.userMessageId) {
@@ -1514,7 +1867,12 @@ function renderChatScript(initialStateJson) {
                       if (u) u.id = evt.data.userMessageId;
                     }
                   } else if (evt.event === "done") {
-                    assistant.id = evt.data.assistantMessageId || assistant.id;
+                    var newId = evt.data.assistantMessageId || assistant.id;
+                    if (newId !== assistant.id && state.expandedSources[assistant.id] !== undefined) {
+                      state.expandedSources[newId] = state.expandedSources[assistant.id];
+                      delete state.expandedSources[assistant.id];
+                    }
+                    assistant.id = newId;
                     if (evt.data.metadata) assistant.metadata = evt.data.metadata;
                     assistant.streaming = false;
                   } else if (evt.event === "error") {
@@ -1658,6 +2016,34 @@ function renderChatScript(initialStateJson) {
           if (snippetToggle) {
             var sib = snippetToggle.previousElementSibling;
             if (sib) sib.classList.toggle("is-expanded");
+            return;
+          }
+          var refLink = event.target.closest(".msg__ref a");
+          if (refLink) {
+            event.preventDefault();
+            var sIdx = parseInt(refLink.getAttribute("data-source-index"), 10);
+            var msgId = refLink.getAttribute("data-message-id");
+            openSourcesAndHighlight(msgId, sIdx);
+            return;
+          }
+          var srcHeader = event.target.closest(".sources-compact__header");
+          if (srcHeader) {
+            var block = srcHeader.closest(".sources-compact");
+            if (block) {
+              var mid = block.getAttribute("data-message-id");
+              var nowOpen = !block.classList.contains("is-open");
+              block.classList.toggle("is-open", nowOpen);
+              state.expandedSources[mid] = nowOpen;
+              var toggleEl = srcHeader.querySelector(".sources-compact__toggle");
+              if (toggleEl) toggleEl.textContent = nowOpen ? "▴ Скрыть" : "▾ Показать";
+            }
+            return;
+          }
+          var srcItem = event.target.closest(".sources-compact__item");
+          if (srcItem && !event.target.closest("[data-source-link]")) {
+            var href = srcItem.getAttribute("data-href");
+            if (href) window.open(href, "_blank", "noopener");
+            return;
           }
           var switchBtn = event.target.closest("[data-action='switch-to-local']");
           if (switchBtn) {
