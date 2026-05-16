@@ -49,7 +49,10 @@ UI скрыт за `?admin=1`.
   счётчиков на обеих страницах.
 - `POST /documents/upload`, `POST /documents/ingest-folder-async` — для загрузки
   файлов и серверных папок со страницы «База знаний».
-- `GET /jobs`, `POST /jobs/:id/cancel` — задачи импорта.
+- `GET /jobs`, `POST /jobs/:id/cancel`, `POST /jobs/:id/retry`,
+  `DELETE /jobs/:id` — задачи импорта. С полировки #2 `GET /jobs`
+  принимает `statuses=running,completed,stopped`, `offset`, и возвращает
+  `total`. `DELETE /jobs/:id` добавлен в полировке #2.
 - `GET /tags` — автодополнение тегов в редакторе.
 - `POST /nodes`, `PATCH /nodes/:id`, `DELETE /nodes/:id?strategy=...` — операции
   с деревом со страницы «База знаний».
@@ -351,10 +354,88 @@ grep -nE '"\\n|"\\t|"\\r' apps/kb-api/src/routes/uiV2*.js
 
 Модели часто пишут `[1]`, `[5]` как маркеры цитирования. По умолчанию
 Markdown НЕ интерпретирует одиночные `[N]` как ссылку (для этого нужен
-формат `[text][id]` с reference-определением). Поэтому такие пометки
-остаются обычным текстом — без перехода к карточке источника. Если в
-будущем понадобится скролл к карточке — можно после `marked.parse` пройти
-по DOM и обернуть `[N]` в `<a href="#source-N">`.
+формат `[text][id]` с reference-определением). С полировки #2 в
+`uiV2Chat.js` добавлена пост-обработка через `decorateRefs(container,
+sourcesCount, messageId)`:
+
+1. `renderMarkdown(text)` возвращает санитизированный HTML (DOMPurify).
+2. После того как HTML вставлен в `.msg__bubble--md`, по нему проходит
+   `TreeWalker` с `NodeFilter.SHOW_TEXT`.
+3. Текстовые узлы, у которых родитель попадает под селектор
+   `code, pre, a, .msg__ref`, пропускаются. Это критично — иначе
+   разметка ломается (например, `[N]` внутри markdown-ссылки или
+   code-блока).
+4. В остальных текстовых узлах все вхождения `\[(\d+)\]` где
+   `1 ≤ N ≤ sourcesCount` заменяются на
+   `<sup class="msg__ref"><a data-source-index="N" data-message-id="…"
+   href="#src-<msgId>-N">[N]</a></sup>`. Через `document.createDocumentFragment`
+   и `parentNode.replaceChild` — без `innerHTML`, чтобы не пересоздавать
+   соседние узлы.
+5. После decorateRefs `annotateRefsWithTooltips(container, sources)`
+   ставит `title="Источник N: <имя>, страница X"` на каждой плашке.
+
+Делегированный обработчик клика на `dom.stream` ловит `.msg__ref a`,
+открывает блок источников (`is-open`), скроллит к
+`#src-<msgId>-N` и подсвечивает строку через CSS-анимацию
+`sourcesCompactHighlight` (1.4 сек).
+
+Состояние «развёрнут/свёрнут» — `state.expandedSources[messageId]`,
+исключительно в памяти: каждый чат начинается со свёрнутого блока.
+При смене `assistant.id` со `stream-<ts>` на серверный UUID (на событии
+`done`) ключ в `state.expandedSources` мигрируется, чтобы блок не
+схлопнулся на ровном месте.
+
+### Sticky composer в чате через flexbox
+
+Без явного `height: 100vh` на `.main` поле ввода чата уезжает за нижний
+край экрана — `.main` имеет `min-height: 100vh`, а длинный список
+сообщений может его раздуть. С полировки #2 для страницы чата
+(`body.page-chat`) добавлен скоупный CSS:
+
+```css
+body.page-chat .main {
+  height: 100vh;
+  min-height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
+}
+.chat-page { flex: 1 1 auto; overflow: hidden; }
+.chat-page__main { overflow: hidden; }
+.chat-page__main > .chat-mode-row,
+.chat-page__main > .cloud-banner,
+.chat-page__main > .composer { flex: 0 0 auto; }
+.chat-page__main > .chat-stream { flex: 1 1 auto; min-height: 0; }
+```
+
+`position: fixed` намеренно НЕ используется — при изменении ширины
+сайдбара/фильтров фиксированный композер съезжает или перекрывает
+содержимое. Flex-распределение пространства внутри ограниченного
+по высоте `.main` решает проблему чище.
+
+Автоскролл во время стрима срабатывает только если пользователь уже
+в самом низу (`scrollHeight - scrollTop - clientHeight < 100`). Если
+он промотал вверх читать — `scrollTop` сохраняется через
+`prevScrollTop` и восстанавливается после `innerHTML` reset.
+
+### Фильтры и пагинация в задачах импорта
+
+`GET /jobs` принимает `statuses=running,completed,stopped` (через
+запятую). В роуте они мапятся в реальные статусы БД:
+
+- `running` → `queued, running, cancel_requested`
+- `completed` → `completed`
+- `stopped` → `failed, cancelled`
+
+Это позволяет фронту работать с тремя простыми пилюлями, не зная
+подробностей внутренних статусов. `listJobs(...)` отдельно делает
+`COUNT(*)` для пагинации и прикрепляет к массиву свойство `.total`
+(массив-как-объект — Node-специфика, в JSON через роут переезжает
+явным полем `total`).
+
+`DELETE /jobs/:id` удаляет запись из `ingestion_jobs`, но не трогает
+документы и векторы. Активные задачи (queued/running/cancel_requested)
+запрещено удалять — нужно сначала остановить (`POST /jobs/:id/cancel`).
+Это защищает от гонок: воркер может ещё писать в job-запись.
 
 ### DELETE-запросы не должны нести `Content-Type: application/json` без тела
 
@@ -542,3 +623,56 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
   одиночной строки шлёт массив из одного id; кнопка «Удалить выбранные» —
   массив из всех отмеченных. Логика `deleteArmed` и стиль `is-armed`
   удалены полностью.
+- 2026-05-16: полировка #2 — пять накопленных улучшений UI v2:
+  - **Удаление раздела через тёмную модалку.** В `uiV2Knowledge.js`
+    добавлена общая обёртка `openConfirmModal({title, bodyHtml, danger,
+    confirmLabel, onConfirm})`, аналогичная той, что используется в
+    `uiV2Chat.js`. `confirmDeleteNode` теперь использует её и явно
+    кодирует UUID раздела в URL (`encodeURIComponent`). Если у узла есть
+    потомки — открывается informational-модалка со ссылкой на
+    `/ui/nodes`; если узел пустой — стратегия `block` и быстрое удаление;
+    если у узла есть документы — стратегия `move_to_parent` или
+    `move_to_unsorted`. После удаления — toast «Раздел удалён»,
+    `loadNodes()` и `loadDocuments()`.
+  - **Фильтры, пагинация и действия в задачах импорта.** `GET /jobs`
+    расширен параметрами `statuses=running,completed,stopped`
+    (множественный фильтр), `offset` (пагинация) и возвращает поле
+    `total` для подсчёта страниц. На фронте — три пилюли-фильтра
+    (Идёт / Готово / Остановлено), выбор размера страницы (10/25/50),
+    пагинация «← Назад · Страница N из M · Вперёд →». Фильтр и размер
+    страницы сохраняются в `localStorage` (`localrag.jobsFilter.statuses`,
+    `localrag.jobsFilter.pageSize`). Для остановленных/завершённых задач
+    добавлены кнопки «Продолжить» (использует существующий
+    `POST /jobs/:id/retry`) и «Удалить» (новый эндпоинт
+    `DELETE /jobs/:id` — удаляет запись из `ingestion_jobs`, не трогая
+    документ). Удаление активных задач (queued/running/cancel_requested)
+    запрещено с 409 — сначала нужно остановить.
+  - **Прибитый снизу композер чата.** На `body.page-chat` теперь
+    `.main { height: 100vh; max-height: 100vh; overflow: hidden }`,
+    а внутри `.chat-page__main` явно проставлены `flex: 0 0 auto`
+    для шапки/composer и `flex: 1 1 auto; min-height: 0` для
+    `.chat-stream`. Автопрокрутка к низу при стриме срабатывает только
+    если пользователь уже в самом низу (`scrollHeight - scrollTop -
+    clientHeight < 100`); иначе `scrollTop` сохраняется. `position:
+    fixed` не используется — чистый flex-layout.
+  - **Колонка «Чанки» в таблице документов.** В таблицу `/ui/v2/knowledge`
+    добавлена колонка «Чанки» между «Страниц» и «Раздел». Значение —
+    моноширное число из `doc.chunk_count` (уже возвращается
+    `listDocuments`/`listDocumentsForKnowledgeNode`). Для нуля или
+    отсутствующего значения — приглушённое тире `—`. Сводка в шапке
+    уже показывала `K чанков` — без изменений.
+  - **Компактный блок источников + кликабельные сноски `[N]`.** В
+    `uiV2Chat.js` под ответом ассистента вместо списка карточек
+    показывается одна строка-заголовок «ИСТОЧНИКИ · N фрагментов из M
+    документов» с кнопкой «▾ Показать». Развёрнутый аккордеон
+    группирует фрагменты по документу. Каждый фрагмент — строка
+    `[N] <короткая подпись> → открыть`, клик ведёт на превью.
+    В тексте ответа `[1]`, `[5]` и т.п. через `decorateRefs` (обход DOM
+    через `TreeWalker SHOW_TEXT`) заменяются на `<sup class="msg__ref">
+    <a>[N]</a></sup>` — кликабельная плашка с подсветкой и tooltip с
+    именем документа и страницей/фрагментом. Текст внутри `<code>`,
+    `<pre>`, `<a>` и уже добавленных `.msg__ref` пропускается. Клик по
+    `[N]` раскрывает блок источников (если был свёрнут) и подсвечивает
+    нужную строку 1.4-секундной CSS-анимацией. Состояние
+    «развёрнут/свёрнут» хранится в `state.expandedSources[messageId]`
+    (только в памяти, без localStorage).

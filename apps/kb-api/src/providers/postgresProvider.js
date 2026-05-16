@@ -2649,11 +2649,21 @@ export class PostgresProvider {
     const limit = Number.isFinite(parsedLimit)
       ? Math.max(1, Math.min(200, Math.trunc(parsedLimit)))
       : 50;
+    const parsedOffset = Number(options.offset);
+    const offset = Number.isFinite(parsedOffset)
+      ? Math.max(0, Math.trunc(parsedOffset))
+      : 0;
+    const statuses = Array.isArray(options.statuses)
+      ? options.statuses.filter((s) => typeof s === "string" && s.trim() !== "")
+      : null;
 
     const conditions = [];
     const params = [];
 
-    if (statusMode === "active") {
+    if (statuses && statuses.length > 0) {
+      params.push(statuses);
+      conditions.push(`j.status = ANY($${params.length}::text[])`);
+    } else if (statusMode === "active") {
       params.push(["queued", "running", "cancel_requested"]);
       conditions.push(`j.status = ANY($${params.length}::text[])`);
     } else if (statusMode === "history") {
@@ -2718,12 +2728,16 @@ export class PostgresProvider {
       conditions.push(`(${nodeFilterSql})`);
     }
 
+    const countParams = params.slice();
     params.push(limit);
     const limitPlaceholder = `$${params.length}`;
+    params.push(offset);
+    const offsetPlaceholder = `$${params.length}`;
     const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const result = await this.pool.query(
-      `
+    const [result, countResult] = await Promise.all([
+      this.pool.query(
+        `
       SELECT
         j.id,
         j.document_id,
@@ -2756,11 +2770,37 @@ export class PostgresProvider {
       ${whereSql}
       ORDER BY COALESCE(j.finished_at, j.started_at, j.created_at) DESC
       LIMIT ${limitPlaceholder}
+      OFFSET ${offsetPlaceholder}
       `,
-      params
+        params
+      ),
+      this.pool.query(
+        `
+      SELECT COUNT(*)::int AS total
+      FROM ingestion_jobs j
+      LEFT JOIN documents d ON d.id = j.document_id
+      ${whereSql}
+      `,
+        countParams
+      ),
+    ]);
+
+    const rows = result.rows;
+    const total = Number(countResult.rows[0]?.total ?? rows.length);
+    rows.total = total;
+    return rows;
+  }
+
+  async deleteJobById(jobId) {
+    const result = await this.pool.query(
+      `
+      DELETE FROM ingestion_jobs
+      WHERE id = $1
+      `,
+      [jobId]
     );
 
-    return result.rows;
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getJobById(jobId) {

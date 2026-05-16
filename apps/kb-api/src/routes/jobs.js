@@ -14,13 +14,45 @@ function parseBoolean(value, defaultValue = false) {
   return ["1", "true", "yes", "on", "да"].includes(String(value).toLowerCase());
 }
 
+const PILL_TO_STATUSES = {
+  running: ["queued", "running", "cancel_requested"],
+  completed: ["completed"],
+  stopped: ["failed", "cancelled"],
+};
+
+function parseStatusPills(raw) {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const tokens = Array.isArray(raw)
+    ? raw
+    : String(raw)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+  if (tokens.length === 0) return null;
+  const out = new Set();
+  for (const tok of tokens) {
+    const key = String(tok).toLowerCase();
+    if (PILL_TO_STATUSES[key]) {
+      PILL_TO_STATUSES[key].forEach((s) => out.add(s));
+    } else if (
+      ["queued", "running", "cancel_requested", "completed", "failed", "cancelled"].includes(key)
+    ) {
+      out.add(key);
+    }
+  }
+  return Array.from(out);
+}
+
 export async function jobRoutes(app) {
   app.get("/jobs", async (request, reply) => {
     const query = request.query ?? {};
+    const statuses = parseStatusPills(query.statuses);
     const items = await app.postgresProvider.listJobs({
       statusMode: query.statusMode,
       search: query.search,
       limit: query.limit,
+      offset: query.offset,
+      statuses,
       nodeId: query.nodeId,
       includeChildren: parseBoolean(query.includeChildren, true),
     });
@@ -33,17 +65,54 @@ export async function jobRoutes(app) {
       };
     }
 
+    const total = typeof items.total === "number" ? items.total : items.length;
+
     if (query.nodeId) {
       return {
         ok: true,
         nodeId: query.nodeId,
         includeChildren: parseBoolean(query.includeChildren, true),
         items,
+        total,
       };
     }
 
     return {
       items,
+      total,
+    };
+  });
+
+  app.delete("/jobs/:id", async (request, reply) => {
+    const job = await app.postgresProvider.getJobById(request.params.id);
+    if (!job) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Задача не найдена",
+      };
+    }
+
+    if (["queued", "running", "cancel_requested"].includes(job.status)) {
+      reply.code(409);
+      return {
+        ok: false,
+        error: "Сначала остановите задачу, потом удалите её из истории",
+      };
+    }
+
+    const deleted = await app.postgresProvider.deleteJobById(request.params.id);
+    if (!deleted) {
+      reply.code(404);
+      return {
+        ok: false,
+        error: "Задача не найдена",
+      };
+    }
+
+    return {
+      ok: true,
+      deleted: true,
     };
   });
 

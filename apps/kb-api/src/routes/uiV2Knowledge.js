@@ -315,6 +315,75 @@ function renderKnowledgeCss() {
       align-items: center;
       flex-wrap: wrap;
     }
+    .kb-job__actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .kb-job__error {
+      font-size: 11px;
+      color: var(--danger);
+      word-break: break-word;
+    }
+
+    .kb-jobs-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 10px;
+    }
+    .kb-jobs-filters {
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .kb-jobs-pill {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      padding: 4px 11px;
+      border-radius: 999px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    }
+    .kb-jobs-pill:hover { color: var(--text); border-color: var(--border-strong); }
+    .kb-jobs-pill.is-active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .kb-jobs-pageSize {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+    .kb-jobs-pageSize select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .kb-jobs-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding-top: 10px;
+      margin-top: 10px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .kb-jobs-pagination button[disabled] { opacity: 0.4; cursor: not-allowed; }
 
     .kb-doc-toolbar {
       display: flex;
@@ -374,7 +443,7 @@ function renderKnowledgeCss() {
       max-width: 320px;
       display: block;
     }
-    .kb-doc-table .doc-pages, .kb-doc-table .doc-chunks {
+    .kb-doc-table .doc-pages, .kb-doc-table .doc-chunks, .kb-doc-table .doc-date {
       font-family: "JetBrains Mono", monospace;
       color: var(--text-muted);
       font-size: 12px;
@@ -536,6 +605,41 @@ function renderKnowledgeScript(initialStateJson) {
   return `
     (function () {
       var INITIAL_STATE = ${initialStateJson};
+      var DEFAULT_JOBS_STATUSES = ["running", "completed", "stopped"];
+      var DEFAULT_JOBS_PAGE_SIZE = 25;
+      var ALLOWED_PAGE_SIZES = [10, 25, 50];
+
+      function loadJobsStatusesFromStorage() {
+        try {
+          var raw = localStorage.getItem("localrag.jobsFilter.statuses");
+          if (!raw) return DEFAULT_JOBS_STATUSES.slice();
+          var parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return DEFAULT_JOBS_STATUSES.slice();
+          var filtered = parsed.filter(function (s) {
+            return DEFAULT_JOBS_STATUSES.indexOf(s) !== -1;
+          });
+          return filtered.length ? filtered : DEFAULT_JOBS_STATUSES.slice();
+        } catch (err) {
+          return DEFAULT_JOBS_STATUSES.slice();
+        }
+      }
+      function loadJobsPageSizeFromStorage() {
+        try {
+          var raw = localStorage.getItem("localrag.jobsFilter.pageSize");
+          var n = Number(raw);
+          if (ALLOWED_PAGE_SIZES.indexOf(n) === -1) return DEFAULT_JOBS_PAGE_SIZE;
+          return n;
+        } catch (err) {
+          return DEFAULT_JOBS_PAGE_SIZE;
+        }
+      }
+      function saveJobsStatusesToStorage(statuses) {
+        try { localStorage.setItem("localrag.jobsFilter.statuses", JSON.stringify(statuses)); } catch (err) {}
+      }
+      function saveJobsPageSizeToStorage(n) {
+        try { localStorage.setItem("localrag.jobsFilter.pageSize", String(n)); } catch (err) {}
+      }
+
       var state = {
         nodes: [],
         nodeCounts: {},
@@ -549,8 +653,12 @@ function renderKnowledgeScript(initialStateJson) {
         documentSearch: "",
         selectedDocIds: new Set(),
         jobs: [],
+        jobsTotal: 0,
         jobsCollapsed: true,
         jobsTimer: null,
+        jobsStatuses: loadJobsStatusesFromStorage(),
+        jobsPageSize: loadJobsPageSizeFromStorage(),
+        jobsPage: 1,
         existingTags: [],
         unsortedNodeId: null,
       };
@@ -771,7 +879,7 @@ function renderKnowledgeScript(initialStateJson) {
           return hay.indexOf(term) !== -1;
         });
         if (!docs.length) {
-          dom.docTableBody.innerHTML = '<tr><td colspan="7"><div class="kb-doc-empty">В этом разделе документов нет. Перетащите файлы сюда или укажите путь к папке выше.</div></td></tr>';
+          dom.docTableBody.innerHTML = '<tr><td colspan="8"><div class="kb-doc-empty">В этом разделе документов нет. Перетащите файлы сюда или укажите путь к папке выше.</div></td></tr>';
           updateSummary();
           renderBulkBar();
           return;
@@ -784,14 +892,19 @@ function renderKnowledgeScript(initialStateJson) {
           var tagsHtml = tags.length
             ? tags.slice(0, 6).map(function (t) { return '<span class="doc-tag">' + escapeHtml(t) + '</span>'; }).join("") + (tags.length > 6 ? '<span class="doc-tag">+' + (tags.length - 6) + '</span>' : '')
             : '<span class="kb-summary__divider">—</span>';
+          var chunkCount = Number(doc.chunk_count || 0);
+          var chunksCell = chunkCount > 0
+            ? String(chunkCount)
+            : '<span class="kb-summary__divider">—</span>';
           return '<tr data-doc-id="' + escapeHtml(doc.id) + '">' +
             '<td><input type="checkbox" data-action="select-doc" data-doc-id="' + escapeHtml(doc.id) + '" ' + checked + ' style="accent-color:var(--accent)" /></td>' +
             '<td><div class="doc-title" title="' + escapeHtml(doc.title || "") + '">' + escapeHtml(doc.title || doc.original_file_name || "(без названия)") + '</div>' +
             (doc.original_file_path ? '<span class="doc-path">' + escapeHtml(doc.original_file_path) + '</span>' : '') + '</td>' +
             '<td class="doc-pages">' + escapeHtml(doc.page_count || 0) + '</td>' +
+            '<td class="doc-chunks">' + chunksCell + '</td>' +
             '<td class="doc-node">' + escapeHtml(primaryNodeName) + '</td>' +
             '<td><div class="doc-tags">' + tagsHtml + '</div></td>' +
-            '<td class="doc-chunks">' + escapeHtml(fmtDate(doc.created_at)) + '</td>' +
+            '<td class="doc-date">' + escapeHtml(fmtDate(doc.created_at)) + '</td>' +
             '<td><div class="doc-actions">' +
             '<button type="button" class="kb-doc-action" data-action="open-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Открыть исходник">' + INITIAL_STATE.icons.externalLink + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="move-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Переместить в раздел">' + INITIAL_STATE.icons.folder + '</button>' +
@@ -816,6 +929,48 @@ function renderKnowledgeScript(initialStateJson) {
         }
       }
 
+      function jobsStatusToPill(status) {
+        if (["queued", "running", "cancel_requested"].indexOf(status) >= 0) return "running";
+        if (status === "completed") return "completed";
+        if (["failed", "cancelled"].indexOf(status) >= 0) return "stopped";
+        return null;
+      }
+
+      function renderJobsToolbar() {
+        var pills = [
+          { key: "running", label: "Идёт" },
+          { key: "completed", label: "Готово" },
+          { key: "stopped", label: "Остановлено" },
+        ];
+        var pillsHtml = pills.map(function (p) {
+          var active = state.jobsStatuses.indexOf(p.key) !== -1 ? " is-active" : "";
+          return '<button type="button" class="kb-jobs-pill' + active +
+            '" data-action="toggle-jobs-pill" data-pill="' + p.key + '">' + p.label + '</button>';
+        }).join("");
+        var pageSizeOpts = ALLOWED_PAGE_SIZES.map(function (n) {
+          var selected = n === state.jobsPageSize ? " selected" : "";
+          return '<option value="' + n + '"' + selected + '>' + n + '</option>';
+        }).join("");
+        return '<div class="kb-jobs-toolbar">' +
+          '<div class="kb-jobs-filters">' + pillsHtml + '</div>' +
+          '<label class="kb-jobs-pageSize">На странице ' +
+          '<select id="kbJobsPageSize">' + pageSizeOpts + '</select>' +
+          '</label>' +
+          '</div>';
+      }
+
+      function renderJobsPagination() {
+        var totalPages = Math.max(1, Math.ceil(state.jobsTotal / state.jobsPageSize));
+        if (totalPages <= 1) return '';
+        var prevDisabled = state.jobsPage <= 1 ? ' disabled' : '';
+        var nextDisabled = state.jobsPage >= totalPages ? ' disabled' : '';
+        return '<div class="kb-jobs-pagination">' +
+          '<button type="button" class="btn btn--ghost" data-action="jobs-page-prev"' + prevDisabled + '>← Назад</button>' +
+          '<span>Страница <span class="mono">' + state.jobsPage + '</span> из <span class="mono">' + totalPages + '</span></span>' +
+          '<button type="button" class="btn btn--ghost" data-action="jobs-page-next"' + nextDisabled + '>Вперёд →</button>' +
+          '</div>';
+      }
+
       function renderJobs() {
         var jobs = state.jobs;
         var active = jobs.filter(function (j) {
@@ -823,11 +978,11 @@ function renderKnowledgeScript(initialStateJson) {
         });
         if (state.jobsCollapsed) {
           dom.jobsCard.classList.add("is-collapsed");
-          if (!jobs.length) {
-            dom.jobsCollapsedRow.innerHTML = '<span>Активных задач нет</span><span></span>';
+          if (!state.jobsTotal) {
+            dom.jobsCollapsedRow.innerHTML = '<span>Задач нет</span><span></span>';
           } else {
             dom.jobsCollapsedRow.innerHTML =
-              '<span><span class="mono">' + active.length + '</span> активных · <span class="mono">' + (jobs.length - active.length) + '</span> завершено</span>' +
+              '<span><span class="mono">' + active.length + '</span> активных · <span class="mono">' + state.jobsTotal + '</span> всего</span>' +
               '<button type="button" class="btn btn--ghost" id="kbJobsExpand">Развернуть</button>';
             var expandBtn = document.getElementById("kbJobsExpand");
             if (expandBtn) expandBtn.addEventListener("click", function () {
@@ -839,45 +994,64 @@ function renderKnowledgeScript(initialStateJson) {
           return;
         }
         dom.jobsCard.classList.remove("is-collapsed");
+        var listHtml;
         if (!jobs.length) {
-          dom.jobsList.innerHTML = '<div class="kb-doc-empty">Активных задач нет.</div>';
-          return;
+          listHtml = '<div class="kb-doc-empty">По текущим фильтрам задач нет.</div>';
+        } else {
+          listHtml = jobs.map(function (job) {
+            var status = job.status || "unknown";
+            var pct = 0;
+            if (job.total_items && job.processed_items) {
+              pct = Math.min(100, Math.round((Number(job.processed_items) / Math.max(1, Number(job.total_items))) * 100));
+            } else if (status === "completed") {
+              pct = 100;
+            }
+            var statusClass = "kb-job__status--" + status;
+            var statusLabel = {
+              queued: "ожидает",
+              running: "идёт",
+              cancel_requested: "останавливается",
+              completed: "готово",
+              failed: "ошибка",
+              cancelled: "остановлено",
+            }[status] || status;
+            var title = job.original_file_path || job.document_title || job.original_file_name || job.job_type || job.id;
+            var canCancel = ["queued", "running", "cancel_requested"].indexOf(status) >= 0;
+            var canRestart = ["failed", "cancelled"].indexOf(status) >= 0 && job.original_file_path;
+            var canDelete = ["queued", "running", "cancel_requested"].indexOf(status) === -1;
+            var meta = [];
+            if (job.job_type) meta.push('<span>' + escapeHtml(job.job_type) + '</span>');
+            if (job.total_items) meta.push('<span class="mono">' + (job.processed_items || 0) + ' / ' + job.total_items + '</span>');
+            if (job.progress_message) meta.push('<span>' + escapeHtml(job.progress_message) + '</span>');
+            if (job.chunk_count) meta.push('<span class="mono">' + job.chunk_count + ' чанк.</span>');
+            if (job.created_at) meta.push('<span>' + escapeHtml(fmtDate(job.created_at)) + '</span>');
+            var actionsHtml = '';
+            if (canCancel) {
+              actionsHtml += '<button type="button" class="btn btn--ghost" data-action="cancel-job" data-job-id="' + escapeHtml(job.id) + '">Отменить</button>';
+            }
+            if (canRestart) {
+              actionsHtml += '<button type="button" class="btn btn--ghost" data-action="restart-job" data-job-id="' + escapeHtml(job.id) + '">Продолжить</button>';
+            }
+            if (canDelete) {
+              actionsHtml += '<button type="button" class="btn btn--danger" data-action="delete-job" data-job-id="' + escapeHtml(job.id) + '" data-job-title="' + escapeHtml(title) + '">Удалить</button>';
+            }
+            var errorHtml = '';
+            if (status === "failed" && job.error_message) {
+              errorHtml = '<div class="kb-job__error">' + escapeHtml(job.error_message) + '</div>';
+            }
+            return '<div class="kb-job" data-job-id="' + escapeHtml(job.id) + '">' +
+              '<div class="kb-job__head">' +
+              '<div class="kb-job__title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</div>' +
+              '<span class="kb-job__status ' + statusClass + '">' + statusLabel + '</span>' +
+              (actionsHtml ? '<div class="kb-job__actions">' + actionsHtml + '</div>' : '') +
+              '</div>' +
+              (status === "running" || status === "queued" ? '<div class="kb-job__progress"><div style="width:' + pct + '%"></div></div>' : '') +
+              '<div class="kb-job__meta">' + meta.join("") + '</div>' +
+              errorHtml +
+              '</div>';
+          }).join("");
         }
-        var html = jobs.slice(0, 20).map(function (job) {
-          var status = job.status || "unknown";
-          var pct = 0;
-          if (job.total_items && job.processed_items) {
-            pct = Math.min(100, Math.round((Number(job.processed_items) / Math.max(1, Number(job.total_items))) * 100));
-          } else if (status === "completed") {
-            pct = 100;
-          }
-          var statusClass = "kb-job__status--" + status;
-          var statusLabel = {
-            queued: "ожидает",
-            running: "идёт",
-            cancel_requested: "останавливается",
-            completed: "готово",
-            failed: "ошибка",
-            cancelled: "остановлено",
-          }[status] || status;
-          var title = job.original_file_path || job.job_type || job.id;
-          var canCancel = ["queued", "running", "cancel_requested"].indexOf(status) >= 0;
-          var meta = [];
-          if (job.job_type) meta.push('<span>' + escapeHtml(job.job_type) + '</span>');
-          if (job.total_items) meta.push('<span class="mono">' + (job.processed_items || 0) + ' / ' + job.total_items + '</span>');
-          if (job.progress_message) meta.push('<span>' + escapeHtml(job.progress_message) + '</span>');
-          if (job.created_at) meta.push('<span>' + escapeHtml(fmtDate(job.created_at)) + '</span>');
-          return '<div class="kb-job" data-job-id="' + escapeHtml(job.id) + '">' +
-            '<div class="kb-job__head">' +
-            '<div class="kb-job__title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</div>' +
-            '<span class="kb-job__status ' + statusClass + '">' + statusLabel + '</span>' +
-            (canCancel ? '<button type="button" class="btn btn--ghost" data-action="cancel-job" data-job-id="' + escapeHtml(job.id) + '">Отменить</button>' : '') +
-            '</div>' +
-            (status === "running" || status === "queued" ? '<div class="kb-job__progress"><div style="width:' + pct + '%"></div></div>' : '') +
-            '<div class="kb-job__meta">' + meta.join("") + '</div>' +
-            '</div>';
-        }).join("");
-        dom.jobsList.innerHTML = html;
+        dom.jobsList.innerHTML = renderJobsToolbar() + listHtml + renderJobsPagination();
       }
 
       function ensurePollingState() {
@@ -892,9 +1066,25 @@ function renderKnowledgeScript(initialStateJson) {
         }
       }
 
+      function buildJobsUrl() {
+        var parts = [];
+        parts.push("limit=" + state.jobsPageSize);
+        parts.push("offset=" + ((state.jobsPage - 1) * state.jobsPageSize));
+        if (state.jobsStatuses.length && state.jobsStatuses.length < 3) {
+          parts.push("statuses=" + encodeURIComponent(state.jobsStatuses.join(",")));
+        }
+        return "/jobs?" + parts.join("&");
+      }
+
       function loadJobs() {
-        return api("GET", "/jobs?limit=20").then(function (data) {
+        return api("GET", buildJobsUrl()).then(function (data) {
           state.jobs = data.items || [];
+          state.jobsTotal = typeof data.total === "number" ? data.total : state.jobs.length;
+          var totalPages = Math.max(1, Math.ceil(state.jobsTotal / state.jobsPageSize));
+          if (state.jobsPage > totalPages) {
+            state.jobsPage = totalPages;
+            return loadJobs();
+          }
           renderJobs();
           ensurePollingState();
         }).catch(function (err) {
@@ -1032,6 +1222,26 @@ function renderKnowledgeScript(initialStateJson) {
         return b;
       }
 
+      function openConfirmModal(opts) {
+        opts = opts || {};
+        var wrap = document.createElement("div");
+        wrap.className = "kb-prompt";
+        if (opts.bodyHtml) wrap.innerHTML = opts.bodyHtml;
+        else if (typeof opts.message === "string") {
+          var p = document.createElement("p");
+          p.style.cssText = "margin:0;";
+          p.textContent = opts.message;
+          wrap.appendChild(p);
+        }
+        var cancelBtn = makeButton(opts.cancelLabel || "Отмена", "btn--ghost", closeModal);
+        var confirmCls = opts.danger ? "btn--danger" : "btn--accent";
+        var confirmBtn = makeButton(opts.confirmLabel || "OK", confirmCls, function () {
+          closeModal();
+          if (typeof opts.onConfirm === "function") opts.onConfirm();
+        });
+        openModal(opts.title || "Подтверждение", wrap, [cancelBtn, confirmBtn]);
+      }
+
       function promptCreateNode(parentId) {
         var wrap = document.createElement("div");
         wrap.className = "kb-prompt";
@@ -1099,29 +1309,51 @@ function renderKnowledgeScript(initialStateJson) {
         if (!node) return;
         var hasChildren = getDescendantIds(nodeId).size > 0;
         if (hasChildren) {
-          showToast("Сначала удалите вложенные разделы через расширенный редактор", "error");
+          openConfirmModal({
+            title: "Нельзя удалить",
+            bodyHtml:
+              '<p>В разделе «<strong>' + escapeHtml(node.name) + '</strong>» есть вложенные разделы.</p>' +
+              '<p style="font-size:12px;color:var(--text-muted);">' +
+              'Сначала переместите или удалите вложенные разделы — это можно сделать в ' +
+              '<a href="/ui/nodes" target="_blank" rel="noopener" style="color:var(--accent);">расширенном редакторе</a>.</p>',
+            danger: false,
+            confirmLabel: "Понятно",
+            onConfirm: function () {},
+          });
           return;
         }
         var counts = state.nodeCounts[nodeId] || {};
         var docCount = Number(counts.scopeDocuments || 0);
-        var wrap = document.createElement("div");
-        wrap.className = "kb-prompt";
-        wrap.innerHTML = '<p>Удалить раздел «<strong>' + escapeHtml(node.name) + '</strong>»?</p>' +
-          (docCount > 0
-            ? '<p style="font-size:12px;color:var(--text-muted)">В разделе ' + docCount + ' документ(ов). Они будут перемещены в <strong>' + (node.parentId ? "родительский раздел" : "«Без раздела»") + '</strong>. Сами документы и их векторы не удаляются.</p>'
-            : '<p style="font-size:12px;color:var(--text-muted)">Документов в разделе нет. Раздел будет удалён сразу.</p>');
-        var deleteBtn = makeButton(docCount > 0 ? "Удалить и переместить документы" : "Удалить", "btn--danger", function () {
-          var strategy = docCount > 0
-            ? (node.parentId ? "move_to_parent" : "move_to_unsorted")
-            : "block";
-          api("DELETE", "/nodes/" + nodeId + "?strategy=" + strategy).then(function () {
-            closeModal();
-            if (state.activeNodeId === nodeId) state.activeNodeId = null;
-            return loadNodes().then(function () { return loadDocuments(); });
-          }).catch(function (err) { showToast("Не удалось удалить: " + err.message, "error"); });
+        var hasDocs = docCount > 0;
+        var moveTarget = node.parentId ? "родительский раздел" : "«Без раздела»";
+        var bodyHtml =
+          '<p style="margin:0;">Удалить раздел «<strong>' + escapeHtml(node.name) + '</strong>»?</p>' +
+          (hasDocs
+            ? '<p style="font-size:12px;color:var(--text-muted);margin:0;">В разделе ' +
+              docCount + ' документ(ов). Они будут перемещены в <strong>' + moveTarget +
+              '</strong>. Сами документы и их векторы не удаляются.</p>'
+            : '<p style="font-size:12px;color:var(--text-muted);margin:0;">Документов в разделе нет. Раздел будет удалён сразу.</p>');
+        openConfirmModal({
+          title: "Удалить раздел?",
+          bodyHtml: bodyHtml,
+          danger: true,
+          confirmLabel: hasDocs ? "Удалить и переместить документы" : "Удалить раздел",
+          onConfirm: function () {
+            var strategy = hasDocs
+              ? (node.parentId ? "move_to_parent" : "move_to_unsorted")
+              : "block";
+            api("DELETE", "/nodes/" + encodeURIComponent(nodeId) + "?strategy=" + strategy)
+              .then(function () {
+                if (state.activeNodeId === nodeId) state.activeNodeId = null;
+                state.nodeExpanded.delete(nodeId);
+                showToast("Раздел удалён");
+                return loadNodes().then(function () { return loadDocuments(); });
+              })
+              .catch(function (err) {
+                showToast("Не удалось удалить: " + err.message, "error");
+              });
+          },
         });
-        var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
-        openModal("Удалить раздел", wrap, [cancelBtn, deleteBtn]);
       }
 
       function openTagsModal(documentId) {
@@ -1458,10 +1690,87 @@ function renderKnowledgeScript(initialStateJson) {
         });
         dom.jobsRefreshBtn.addEventListener("click", loadJobs);
         dom.jobsCard.addEventListener("click", function (e) {
+          var pillBtn = e.target.closest("[data-action='toggle-jobs-pill']");
+          if (pillBtn) {
+            var pill = pillBtn.getAttribute("data-pill");
+            var idx = state.jobsStatuses.indexOf(pill);
+            if (idx === -1) state.jobsStatuses.push(pill);
+            else state.jobsStatuses.splice(idx, 1);
+            if (state.jobsStatuses.length === 0) {
+              state.jobsStatuses = DEFAULT_JOBS_STATUSES.slice();
+              showToast("Хотя бы один фильтр должен быть включён", "error");
+            }
+            saveJobsStatusesToStorage(state.jobsStatuses);
+            state.jobsPage = 1;
+            loadJobs();
+            return;
+          }
+          var prevBtn = e.target.closest("[data-action='jobs-page-prev']");
+          if (prevBtn && !prevBtn.disabled) {
+            state.jobsPage = Math.max(1, state.jobsPage - 1);
+            loadJobs();
+            return;
+          }
+          var nextBtn = e.target.closest("[data-action='jobs-page-next']");
+          if (nextBtn && !nextBtn.disabled) {
+            state.jobsPage += 1;
+            loadJobs();
+            return;
+          }
           var cancelBtn = e.target.closest("[data-action='cancel-job']");
           if (cancelBtn) {
             var jid = cancelBtn.getAttribute("data-job-id");
-            api("POST", "/jobs/" + jid + "/cancel", {}).then(function () { loadJobs(); }).catch(function (err) { showToast("Не удалось отменить: " + err.message, "error"); });
+            api("POST", "/jobs/" + jid + "/cancel", {})
+              .then(function () { loadJobs(); })
+              .catch(function (err) { showToast("Не удалось отменить: " + err.message, "error"); });
+            return;
+          }
+          var restartBtn = e.target.closest("[data-action='restart-job']");
+          if (restartBtn) {
+            var rid = restartBtn.getAttribute("data-job-id");
+            api("POST", "/jobs/" + rid + "/retry", {})
+              .then(function () {
+                showToast("Повторный импорт поставлен в очередь");
+                loadJobs();
+              })
+              .catch(function (err) { showToast("Не удалось перезапустить: " + err.message, "error"); });
+            return;
+          }
+          var delBtn = e.target.closest("[data-action='delete-job']");
+          if (delBtn) {
+            var did = delBtn.getAttribute("data-job-id");
+            var dtitle = delBtn.getAttribute("data-job-title") || "";
+            openConfirmModal({
+              title: "Удалить задачу из истории?",
+              bodyHtml:
+                '<p style="margin:0;">Удалить запись «<strong>' + escapeHtml(dtitle) + '</strong>»?</p>' +
+                '<p style="font-size:12px;color:var(--text-muted);margin:0;">Документ и его векторы не затрагиваются — удалится только запись о задаче.</p>',
+              danger: true,
+              confirmLabel: "Удалить",
+              onConfirm: function () {
+                api("DELETE", "/jobs/" + encodeURIComponent(did))
+                  .then(function () {
+                    showToast("Задача удалена из истории");
+                    loadJobs();
+                  })
+                  .catch(function (err) { showToast("Не удалось удалить: " + err.message, "error"); });
+              },
+            });
+            return;
+          }
+          var pageSizeSel = e.target.closest("#kbJobsPageSize");
+          if (pageSizeSel) return;
+        });
+        dom.jobsCard.addEventListener("change", function (e) {
+          var pageSizeSel = e.target.closest("#kbJobsPageSize");
+          if (pageSizeSel) {
+            var n = Number(pageSizeSel.value);
+            if (ALLOWED_PAGE_SIZES.indexOf(n) !== -1) {
+              state.jobsPageSize = n;
+              saveJobsPageSizeToStorage(n);
+              state.jobsPage = 1;
+              loadJobs();
+            }
           }
         });
 
@@ -1643,6 +1952,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
                     <th style="width:32px"><input type="checkbox" id="kbDocSelectAll" style="accent-color:var(--accent)" /></th>
                     <th>Имя</th>
                     <th style="width:80px">Страниц</th>
+                    <th style="width:80px">Чанки</th>
                     <th style="width:160px">Раздел</th>
                     <th style="width:220px">Теги</th>
                     <th style="width:110px">Загружен</th>
@@ -1650,7 +1960,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
                   </tr>
                 </thead>
                 <tbody id="kbDocBody">
-                  <tr><td colspan="7"><div class="kb-doc-empty">Документы загружаются…</div></td></tr>
+                  <tr><td colspan="8"><div class="kb-doc-empty">Документы загружаются…</div></td></tr>
                 </tbody>
               </table>
             </div>
