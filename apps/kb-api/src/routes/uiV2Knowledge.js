@@ -415,11 +415,6 @@ function renderKnowledgeCss() {
     }
     .kb-doc-action:hover { background: var(--surface-2); color: var(--text); border-color: var(--border); }
     .kb-doc-action.is-danger:hover { color: var(--danger); }
-    .kb-doc-action.is-armed {
-      color: var(--danger);
-      border-color: var(--danger);
-      background: var(--accent-soft);
-    }
     .kb-doc-empty, .kb-doc-error {
       padding: 26px 18px;
       text-align: center;
@@ -558,7 +553,6 @@ function renderKnowledgeScript(initialStateJson) {
         jobsTimer: null,
         existingTags: [],
         unsortedNodeId: null,
-        deleteArmed: {},
       };
 
       var dom = {
@@ -784,7 +778,6 @@ function renderKnowledgeScript(initialStateJson) {
         }
         var html = docs.map(function (doc) {
           var checked = state.selectedDocIds.has(doc.id) ? "checked" : "";
-          var armed = state.deleteArmed[doc.id] ? " is-armed" : "";
           var primaryNode = (doc.node_links || []).find(function (l) { return l.is_primary; }) || (doc.node_links || [])[0] || null;
           var primaryNodeName = primaryNode && byNode[primaryNode.node_id] ? byNode[primaryNode.node_id].name : "Без раздела";
           var tags = Array.isArray(doc.categories) ? doc.categories : [];
@@ -803,7 +796,7 @@ function renderKnowledgeScript(initialStateJson) {
             '<button type="button" class="kb-doc-action" data-action="open-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Открыть исходник">' + INITIAL_STATE.icons.externalLink + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="move-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Переместить в раздел">' + INITIAL_STATE.icons.folder + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="edit-tags" data-doc-id="' + escapeHtml(doc.id) + '" title="Редактировать теги">' + INITIAL_STATE.icons.tag + '</button>' +
-            '<button type="button" class="kb-doc-action is-danger' + armed + '" data-action="delete-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="' + (armed ? "Точно удалить?" : "Удалить") + '">' + INITIAL_STATE.icons.trash + '</button>' +
+            '<button type="button" class="kb-doc-action is-danger" data-action="delete-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Удалить">' + INITIAL_STATE.icons.trash + '</button>' +
             '</div></td>' +
             '</tr>';
         }).join("");
@@ -1305,26 +1298,43 @@ function renderKnowledgeScript(initialStateJson) {
         openModal("Переместить выбранные", wrap, [cancelBtn, saveBtn]);
       }
 
-      function confirmBulkDelete() {
-        if (state.selectedDocIds.size === 0) return;
-        var ids = Array.from(state.selectedDocIds);
+      function confirmDeleteDocuments(ids, { label } = {}) {
+        if (!ids || ids.length === 0) return;
+        var docs = state.documents.filter(function (d) { return ids.indexOf(d.id) !== -1; });
+        var headline;
+        if (ids.length === 1) {
+          var doc = docs[0];
+          var title = doc ? (doc.title || doc.original_file_name || doc.id) : ids[0];
+          headline = 'Удалить документ «' + escapeHtml(title) + '»?';
+        } else {
+          headline = 'Удалить выбранные документы (' + ids.length + ')?';
+        }
         var wrap = document.createElement("div");
         wrap.className = "kb-prompt";
-        wrap.innerHTML = '<p>Удалить выбранные документы (' + ids.length + ')?</p>' +
+        wrap.innerHTML = '<p>' + headline + '</p>' +
           '<p style="font-size:12px;color:var(--text-muted)">Будут удалены векторы из Qdrant и записи из PostgreSQL. Файлы в data/raw не трогаются.</p>';
-        var deleteBtn = makeButton("Удалить " + ids.length + " док.", "btn--danger", function () {
-          Promise.all(ids.map(function (id) { return api("DELETE", "/documents/" + id).catch(function (err) { return { ok: false, error: err.message, id: id }; }); }))
-            .then(function (results) {
-              var failed = results.filter(function (r) { return r && r.ok === false; });
-              closeModal();
-              state.selectedDocIds = new Set();
-              if (failed.length) showToast("Удалено: " + (ids.length - failed.length) + ", ошибок: " + failed.length, "error");
-              else showToast("Удалено: " + ids.length);
-              return loadDocuments();
+        var buttonLabel = label || ("Удалить " + ids.length + " док.");
+        var deleteBtn = makeButton(buttonLabel, "btn--danger", function () {
+          Promise.all(ids.map(function (id) {
+            return api("DELETE", "/documents/" + id).catch(function (err) {
+              return { ok: false, error: err.message, id: id };
             });
+          })).then(function (results) {
+            var failed = results.filter(function (r) { return r && r.ok === false; });
+            closeModal();
+            ids.forEach(function (id) { state.selectedDocIds.delete(id); });
+            if (failed.length) showToast("Удалено: " + (ids.length - failed.length) + ", ошибок: " + failed.length, "error");
+            else showToast(ids.length === 1 ? "Документ удалён" : ("Удалено: " + ids.length));
+            return loadDocuments().then(loadNodes);
+          });
         });
         var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
-        openModal("Удаление документов", wrap, [cancelBtn, deleteBtn]);
+        openModal(ids.length === 1 ? "Удаление документа" : "Удаление документов", wrap, [cancelBtn, deleteBtn]);
+      }
+
+      function confirmBulkDelete() {
+        if (state.selectedDocIds.size === 0) return;
+        confirmDeleteDocuments(Array.from(state.selectedDocIds));
       }
 
       function uploadFileViaMultipart(file, relativePath) {
@@ -1500,20 +1510,7 @@ function renderKnowledgeScript(initialStateJson) {
           var delBtn = event.target.closest("[data-action='delete-doc']");
           if (delBtn) {
             var docId = delBtn.getAttribute("data-doc-id");
-            if (state.deleteArmed[docId]) {
-              clearTimeout(state.deleteArmed[docId]);
-              delete state.deleteArmed[docId];
-              api("DELETE", "/documents/" + docId).then(function () {
-                state.documents = state.documents.filter(function (d) { return d.id !== docId; });
-                renderDocuments();
-                showToast("Документ удалён");
-                loadNodes();
-              }).catch(function (err) { showToast("Не удалось удалить: " + err.message, "error"); });
-            } else {
-              state.deleteArmed[docId] = setTimeout(function () { delete state.deleteArmed[docId]; renderDocuments(); }, 3000);
-              renderDocuments();
-              showToast("Нажмите ещё раз в течение 3 секунд для удаления");
-            }
+            confirmDeleteDocuments([docId], { label: "Удалить" });
             return;
           }
         });
