@@ -42,6 +42,12 @@
 - PATCH /api/v2/chat/sessions/:id
 - DELETE /api/v2/chat/sessions/:id
 - POST /api/v2/chat/sessions/:id/messages
+- GET /api/v2/settings
+- GET /api/v2/settings/cloudProvider
+- PATCH /api/v2/settings/cloudProvider
+- POST /api/v2/settings/cloudProvider/test
+- PATCH /api/v2/settings/theme
+- GET /api/v2/settings/services
 - POST /documents/deduplicate
 - POST /documents/upload
 - POST /documents/ingest-file
@@ -319,3 +325,65 @@ curl -X POST http://localhost:8787/api/v2/chat/sessions/<id>/messages \
 curl -X DELETE http://localhost:8787/api/v2/chat/sessions/<id>
 # → { ok: true }
 ```
+
+## UI v2 — настройки (итерация 3)
+
+Под префиксом `/api/v2/settings`. Все ответы — `{ ok: true, ... }` или
+`{ ok: false, error/code/message: '...' }` с HTTP-кодом ошибки.
+
+- `GET /api/v2/settings` — все настройки + read-only снимок `models` и
+  `retrieval` из конфигов. `cloudProvider.apiKey` всегда замаскирован.
+- `GET /api/v2/settings/cloudProvider` — настройки облака (только маска).
+- `PATCH /api/v2/settings/cloudProvider` — обновить. Поле `apiKey`: если пустое
+  или содержит маску — сохранённый ключ не перезаписывается.
+- `POST /api/v2/settings/cloudProvider/test` — короткий тестовый запрос
+  («Скажи слово ОК»). Принимает либо `{ baseUrl, apiKey, model }`, либо
+  использует сохранённые. На неуспехе HTTP остаётся 200, а в теле
+  `{ ok: false, code, message }`. Это позволяет UI обрабатывать ошибку как
+  «плашку», а не как fetch-исключение.
+- `PATCH /api/v2/settings/theme` — обновить тему по умолчанию.
+- `GET /api/v2/settings/services` — статус Postgres, Qdrant, Ollama, kb-api.
+
+Примеры:
+
+```bash
+curl http://localhost:8787/api/v2/settings
+# → { ok: true, settings: { cloudProvider: { ..., apiKey: 'sk-•••••a3f9' }, theme: {...} }, models: {...}, retrieval: {...} }
+
+curl -X PATCH http://localhost:8787/api/v2/settings/cloudProvider \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"DeepSeek","baseUrl":"https://api.deepseek.com","apiKey":"sk-real-key","model":"deepseek-chat","useByDefault":true}'
+
+curl -X POST http://localhost:8787/api/v2/settings/cloudProvider/test \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+# → { ok: true, response: 'OK', model: 'deepseek-chat', latencyMs: 820, tokensUsed: 9 }
+# или { ok: false, code: 'unauthorized', message: 'Неверный или просроченный API-ключ...' }
+
+curl -X PATCH http://localhost:8787/api/v2/settings/theme \
+  -H 'Content-Type: application/json' \
+  -d '{"defaultTheme":"system"}'
+
+curl http://localhost:8787/api/v2/settings/services
+# → { ok: true, services: { kbApi: {...}, postgres: {...}, qdrant: {...}, ollama: {...} } }
+```
+
+## Старый UI скрыт за `?admin=1`
+
+С итерации 3 страницы `/ui/consult`, `/ui/ingest`, `/ui/jobs`, `/ui/pages-search`,
+`/ui/nodes` без флага возвращают 404 (HTML или JSON в зависимости от `Accept`).
+Способы получить доступ:
+
+- Открыть страницу с `?admin=1` — поставит cookie `admin_mode=1` на 1 час и
+  пустит дальше.
+- Иметь cookie `admin_mode=1` (без флага).
+
+В сайдбаре нового UI ссылка «Админ-режим (старый интерфейс)» ведёт на
+`/ui/consult?admin=1`.
+
+## Сессии чата — поле provider
+
+С итерации 3 `POST /api/v2/chat/sessions` и `PATCH /api/v2/chat/sessions/:id`
+принимают необязательное поле `provider` со значениями `'local'` или `'cloud'`.
+По умолчанию `'local'`, кроме случая, когда в `app_settings.cloudProvider.useByDefault`
+включён флаг и облако сконфигурировано — тогда новая сессия создаётся как `'cloud'`.

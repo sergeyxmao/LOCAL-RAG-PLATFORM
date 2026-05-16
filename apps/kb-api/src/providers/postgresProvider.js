@@ -68,6 +68,22 @@ export class PostgresProvider {
 
     await this.ensureKnowledgeNodeSchema();
     await this.ensureChatSessionSchema();
+    await this.ensureAppSettingsSchema();
+  }
+
+  async ensureAppSettingsSchema() {
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.pool.query(`
+      ALTER TABLE chat_sessions
+      ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'local'
+    `);
   }
 
   async ensureChatSessionSchema() {
