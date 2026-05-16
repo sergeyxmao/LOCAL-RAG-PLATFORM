@@ -131,13 +131,27 @@ export async function chatSessionRoutes(app) {
 
     let serverClosing = false;
     const abortController = new AbortController();
-    const onClientGone = () => {
+    request.log.info(
+      { sessionId: id, initialAborted: abortController.signal.aborted },
+      "sse-start"
+    );
+    const onClientGone = (ev) => {
+      request.log.info(
+        {
+          sessionId: id,
+          serverClosing,
+          alreadyAborted: abortController.signal.aborted,
+          event: ev,
+        },
+        "sse-client-gone"
+      );
       if (serverClosing) return;
       if (abortController.signal.aborted) return;
+      request.log.info({ sessionId: id, event: ev }, "sse-aborting");
       abortController.abort();
     };
-    request.raw.on("aborted", onClientGone);
-    request.raw.on("close", onClientGone);
+    request.raw.on("aborted", () => onClientGone("aborted"));
+    request.raw.on("close", () => onClientGone("close"));
 
     try {
       await app.chatSessionService.streamAssistantMessage(id, String(body.content), {
@@ -156,6 +170,10 @@ export async function chatSessionRoutes(app) {
         send("error", { code: "server_error", message: error.message || "Сбой стрима" });
       }
     } finally {
+      request.log.info(
+        { sessionId: id, signalAborted: abortController.signal.aborted },
+        "sse-finish"
+      );
       serverClosing = true;
       try { reply.raw.end(); } catch (err) {}
     }
