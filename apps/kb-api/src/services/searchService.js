@@ -67,8 +67,21 @@ export class SearchService {
     };
   }
 
+  normalizeNodeIds(nodeId, nodeIds = []) {
+    const sources = Array.isArray(nodeIds) ? nodeIds : [];
+    const combined = sources
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean);
+    if (nodeId) {
+      const single = String(nodeId).trim();
+      if (single) combined.push(single);
+    }
+    return Array.from(new Set(combined));
+  }
+
   buildQdrantFilter({
     nodeId = null,
+    nodeIds = [],
     includeChildren = true,
     scope = "all",
     assetClass = "all",
@@ -82,10 +95,14 @@ export class SearchService {
     const selectedDocumentIds = this.normalizeDocumentIds(documentId, documentIds);
     const normalizedSelectedTags = this.normalizeTags(selectedTags);
     const qdrantSelectedTags = expandTagSearchVariants(normalizedSelectedTags);
+    const normalizedNodeIds = this.normalizeNodeIds(nodeId, nodeIds);
 
-    if (nodeId) {
+    if (normalizedNodeIds.length > 0) {
       must.push(
-        this.qdrantMatchCondition(includeChildren ? "node_scope_ids" : "node_ids", nodeId)
+        this.qdrantMatchCondition(
+          includeChildren ? "node_scope_ids" : "node_ids",
+          normalizedNodeIds
+        )
       );
     }
 
@@ -157,6 +174,45 @@ export class SearchService {
       nodeId: normalizedNodeId,
       includeChildren: this.normalizeBoolean(includeChildren, true),
       node,
+    };
+  }
+
+  async resolveNodeScopes({ nodeId = null, nodeIds = [], includeChildren = true } = {}) {
+    const incoming = this.normalizeNodeIds(nodeId, nodeIds);
+    const includeChildrenResolved = this.normalizeBoolean(includeChildren, true);
+    if (incoming.length === 0) {
+      return {
+        nodeIds: [],
+        primaryNodeId: null,
+        includeChildren: includeChildrenResolved,
+        node: null,
+      };
+    }
+
+    for (const id of incoming) {
+      if (!this.isUuid(id)) {
+        throw Object.assign(new Error("Некорректный UUID раздела"), {
+          statusCode: 400,
+        });
+      }
+    }
+
+    const provider = this.qdrantProvider.postgresProvider;
+    const nodes = [];
+    for (const id of incoming) {
+      const node = await provider.getKnowledgeNodeById(id);
+      if (!node) {
+        throw Object.assign(new Error("Раздел не найден"), { statusCode: 404 });
+      }
+      nodes.push(node);
+    }
+
+    return {
+      nodeIds: incoming,
+      primaryNodeId: incoming[0],
+      includeChildren: includeChildrenResolved,
+      node: nodes[0],
+      nodes,
     };
   }
 
@@ -477,10 +533,11 @@ export class SearchService {
       documentIds = [],
       selectedTags = [],
       nodeId = null,
+      nodeIds = [],
       includeChildren = true,
     } = {}
   ) {
-    const nodeScope = await this.resolveNodeScope({ nodeId, includeChildren });
+    const nodeScope = await this.resolveNodeScopes({ nodeId, nodeIds, includeChildren });
     const normalizedSelectedTags = this.normalizeTags(selectedTags);
     const semanticTopK =
       semanticSearch ??
@@ -502,7 +559,7 @@ export class SearchService {
       Math.max(finalTopK * 2, 8);
 
     const qdrantFilter = this.buildQdrantFilter({
-      nodeId: nodeScope.nodeId,
+      nodeIds: nodeScope.nodeIds,
       includeChildren: nodeScope.includeChildren,
       scope,
       assetClass,
@@ -520,7 +577,8 @@ export class SearchService {
         return [];
       }),
       this.qdrantProvider.postgresProvider.lexicalSearch(query, lexicalTopK, {
-        nodeId: nodeScope.nodeId,
+        nodeId: nodeScope.primaryNodeId,
+        nodeIds: nodeScope.nodeIds,
         includeChildren: nodeScope.includeChildren,
         includeUnlinked: nodeScope.node?.is_system === true,
         scope,
@@ -597,7 +655,8 @@ export class SearchService {
         document_id: documentId,
         document_ids: Array.isArray(documentIds) ? documentIds : [],
         selected_tags: normalizedSelectedTags,
-        node_id: nodeScope.nodeId,
+        node_id: nodeScope.primaryNodeId,
+        node_ids: nodeScope.nodeIds,
         include_children: nodeScope.includeChildren,
         node_name: nodeScope.node?.name ?? null,
         qdrant_filter: qdrantFilter ?? null,

@@ -2879,6 +2879,7 @@ export class PostgresProvider {
     limit = 12,
     {
       nodeId = null,
+      nodeIds = [],
       includeChildren = true,
       includeUnlinked = false,
       scope = "all",
@@ -2890,6 +2891,16 @@ export class PostgresProvider {
       selectedTags = [],
     } = {}
   ) {
+    const targetNodeIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(nodeIds) ? nodeIds : []),
+          nodeId,
+        ]
+          .map((id) => String(id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
     const normalized = String(query ?? "").trim();
     if (!normalized) {
       return [];
@@ -3073,12 +3084,12 @@ export class PostgresProvider {
       ) node_payload ON TRUE
     `;
     const buildNodeScopeCondition = (documentIdSql) => {
-      if (!nodeId) {
+      if (targetNodeIds.length === 0) {
         return "";
       }
 
-      params.push(nodeId);
-      const nodePlaceholder = `$${params.length}`;
+      params.push(targetNodeIds);
+      const nodesPlaceholder = `$${params.length}`;
       params.push(includeChildren === true);
       const includeChildrenPlaceholder = `$${params.length}`;
       params.push(includeUnlinked === true);
@@ -3093,14 +3104,14 @@ export class PostgresProvider {
               AND (
                 (
                   ${includeChildrenPlaceholder}::boolean = FALSE
-                  AND dnl.node_id = ${nodePlaceholder}::uuid
+                  AND dnl.node_id = ANY(${nodesPlaceholder}::uuid[])
                 )
                 OR (
                   ${includeChildrenPlaceholder}::boolean = TRUE
                   AND EXISTS (
                     SELECT 1
                     FROM knowledge_node_closure cscope
-                    WHERE cscope.ancestor_id = ${nodePlaceholder}::uuid
+                    WHERE cscope.ancestor_id = ANY(${nodesPlaceholder}::uuid[])
                       AND cscope.descendant_id = dnl.node_id
                   )
                 )

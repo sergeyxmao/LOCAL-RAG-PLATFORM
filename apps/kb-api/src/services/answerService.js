@@ -147,6 +147,7 @@ export class AnswerService {
       documentIds = [],
       selectedTags = [],
       nodeId = null,
+      nodeIds = [],
       includeChildren = true,
     } = {}
   ) {
@@ -161,6 +162,7 @@ export class AnswerService {
       documentIds,
       selectedTags,
       nodeId,
+      nodeIds,
       includeChildren,
     });
     const sources = hybrid.items;

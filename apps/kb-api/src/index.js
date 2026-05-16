@@ -14,7 +14,9 @@ import { AnswerService } from "./services/answerService.js";
 import { VisualAssetService } from "./services/visualAssetService.js";
 import { ChatSessionService } from "./services/chatSessionService.js";
 import { AppSettingsService } from "./services/appSettingsService.js";
+import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
+import { backupApiRoutes } from "./routes/backupApi.js";
 import { healthRoutes } from "./routes/health.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { documentRoutes } from "./routes/documents.js";
@@ -83,6 +85,11 @@ const answerService = new AnswerService({
 
 const appSettingsService = new AppSettingsService({ postgresProvider });
 const cloudChatProvider = new CloudChatProvider();
+const backupService = new BackupService({
+  postgresConfig: appConfig.postgres,
+  backupRoot: `${appConfig.dataRoot}/backups`,
+  logger: app.log,
+});
 
 const chatSessionService = new ChatSessionService({
   postgresProvider,
@@ -107,6 +114,7 @@ app.decorate("answerService", answerService);
 app.decorate("chatSessionService", chatSessionService);
 app.decorate("appSettingsService", appSettingsService);
 app.decorate("cloudChatProvider", cloudChatProvider);
+app.decorate("backupService", backupService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -120,6 +128,7 @@ await app.register(adminRoutes);
 await app.register(uiStateRoutes);
 await app.register(settingsApiRoutes);
 await app.register(chatSessionRoutes);
+await app.register(backupApiRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 

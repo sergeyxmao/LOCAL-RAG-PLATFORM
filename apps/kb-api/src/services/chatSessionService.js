@@ -290,7 +290,7 @@ export class ChatSessionService {
       options.documentIds = filters.documentIds;
     }
     if (filters.nodeIds.length > 0) {
-      options.nodeId = filters.nodeIds[0];
+      options.nodeIds = filters.nodeIds;
       options.includeChildren = true;
     }
     return { options, filters };
@@ -549,6 +549,249 @@ export class ChatSessionService {
       return "сервис не успел ответить за отведённое время";
     }
     return message;
+  }
+
+  buildLocalAnswerMessages({ question, sources }) {
+    const contextBlock = (sources || [])
+      .slice(0, 6)
+      .map((source, index) => {
+        const lines = [`Источник ${index + 1}:`];
+        if (source.title) lines.push(`Заголовок: ${source.title}`);
+        if (source.source_path) lines.push(`Путь: ${source.source_path}`);
+        if (typeof source.page_number === "number") lines.push(`Страница: ${source.page_number}`);
+        if (typeof source.text === "string") lines.push(source.text.slice(0, 1200));
+        return lines.join("\n");
+      })
+      .join("\n\n---\n\n");
+    return [
+      {
+        role: "system",
+        content:
+          "Ты локальный консультант по рабочим документам. Отвечай только по предоставленным источникам. Если источников недостаточно — скажи об этом прямо. Добавляй ссылки на источники в виде [1], [2]. Отвечай по-русски.",
+      },
+      {
+        role: "user",
+        content: `Вопрос:\n${question}\n\nИсточники:\n${contextBlock}`,
+      },
+    ];
+  }
+
+  async streamAssistantMessage(sessionId, content, { onMeta, onSources, onToken, onDone, onError, abortSignal } = {}) {
+    const session = await this.getSessionById(sessionId);
+    if (!session) {
+      const err = new Error("Сессия чата не найдена");
+      err.statusCode = 404;
+      throw err;
+    }
+    const trimmed = typeof content === "string" ? content.trim() : "";
+    if (!trimmed) {
+      const err = new Error("Сообщение не может быть пустым");
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const userMessage = await this.insertMessage(sessionId, {
+      role: "user",
+      content: trimmed,
+      sources: [],
+      metadata: { mode: session.mode, provider: session.provider },
+    });
+    await this.maybeUpdateTitleFromFirstMessage(sessionId, trimmed);
+    if (typeof onMeta === "function") onMeta({ userMessageId: userMessage.id });
+
+    if (session.mode === "pages") {
+      return this.streamPagesAnswer(session, trimmed, userMessage, { onSources, onDone, onError });
+    }
+
+    const { options, filters } = this.buildSearchOptions(session);
+    let sources = [];
+    try {
+      const hybrid = await this.searchService.hybridSearch(trimmed, options);
+      sources = Array.isArray(hybrid?.items) ? hybrid.items : [];
+    } catch (error) {
+      const message = `Не удалось выполнить поиск: ${this.describeError(error)}`;
+      const assistant = await this.insertMessage(sessionId, {
+        role: "assistant",
+        content: message,
+        sources: [],
+        metadata: {
+          provider: session.provider,
+          mode: "error",
+          filters,
+          searchMode: "answer",
+          error: { code: "search_error", message: String(error?.message ?? error) },
+        },
+      });
+      if (typeof onError === "function") onError({ code: "search_error", message });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
+
+    if (typeof onSources === "function") onSources(sources);
+
+    if (session.provider === "cloud") {
+      return this.streamCloudAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal });
+    }
+    return this.streamLocalAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal });
+  }
+
+  async streamPagesAnswer(session, question, userMessage, { onSources, onDone, onError }) {
+    const { options, filters } = this.buildSearchOptions(session);
+    const startedAt = Date.now();
+    try {
+      const result = await this.searchService.hybridSearch(question, { ...options, scope: "assets", limit: 10 });
+      const items = Array.isArray(result?.items) ? result.items : [];
+      if (typeof onSources === "function") onSources(items);
+      const content = this.formatPagesAssistantContent(items);
+      const mode = items.length === 0 ? "fallback-empty" : "pages";
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content,
+        sources: items,
+        metadata: { provider: "local", mode, filters, durationMs: Date.now() - startedAt, searchMode: "pages" },
+      });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    } catch (error) {
+      const message = `Не удалось выполнить поиск страниц: ${this.describeError(error)}`;
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: message,
+        sources: [],
+        metadata: { provider: "local", mode: "error", filters, durationMs: Date.now() - startedAt, searchMode: "pages", error: { code: "search_error", message: String(error?.message ?? error) } },
+      });
+      if (typeof onError === "function") onError({ code: "search_error", message });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
+  }
+
+  async streamLocalAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal }) {
+    const startedAt = Date.now();
+    if (!this.chatProvider || typeof this.chatProvider.generateStream !== "function") {
+      const message = "Стриминг локального ИИ недоступен.";
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: message,
+        sources,
+        metadata: { provider: "local", mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "server_error", message } },
+      });
+      if (typeof onError === "function") onError({ code: "server_error", message });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
+
+    if (!sources.length) {
+      const fallback = this.answerService.buildFallbackAnswer(question, sources, {});
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: fallback.answer,
+        sources,
+        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: fallback.mode, filters, durationMs: Date.now() - startedAt, searchMode: "answer" },
+      });
+      if (typeof onToken === "function") onToken(fallback.answer);
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
+
+    const messages = this.buildLocalAnswerMessages({ question, sources });
+    try {
+      const result = await this.chatProvider.generateStream({ messages, onToken, abortSignal });
+      const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: finalContent,
+        sources,
+        metadata: {
+          provider: "local",
+          model: this.modelsConfig?.chat?.model || null,
+          mode: result.aborted ? "aborted" : "llm",
+          aborted: result.aborted === true,
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+        },
+      });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    } catch (error) {
+      const message = `Сбой локальной модели: ${this.describeError(error)}`;
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: message,
+        sources,
+        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "local_error", message: String(error?.message ?? error) } },
+      });
+      if (typeof onError === "function") onError({ code: "local_error", message });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
+  }
+
+  async streamCloudAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal }) {
+    const startedAt = Date.now();
+    const cloud = await this.appSettingsService.getCloudProvider();
+    if (!cloud.baseUrl || !cloud.apiKey || !cloud.model) {
+      const message = "Облако не настроено. Заполните Base URL, API-ключ и модель в Настройках.";
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: message,
+        sources,
+        metadata: { provider: "cloud", mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "no_credentials", message } },
+      });
+      if (typeof onError === "function") onError({ code: "no_credentials", message });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
+
+    const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
+    const tail = history.filter((m) => m.role !== "user" || m.content.trim() !== question);
+    const messages = this.buildCloudMessages({ question, sources, history: tail });
+
+    try {
+      const result = await this.cloudChatProvider.generateStream({
+        messages,
+        model: cloud.model,
+        baseUrl: cloud.baseUrl,
+        apiKey: cloud.apiKey,
+        maxTokens: 1024,
+        onToken,
+        abortSignal,
+      });
+      const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: finalContent,
+        sources,
+        metadata: {
+          provider: "cloud",
+          providerName: cloud.name || "Cloud",
+          model: result.model || cloud.model,
+          mode: result.aborted ? "aborted" : "llm",
+          aborted: result.aborted === true,
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "answer",
+          tokensIn: result.usage?.promptTokens ?? 0,
+          tokensOut: result.usage?.completionTokens ?? 0,
+        },
+      });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    } catch (error) {
+      const isCloudErr = error instanceof CloudProviderError;
+      const message = isCloudErr ? error.userMessage : `Сбой облака: ${this.describeError(error)}`;
+      const code = isCloudErr ? error.code : "server_error";
+      const assistant = await this.insertMessage(session.id, {
+        role: "assistant",
+        content: message,
+        sources,
+        metadata: { provider: "cloud", providerName: cloud.name || "Cloud", model: cloud.model, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code, message } },
+      });
+      if (typeof onError === "function") onError({ code, message });
+      if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
+      return assistant;
+    }
   }
 
   async appendUserMessageAndAnswer(sessionId, content) {

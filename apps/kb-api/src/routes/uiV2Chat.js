@@ -585,6 +585,7 @@ function renderChatScript(initialStateJson) {
         loadingMessage: false,
         documentSearchTerm: "",
         cloudProvider: { configured: false, name: "Cloud", useByDefault: false },
+        streamingController: null,
       };
 
       var dom = {
@@ -860,10 +861,10 @@ function renderChatScript(initialStateJson) {
           renderEmpty();
           return;
         }
-        var html = state.messages.map(function (msg) { return renderMessage(msg); }).join("");
-        if (state.loadingMessage) {
-          html += renderMessage({ role: "assistant", content: "", createdAt: null }, { typing: true });
-        }
+        var html = state.messages.map(function (msg) {
+          if (msg.streaming === true && !msg.content) return renderMessage(msg, { typing: true });
+          return renderMessage(msg, { streaming: msg.streaming === true });
+        }).join("");
         dom.stream.innerHTML = html;
         dom.stream.scrollTop = dom.stream.scrollHeight;
       }
@@ -1153,7 +1154,47 @@ function renderChatScript(initialStateJson) {
         renderDocuments();
       }
 
+      function setComposerStreaming(streaming) {
+        state.streamingController = streaming || null;
+        dom.sendBtn.disabled = false;
+        if (streaming) {
+          dom.sendBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
+          dom.sendBtn.setAttribute("aria-label", "Остановить");
+          dom.sendBtn.title = "Остановить генерацию";
+        } else {
+          dom.sendBtn.innerHTML = INITIAL_STATE.icons.send || '↑';
+          dom.sendBtn.setAttribute("aria-label", "Отправить");
+          dom.sendBtn.title = "Отправить";
+        }
+      }
+
+      function parseSseChunk(buffer) {
+        var events = [];
+        var sepIndex;
+        while ((sepIndex = buffer.indexOf("\n\n")) >= 0) {
+          var rawEvent = buffer.slice(0, sepIndex);
+          buffer = buffer.slice(sepIndex + 2);
+          var eventName = "message";
+          var dataLines = [];
+          rawEvent.split("\n").forEach(function (line) {
+            if (line.indexOf("event:") === 0) eventName = line.slice(6).trim();
+            else if (line.indexOf("data:") === 0) dataLines.push(line.slice(5).replace(/^ /, ""));
+          });
+          if (dataLines.length > 0) {
+            var dataStr = dataLines.join("\n");
+            var parsed;
+            try { parsed = JSON.parse(dataStr); } catch (err) { parsed = null; }
+            events.push({ event: eventName, data: parsed });
+          }
+        }
+        return { events: events, rest: buffer };
+      }
+
       function sendMessage() {
+        if (state.streamingController) {
+          try { state.streamingController.abort(); } catch (err) {}
+          return;
+        }
         var content = dom.textarea.value.trim();
         if (!content) return;
         var ensureSession = state.activeSessionId
@@ -1161,39 +1202,91 @@ function renderChatScript(initialStateJson) {
           : createSession(getActiveMode() || "answer");
         ensureSession.then(function () {
           var sessionId = state.activeSessionId;
+          var tmpUserId = "tmp-" + Date.now();
           state.messages.push({
-            id: "tmp-" + Date.now(),
+            id: tmpUserId,
             role: "user",
             content: content,
             createdAt: new Date().toISOString(),
             sources: [],
           });
+          var assistant = {
+            id: "stream-" + Date.now(),
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            sources: [],
+            metadata: { provider: getActiveProvider() },
+            streaming: true,
+          };
+          state.messages.push(assistant);
           dom.textarea.value = "";
           autoresizeTextarea();
-          state.loadingMessage = true;
-          setSendDisabled(true);
           renderStream();
-          api("POST", "/api/v2/chat/sessions/" + sessionId + "/messages", { content: content }).then(function (data) {
-            state.messages.pop();
-            if (data.userMessage) state.messages.push(data.userMessage);
-            if (data.assistantMessage) state.messages.push(data.assistantMessage);
-            state.loadingMessage = false;
-            setSendDisabled(false);
+
+          var controller = new AbortController();
+          setComposerStreaming(controller);
+
+          fetch("/api/v2/chat/sessions/" + sessionId + "/messages/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: content }),
+            signal: controller.signal,
+          }).then(function (response) {
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = "";
+            function pump() {
+              return reader.read().then(function (result) {
+                if (result.done) return;
+                buffer += decoder.decode(result.value, { stream: true });
+                var parsed = parseSseChunk(buffer);
+                buffer = parsed.rest;
+                parsed.events.forEach(function (evt) {
+                  if (!evt.data) return;
+                  if (evt.event === "token") {
+                    assistant.content += evt.data.text || "";
+                    renderStream();
+                  } else if (evt.event === "sources") {
+                    assistant.sources = evt.data || [];
+                    renderStream();
+                  } else if (evt.event === "meta") {
+                    if (evt.data.userMessageId) {
+                      var u = state.messages.find(function (m) { return m.id === tmpUserId; });
+                      if (u) u.id = evt.data.userMessageId;
+                    }
+                  } else if (evt.event === "done") {
+                    assistant.id = evt.data.assistantMessageId || assistant.id;
+                    if (evt.data.metadata) assistant.metadata = evt.data.metadata;
+                    assistant.streaming = false;
+                  } else if (evt.event === "error") {
+                    assistant.metadata = Object.assign({}, assistant.metadata, { mode: "error", error: evt.data });
+                    if (!assistant.content) assistant.content = evt.data.message || "Ошибка";
+                    assistant.streaming = false;
+                  }
+                });
+                return pump();
+              });
+            }
+            return pump();
+          }).then(function () {
+            assistant.streaming = false;
+            setComposerStreaming(null);
             renderStream();
-            return loadSessions();
+            loadSessions();
           }).catch(function (err) {
-            state.loadingMessage = false;
-            setSendDisabled(false);
-            state.messages.push({
-              id: "err-" + Date.now(),
-              role: "assistant",
-              content: "Не удалось получить ответ: " + err.message,
-              createdAt: new Date().toISOString(),
-              sources: [],
-              metadata: { mode: "error" },
-            });
+            assistant.streaming = false;
+            if (err.name === "AbortError") {
+              if (!assistant.content) assistant.content = "(прервано пользователем)";
+              assistant.metadata = Object.assign({}, assistant.metadata, { aborted: true });
+            } else {
+              assistant.metadata = Object.assign({}, assistant.metadata, { mode: "error", error: { code: "network", message: err.message } });
+              if (!assistant.content) assistant.content = "Сбой соединения: " + err.message;
+              showToast("Сбой стрима: " + err.message, "error");
+            }
+            setComposerStreaming(null);
             renderStream();
-            showToast("Ошибка запроса: " + err.message, "error");
           });
         });
       }
@@ -1425,6 +1518,7 @@ export function renderChatPage({ ICONS, renderLayout }) {
       trash: ICONS.trash,
       chevronRight: ICONS.chevronRight,
       chevronDown: ICONS.chevronDown,
+      send: ICONS.send,
     },
   };
 

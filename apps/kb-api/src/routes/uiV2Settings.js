@@ -204,6 +204,12 @@ function renderSettingsScript(initialStateJson) {
         maintRebuild: document.getElementById("cfgMaintRebuild"),
         maintReset: document.getElementById("cfgMaintReset"),
         maintBanner: document.getElementById("cfgMaintBanner"),
+        backupCreate: document.getElementById("cfgBackupCreate"),
+        backupRefresh: document.getElementById("cfgBackupRefresh"),
+        backupList: document.getElementById("cfgBackupList"),
+        backupBanner: document.getElementById("cfgBackupBanner"),
+        restoreFile: document.getElementById("cfgRestoreFile"),
+        restoreUpload: document.getElementById("cfgRestoreUpload"),
       };
 
       function escapeHtml(value) {
@@ -429,6 +435,107 @@ function renderSettingsScript(initialStateJson) {
         }).then(function () { dom.maintReset.disabled = false; });
       }
 
+      function fmtBytes(bytes) {
+        var n = Number(bytes) || 0;
+        var units = ["Б", "КБ", "МБ", "ГБ"];
+        var i = 0;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return (i === 0 ? Math.round(n) : n.toFixed(1)) + " " + units[i];
+      }
+
+      function escapeAttr(value) {
+        return escapeHtml(value);
+      }
+
+      function renderBackupList(items) {
+        if (!items || !items.length) {
+          dom.backupList.innerHTML = '<div class="filters-empty">Бэкапов пока нет.</div>';
+          return;
+        }
+        dom.backupList.innerHTML = items.map(function (b) {
+          return '<div class="service-row">' +
+            '<span class="service-row__name mono">' + escapeHtml(b.filename) + '</span>' +
+            '<span class="service-row__status mono">' + fmtBytes(b.size) + ' · ' + escapeHtml((b.createdAt || "").replace("T", " ").slice(0, 16)) + '</span>' +
+            '<a class="btn btn--ghost" href="/api/v2/backups/' + encodeURIComponent(b.filename) + '/download?admin=1" target="_blank">Скачать</a>' +
+            '<button type="button" class="btn btn--ghost" data-action="restore-backup" data-name="' + escapeAttr(b.filename) + '">Восстановить</button>' +
+            '<button type="button" class="btn btn--danger" data-action="delete-backup" data-name="' + escapeAttr(b.filename) + '">Удалить</button>' +
+            '</div>';
+        }).join("");
+      }
+
+      function loadBackups() {
+        return api("GET", "/api/v2/backups").then(function (data) {
+          renderBackupList(data.backups || []);
+        }).catch(function (err) {
+          dom.backupList.innerHTML = '<div class="kb-doc-error">Не удалось загрузить список: ' + escapeHtml(err.message) + '</div>';
+        });
+      }
+
+      function createBackup() {
+        dom.backupCreate.disabled = true;
+        setBanner(dom.backupBanner, "Идёт создание бэкапа…", "success");
+        api("POST", "/api/v2/backups", {}).then(function (data) {
+          setBanner(dom.backupBanner, "Бэкап создан: " + data.filename + " · " + fmtBytes(data.size) + " · за " + (data.durationMs || 0) + " мс", "success");
+          return loadBackups();
+        }).catch(function (err) {
+          setBanner(dom.backupBanner, "Не удалось создать бэкап: " + err.message, "error");
+        }).then(function () { dom.backupCreate.disabled = false; });
+      }
+
+      function deleteBackup(filename) {
+        if (!confirm("Удалить бэкап «" + filename + "»?")) return;
+        api("DELETE", "/api/v2/backups/" + encodeURIComponent(filename)).then(function () {
+          setBanner(dom.backupBanner, "Бэкап удалён: " + filename, "success");
+          return loadBackups();
+        }).catch(function (err) {
+          setBanner(dom.backupBanner, "Не удалось удалить: " + err.message, "error");
+        });
+      }
+
+      function restoreBackup(filename) {
+        var word = prompt("Восстановление перезапишет ВСЮ PostgreSQL. Введите слово ВОССТАНОВИТЬ:");
+        if (word !== "ВОССТАНОВИТЬ") {
+          setBanner(dom.backupBanner, "Восстановление отменено — слово подтверждения не совпало.", "error");
+          return;
+        }
+        if (!confirm("Точно восстановить из «" + filename + "»? Текущие данные будут заменены.")) return;
+        setBanner(dom.backupBanner, "Идёт восстановление…", "success");
+        api("POST", "/api/v2/backups/" + encodeURIComponent(filename) + "/restore", { confirm: "ВОССТАНОВИТЬ" }).then(function (data) {
+          setBanner(dom.backupBanner, "База восстановлена за " + (data.durationMs || 0) + " мс. Страница перезагрузится…", "success");
+          setTimeout(function () { window.location.reload(); }, 1500);
+        }).catch(function (err) {
+          setBanner(dom.backupBanner, "Не удалось восстановить: " + err.message, "error");
+        });
+      }
+
+      function restoreFromUpload() {
+        var file = dom.restoreFile.files && dom.restoreFile.files[0];
+        if (!file) { setBanner(dom.backupBanner, "Выберите файл .sql или .sql.gz", "error"); return; }
+        if (!/\.(sql|sql\.gz|gz)$/i.test(file.name)) {
+          setBanner(dom.backupBanner, "Поддерживаются только .sql и .sql.gz файлы", "error");
+          return;
+        }
+        var word = prompt("Восстановление перезапишет ВСЮ PostgreSQL. Введите слово ВОССТАНОВИТЬ:");
+        if (word !== "ВОССТАНОВИТЬ") {
+          setBanner(dom.backupBanner, "Восстановление отменено — слово подтверждения не совпало.", "error");
+          return;
+        }
+        if (!confirm("Точно восстановить из «" + file.name + "»? Текущие данные будут заменены.")) return;
+        setBanner(dom.backupBanner, "Загрузка файла и восстановление…", "success");
+        var fd = new FormData();
+        fd.append("file", file, file.name);
+        fd.append("confirm", "ВОССТАНОВИТЬ");
+        fetch("/api/v2/backups/restore-upload", { method: "POST", body: fd }).then(function (r) {
+          return r.json().then(function (data) {
+            if (!r.ok || data.ok === false) throw new Error(data.error || ("HTTP " + r.status));
+            setBanner(dom.backupBanner, "База восстановлена. Страница перезагрузится…", "success");
+            setTimeout(function () { window.location.reload(); }, 1500);
+          });
+        }).catch(function (err) {
+          setBanner(dom.backupBanner, "Не удалось восстановить из файла: " + err.message, "error");
+        });
+      }
+
       function bindEvents() {
         ["input", "change"].forEach(function (ev) {
           [dom.cloudName, dom.cloudBaseUrl, dom.cloudApiKey, dom.cloudModel, dom.cloudUseDefault].forEach(function (el) {
@@ -441,12 +548,22 @@ function renderSettingsScript(initialStateJson) {
         dom.themeSave.addEventListener("click", saveTheme);
         dom.maintRebuild.addEventListener("click", triggerRebuild);
         dom.maintReset.addEventListener("click", triggerReset);
+        dom.backupCreate.addEventListener("click", createBackup);
+        dom.backupRefresh.addEventListener("click", loadBackups);
+        dom.restoreUpload.addEventListener("click", restoreFromUpload);
+        dom.backupList.addEventListener("click", function (event) {
+          var del = event.target.closest("[data-action='delete-backup']");
+          if (del) { deleteBackup(del.getAttribute("data-name")); return; }
+          var res = event.target.closest("[data-action='restore-backup']");
+          if (res) { restoreBackup(res.getAttribute("data-name")); return; }
+        });
       }
 
       function bootstrap() {
         bindEvents();
         loadSettings();
         loadServices();
+        loadBackups();
       }
 
       bootstrap();
@@ -575,7 +692,6 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <button type="button" class="btn" id="cfgMaintRebuild">${ICONS.refresh}<span>Пересобрать Qdrant</span></button>
             <span class="settings-hint">Из PostgreSQL без потери документов.</span>
           </div>
-          <p class="settings-hint">Бэкап БД сейчас доступен только через PowerShell-скрипты в <span class="mono">scripts/</span>. Подробности — <span class="mono">docs/BACKUP_RESTORE.md</span>.</p>
           <div class="danger-block">
             <div class="danger-block__text">
               <strong>Сброс содержимого.</strong> Удалит ВСЕ документы, чанки, страницы и Qdrant points. Системный раздел и схема сохранятся. Файлы в <span class="mono">data/raw</span> по умолчанию остаются.
@@ -583,6 +699,34 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <button type="button" class="btn btn--danger" id="cfgMaintReset">${ICONS.trash}<span>Сброс содержимого</span></button>
           </div>
           <div class="settings-banner" id="cfgMaintBanner"></div>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.database}<span>Бэкапы</span></div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn btn--ghost btn--icon" id="cfgBackupRefresh" aria-label="Обновить">${ICONS.refresh}</button>
+            <button type="button" class="btn btn--accent" id="cfgBackupCreate">${ICONS.plus}<span>Создать бэкап</span></button>
+          </div>
+        </div>
+        <div class="settings-card__body">
+          <p class="settings-hint">
+            <strong>Включает:</strong> PostgreSQL (документы, чанки, knowledge_nodes, чаты, настройки).
+            <strong>НЕ включает:</strong> Qdrant (vector store) и файлы в <span class="mono">data/raw</span>.
+            После восстановления может потребоваться «Пересобрать Qdrant», если бэкап старше текущих индексов.
+          </p>
+          <div class="settings-banner" id="cfgBackupBanner"></div>
+          <div id="cfgBackupList" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <div class="settings-row" style="border-top:1px solid var(--border);padding-top:12px;">
+            <div class="settings-field">
+              <label for="cfgRestoreFile">Восстановить из файла (.sql или .sql.gz)</label>
+              <input class="settings-input" id="cfgRestoreFile" type="file" accept=".sql,.gz,.sql.gz" />
+            </div>
+            <div class="settings-field" style="justify-content:end">
+              <button type="button" class="btn btn--danger" id="cfgRestoreUpload" style="align-self:end">${ICONS.upload}<span>Восстановить из файла</span></button>
+            </div>
+          </div>
         </div>
       </div>
     </main>

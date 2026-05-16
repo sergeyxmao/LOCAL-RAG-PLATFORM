@@ -42,6 +42,13 @@
 - PATCH /api/v2/chat/sessions/:id
 - DELETE /api/v2/chat/sessions/:id
 - POST /api/v2/chat/sessions/:id/messages
+- POST /api/v2/chat/sessions/:id/messages/stream
+- GET /api/v2/backups
+- POST /api/v2/backups
+- GET /api/v2/backups/:filename/download
+- DELETE /api/v2/backups/:filename
+- POST /api/v2/backups/:filename/restore
+- POST /api/v2/backups/restore-upload
 - GET /api/v2/settings
 - GET /api/v2/settings/cloudProvider
 - PATCH /api/v2/settings/cloudProvider
@@ -387,3 +394,48 @@ curl http://localhost:8787/api/v2/settings/services
 принимают необязательное поле `provider` со значениями `'local'` или `'cloud'`.
 По умолчанию `'local'`, кроме случая, когда в `app_settings.cloudProvider.useByDefault`
 включён флаг и облако сконфигурировано — тогда новая сессия создаётся как `'cloud'`.
+
+## Полировка после итерации 3
+
+### Стриминг чата
+
+`POST /api/v2/chat/sessions/:id/messages/stream` — отдаёт SSE
+(`text/event-stream`). Принимает `{ content }`. События:
+
+- `event: meta\ndata: { userMessageId }` — после сохранения сообщения пользователя.
+- `event: sources\ndata: [...]` — после retrieval, до начала генерации.
+- `event: token\ndata: { text }` — на каждый токен/чанк.
+- `event: done\ndata: { assistantMessageId, metadata }` — финальное сохранение.
+- `event: error\ndata: { code, message }` — при ошибке провайдера.
+
+Прерывание: при разрыве TCP-соединения (`request.raw.on('close')`) сервер
+посылает `AbortSignal` в провайдер. Частичный текст сохраняется в БД с
+`metadata.aborted = true`, `mode = 'aborted'`.
+
+Обратная совместимость: старый `POST /api/v2/chat/sessions/:id/messages` без
+стрима остался для коротких ответов или повторов.
+
+### Бэкапы (под админ-флагом)
+
+Все эндпоинты требуют `?admin=1` или cookie `admin_mode=1`:
+
+- `GET /api/v2/backups` — список (последние, по mtime DESC).
+- `POST /api/v2/backups` — создать новый.
+- `GET /api/v2/backups/:filename/download` — стрим файла.
+- `DELETE /api/v2/backups/:filename` — удалить.
+- `POST /api/v2/backups/:filename/restore` — восстановить из существующего.
+  Body: `{ confirm: "ВОССТАНОВИТЬ" }`.
+- `POST /api/v2/backups/restore-upload` — multipart с полями `file` и `confirm`.
+
+Имя файла валидируется по паттерну `backup_\d{8}_\d{6}\.sql(\.gz)?`. Подробности
+и примеры curl — `docs/BACKUP_RESTORE.md`.
+
+### Множественный nodeIds
+
+`POST /ask`, `POST /search`, `POST /search/pages`, `POST /api/v2/chat/sessions/:id/messages`
+теперь принимают опциональное поле `nodeIds: string[]` в дополнение к старому
+`nodeId`. Если переданы оба — массив имеет приоритет, `nodeId` добавляется в
+него для совместимости. Фильтр применяется и в semantic-ветке Qdrant
+(`match: { any: [...] }` по `node_scope_ids` или `node_ids`), и в lexical-ветке
+Postgres (`ANY($1::uuid[])` в `document_node_links` или
+`knowledge_node_closure`).

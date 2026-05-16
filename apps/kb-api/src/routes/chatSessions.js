@@ -103,6 +103,58 @@ export async function chatSessionRoutes(app) {
     }
   });
 
+  app.post("/api/v2/chat/sessions/:id/messages/stream", async (request, reply) => {
+    const { id } = request.params;
+    if (!isUuid(id)) {
+      return respondError(reply, 400, "Некорректный идентификатор сессии");
+    }
+    const body = request.body ?? {};
+    if (!body.content || !String(body.content).trim()) {
+      return respondError(reply, 400, "Сообщение не может быть пустым");
+    }
+
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    const send = (eventName, data) => {
+      try {
+        reply.raw.write(`event: ${eventName}\n`);
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch (err) {
+        request.log.warn({ err }, "SSE write failed");
+      }
+    };
+
+    const abortController = new AbortController();
+    request.raw.on("close", () => {
+      if (!reply.raw.writableEnded) abortController.abort();
+    });
+
+    try {
+      await app.chatSessionService.streamAssistantMessage(id, String(body.content), {
+        onMeta: (meta) => send("meta", meta),
+        onSources: (sources) => send("sources", sources),
+        onToken: (text) => send("token", { text }),
+        onDone: (payload) => send("done", payload),
+        onError: (err) => send("error", err),
+        abortSignal: abortController.signal,
+      });
+    } catch (error) {
+      if (error.statusCode) {
+        send("error", { code: "validation", message: error.message });
+      } else {
+        request.log.error({ err: error, sessionId: id }, "SSE stream failed");
+        send("error", { code: "server_error", message: error.message || "Сбой стрима" });
+      }
+    } finally {
+      try { reply.raw.end(); } catch (err) {}
+    }
+  });
+
   app.post("/api/v2/chat/sessions/:id/messages", async (request, reply) => {
     const { id } = request.params;
     if (!isUuid(id)) {
