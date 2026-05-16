@@ -131,27 +131,20 @@ export async function chatSessionRoutes(app) {
 
     let serverClosing = false;
     const abortController = new AbortController();
-    request.log.info(
-      { sessionId: id, initialAborted: abortController.signal.aborted },
-      "sse-start"
-    );
     const onClientGone = (ev) => {
-      request.log.info(
-        {
-          sessionId: id,
-          serverClosing,
-          alreadyAborted: abortController.signal.aborted,
-          event: ev,
-        },
-        "sse-client-gone"
-      );
       if (serverClosing) return;
       if (abortController.signal.aborted) return;
-      request.log.info({ sessionId: id, event: ev }, "sse-aborting");
+      request.log.info({ sessionId: id, event: ev }, "sse client disconnected, aborting stream");
       abortController.abort();
     };
-    request.raw.on("aborted", () => onClientGone("aborted"));
-    request.raw.on("close", () => onClientGone("close"));
+    // Слушаем "aborted" на запросе (deprecated, но всё ещё стреляет при
+    // настоящем разрыве со стороны клиента ДО получения полного тела) и
+    // "close" на response-сокете (стреляет когда соединение реально
+    // закрылось; для штатного завершения отсекается флагом serverClosing).
+    // НЕ слушаем request.raw.on("close") — для POST оно эмитится сразу
+    // после прочтения тела запроса и не означает "клиент ушёл".
+    request.raw.on("aborted", () => onClientGone("request-aborted"));
+    reply.raw.on("close", () => onClientGone("response-close"));
 
     try {
       await app.chatSessionService.streamAssistantMessage(id, String(body.content), {
@@ -170,10 +163,6 @@ export async function chatSessionRoutes(app) {
         send("error", { code: "server_error", message: error.message || "Сбой стрима" });
       }
     } finally {
-      request.log.info(
-        { sessionId: id, signalAborted: abortController.signal.aborted },
-        "sse-finish"
-      );
       serverClosing = true;
       try { reply.raw.end(); } catch (err) {}
     }
