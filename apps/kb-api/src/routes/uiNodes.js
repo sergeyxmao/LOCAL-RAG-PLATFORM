@@ -566,6 +566,7 @@ export function renderNodesHtml() {
       <a class="nav-link active" href="/ui/nodes">Разделы базы</a>
       <a class="nav-link" href="/ui/jobs">Админ / состояние базы</a>
       <a class="nav-link" href="/ui/pages-search">Поиск по страницам PDF</a>
+      <a class="nav-link" href="/ui/v2/chat" style="margin-left:auto;color:#2563EB;font-weight:600">Новый дизайн (β)</a>
     </nav>
   </header>
 

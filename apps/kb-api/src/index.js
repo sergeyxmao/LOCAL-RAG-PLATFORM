@@ -11,6 +11,7 @@ import { IngestionService } from "./services/ingestionService.js";
 import { SearchService } from "./services/searchService.js";
 import { AnswerService } from "./services/answerService.js";
 import { VisualAssetService } from "./services/visualAssetService.js";
+import { ChatSessionService } from "./services/chatSessionService.js";
 import { healthRoutes } from "./routes/health.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { documentRoutes } from "./routes/documents.js";
@@ -22,6 +23,8 @@ import { nodeRoutes } from "./routes/nodes.js";
 import { adminRoutes } from "./routes/admin.js";
 import { uiStateRoutes } from "./routes/uiState.js";
 import { uiRoutes } from "./routes/ui.js";
+import { uiV2Routes } from "./routes/uiV2.js";
+import { chatSessionRoutes } from "./routes/chatSessions.js";
 
 const app = Fastify({ logger: true });
 await app.register(multipart);
@@ -75,6 +78,12 @@ const answerService = new AnswerService({
   modelsConfig: appConfig.models,
 });
 
+const chatSessionService = new ChatSessionService({
+  postgresProvider,
+  answerService,
+  searchService,
+});
+
 app.decorate("config", appConfig);
 app.decorate("postgresProvider", postgresProvider);
 app.decorate("qdrantProvider", qdrantProvider);
@@ -85,6 +94,7 @@ app.decorate("visualAssetService", visualAssetService);
 app.decorate("ingestionService", ingestionService);
 app.decorate("searchService", searchService);
 app.decorate("answerService", answerService);
+app.decorate("chatSessionService", chatSessionService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -96,7 +106,9 @@ await app.register(jobRoutes);
 await app.register(nodeRoutes);
 await app.register(adminRoutes);
 await app.register(uiStateRoutes);
+await app.register(chatSessionRoutes);
 await app.register(uiRoutes);
+await app.register(uiV2Routes);
 
 app.addHook("onClose", async () => {
   await postgresProvider.close();

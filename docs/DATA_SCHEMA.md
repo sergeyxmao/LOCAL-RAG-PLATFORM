@@ -103,3 +103,50 @@ Qdrant payload документа теперь можно пересчитать
 - `ocrStatus`, `ocrLang`, `ocrError` — состояние локального OCR, если он запускался.
 
 Точечный rebuild `POST /documents/:id/rebuild-visual-assets` обновляет или создаёт эти строки без повторного импорта документа целиком и затем обновляет соответствующие Qdrant points.
+
+## Таблицы UI v2
+
+В рамках UI v2 (см. `docs/UI_V2.md`) добавляются неразрушающие таблицы для истории
+чатов:
+
+`chat_sessions`:
+
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()` — идентификатор сессии;
+- `title TEXT NOT NULL DEFAULT 'Новый чат'` — заголовок чата; первое сообщение
+  пользователя автоматически становится заголовком (до 60 символов);
+- `mode TEXT NOT NULL DEFAULT 'answer'` — режим сессии: `answer` (ответ ИИ) или
+  `pages` (только страницы документов); без `CHECK`, чтобы можно было добавить
+  новый режим без миграции;
+- `filters JSONB NOT NULL DEFAULT '{}'::jsonb` — выбранные фильтры в формате
+  `{ "nodeIds": [...], "documentIds": [...] }`;
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+- `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` — обновляется при добавлении
+  сообщения или изменении настроек сессии.
+
+Индекс: `idx_chat_sessions_updated_at` по `updated_at DESC` — для быстрой
+выдачи списка истории.
+
+`chat_messages`:
+
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`;
+- `session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE` —
+  удаление сессии каскадно удаляет её сообщения;
+- `role TEXT NOT NULL CHECK (role IN ('user', 'assistant'))`;
+- `content TEXT NOT NULL` — текст сообщения;
+- `sources JSONB NOT NULL DEFAULT '[]'::jsonb` — массив компактных описаний
+  источников: `{ documentId, documentName, sourcePath, resourceType, page,
+  chunkIndex, snippet, score, assetClass, assetUrl, assetPreviewUrl, nodePaths,
+  signalTags }`;
+- `metadata JSONB NOT NULL DEFAULT '{}'::jsonb` — служебная информация:
+  `mode` (`llm`, `fallback-empty`, `pages`, `error`), `durationMs`,
+  `searchMode` (`answer`/`pages`), `filters` (снимок применённых фильтров на
+  момент ответа);
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
+
+Индекс: `idx_chat_messages_session_created` по `(session_id, created_at)` — для
+быстрой выдачи всех сообщений сессии в хронологическом порядке.
+
+Таблицы создаются идемпотентно в `PostgresProvider.ensureChatSessionSchema()`,
+которая вызывается из `ensureRuntimeSchema()` при старте `kb-api`. Расширение
+`pgcrypto` уже включается выше для основного DDL, поэтому отдельно его создавать
+не требуется.

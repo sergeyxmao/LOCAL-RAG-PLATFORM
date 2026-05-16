@@ -1116,6 +1116,7 @@ function renderConsultantHtml() {
         <a class="nav-link" href="/ui/nodes">Разделы базы</a>
         <a class="nav-link" href="/ui/jobs">Админ / состояние базы</a>
         <a class="nav-link" href="/ui/pages-search">Поиск по страницам PDF</a>
+        <a class="nav-link" href="/ui/v2/chat" style="margin-left:auto;color:#2563EB;font-weight:600">Новый дизайн (β)</a>
       </nav>
     </header>
 
@@ -3295,6 +3296,7 @@ function renderPagesSearchHtml() {
       <a href="/ui/nodes">Разделы базы</a>
       <a href="/ui/jobs">Админ / состояние базы</a>
       <a class="active" href="/ui/pages-search">Поиск по страницам PDF</a>
+      <a href="/ui/v2/chat" style="margin-left:auto;color:#2563EB;font-weight:600">Новый дизайн (β)</a>
     </nav>
   </header>
   <div class="wrap">
@@ -5138,6 +5140,7 @@ function renderIngestHtml() {
         <a class="nav-link" href="/ui/nodes">Разделы базы</a>
         <a class="nav-link" href="/ui/jobs">Админ / состояние базы</a>
         <a class="nav-link" href="/ui/pages-search">Поиск по страницам PDF</a>
+        <a class="nav-link" href="/ui/v2/chat" style="margin-left:auto;color:#2563EB;font-weight:600">Новый дизайн (β)</a>
       </nav>
     </header>
 
@@ -7344,6 +7347,7 @@ function renderJobsHtml() {
       <a href="/ui/nodes">Разделы базы</a>
       <a class="active" href="/ui/jobs">Админ / состояние базы</a>
       <a href="/ui/pages-search">Поиск по страницам PDF</a>
+      <a href="/ui/v2/chat" style="margin-left:auto;color:#2563EB;font-weight:600">Новый дизайн (β)</a>
     </nav>
   </header>
   <div class="wrap">
