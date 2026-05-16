@@ -305,6 +305,48 @@ grep -nE '"\\n|"\\t|"\\r' apps/kb-api/src/routes/uiV2*.js
 парсинга или работы со строками внутри `renderXxxScript()` — всегда удваивать
 управляющие символы.
 
+### DELETE-запросы не должны нести `Content-Type: application/json` без тела
+
+Fastify-парсер тела с настройками по умолчанию строго относится к
+«заявленному» content-type: если заголовок указан как
+`application/json`, но тела нет — отдаёт `400 FST_ERR_CTP_EMPTY_JSON_BODY`
+с текстом `Body cannot be empty when content-type is set to 'application/json'`.
+
+```js
+// СЛОМАНО — Fastify отвергает запрос с 400
+fetch("/api/v2/chat/sessions/" + id, {
+  method: "DELETE",
+  headers: { "Content-Type": "application/json" },
+});
+```
+
+Универсальная обёртка `api(method, path, body)` во всех страницах
+`uiV2*.js` должна ставить `Content-Type` ТОЛЬКО при наличии body:
+
+```js
+function api(method, path, body) {
+  var opts = { method: method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  return fetch(path, opts).then(...);
+}
+```
+
+Это покрывает все случаи: GET и DELETE идут без `Content-Type`,
+POST/PATCH с телом — с ним. Если когда-нибудь понадобится DELETE с
+телом (что само по себе антипаттерн) — `body` появится, и заголовок
+выставится автоматически.
+
+Проверочный grep на регресс:
+
+```bash
+grep -nE 'method:\s*"DELETE",?\s*headers' apps/kb-api/src/routes/uiV2*.js
+```
+
+Должен быть пустым.
+
 ### Событие `"close"` на raw-сокете ≠ «клиент ушёл»
 
 В роуте `POST /api/v2/chat/sessions/:id/messages/stream` нужно отменять
@@ -425,6 +467,14 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
   `CREATE SCHEMA public` + grants → накат с `ON_ERROR_STOP=1` →
   `process.exit(0)` с автоматическим рестартом контейнера и поллингом
   `/health` на фронте. Подробности — `docs/BACKUP_RESTORE.md`.
+- 2026-05-16: hotfix #7 — удаление чата из истории падало с 400
+  `FST_ERR_CTP_EMPTY_JSON_BODY`. Универсальная обёртка `api()` в трёх
+  `uiV2*.js` ставила `Content-Type: application/json` всегда, даже когда
+  body не передан. Поправлено: заголовок теперь выставляется только при
+  наличии body. Заодно — браузерный `confirm("Удалить этот чат?")` заменён
+  на тёмную модалку `chat-modal-*` со стилем единым с другими страницами
+  нового UI (заголовок «Удалить чат?», красная кнопка «Удалить чат»,
+  закрывается по Esc и клику по backdrop).
 - 2026-05-16: hotfix #6 — одиночная иконка корзины в таблице документов на
   `/ui/v2/knowledge` использовала плохой UX (двойной клик в течение 3
   секунд) и на практике пропускалась — пользователь нажимал один раз,

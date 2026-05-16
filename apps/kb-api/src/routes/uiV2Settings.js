@@ -233,8 +233,11 @@ function renderSettingsScript(initialStateJson) {
       }
 
       function api(method, path, body) {
-        var opts = { method: method, headers: { "Content-Type": "application/json" } };
-        if (body !== undefined) opts.body = JSON.stringify(body);
+        var opts = { method: method, headers: {} };
+        if (body !== undefined) {
+          opts.headers["Content-Type"] = "application/json";
+          opts.body = JSON.stringify(body);
+        }
         return fetch(path, opts).then(function (response) {
           return response.json().then(function (data) {
             if (!response.ok || (data && data.ok === false && method !== "POST")) {
