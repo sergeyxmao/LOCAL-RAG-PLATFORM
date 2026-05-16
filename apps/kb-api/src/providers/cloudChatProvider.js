@@ -279,6 +279,12 @@ export class CloudChatProvider {
     abortSignal,
     timeoutMs,
   }) {
+    console.log("[cloud-stream] enter", {
+      hasSignal: !!abortSignal,
+      initialAborted: abortSignal?.aborted === true,
+      messagesCount: Array.isArray(messages) ? messages.length : -1,
+      model,
+    });
     this.validateCredentials({ baseUrl, apiKey });
     if (!model || !String(model).trim()) {
       throw new CloudProviderError(
@@ -303,12 +309,17 @@ export class CloudChatProvider {
       controller.abort();
     };
     if (abortSignal) {
-      if (abortSignal.aborted) onAbort();
-      else abortSignal.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal.aborted) {
+        console.log("[cloud-stream] aborted on entry");
+        onAbort();
+      } else {
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+      }
     }
 
     let response;
     try {
+      console.log("[cloud-stream] before fetch", { endpoint, userAborted });
       response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -328,6 +339,7 @@ export class CloudChatProvider {
       });
     } catch (error) {
       clearTimeout(timer);
+      console.log("[cloud-stream] fetch error", { userAborted, message: error?.message });
       if (userAborted) {
         return { content: "", aborted: true, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
       }
@@ -343,6 +355,7 @@ export class CloudChatProvider {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let chunkIndex = 0;
     let fullContent = "";
     let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let detectedModel = model;
@@ -369,6 +382,10 @@ export class CloudChatProvider {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (chunkIndex < 3) {
+          console.log("[cloud-stream] chunk", { chunkIndex, chunkLength: value?.length || 0 });
+        }
+        chunkIndex++;
         buffer += decoder.decode(value, { stream: true });
         let sepIndex;
         while ((sepIndex = buffer.indexOf("\n\n")) >= 0) {
