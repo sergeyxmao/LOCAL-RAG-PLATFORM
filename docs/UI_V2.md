@@ -304,37 +304,55 @@ grep -nE '"\\n|"\\t|"\\r' apps/kb-api/src/routes/uiV2*.js
 
 ### Событие `"close"` на raw-сокете ≠ «клиент ушёл»
 
-В роуте `POST /api/v2/chat/sessions/:id/messages/stream` мы должны отменять
-генерацию у провайдера (Ollama/Cloud), если клиент закрыл соединение
-во время стрима. Прямолинейная попытка:
+В роуте `POST /api/v2/chat/sessions/:id/messages/stream` нужно отменять
+генерацию у провайдера, если клиент закрыл соединение. **Какие именно
+события для этого слушать — оказалось далеко не очевидно.**
+
+#### Что НЕ работает
 
 ```js
-// СЛОМАНО — abort срабатывает почти сразу, до отправки токенов
+// ОЧЕНЬ СЛОМАНО — abort срабатывает в первой миллисекунде на каждом
+// запросе, никаких токенов не приходит.
 request.raw.on("close", () => {
   if (!reply.raw.writableEnded) abortController.abort();
 });
 ```
 
-Не работает: событие `'close'` в Node HTTP стреляет не только при разрыве
-клиентом, но и при штатном завершении ответа самим сервером, причём
-`writableEnded` к этому моменту ещё может быть `false`. В результате
-`abortController.abort()` срабатывает раньше, чем провайдер успевает
-сделать первый `fetch`, и ответ приходит со штампом `aborted: true` и
-длительностью ~5–15 мс.
+Причина — особенность `http.IncomingMessage` в Node.js: событие `"close"`
+на нём для **POST-запроса с телом** эмитится сразу после того, как тело
+полностью прочитано. Это означает «поток чтения тела закрыт», а не
+«клиент прервал соединение». Для GET без тела событие может приходить
+позже, поэтому баг легко пропустить на других проектах. См. документацию
+Node: https://nodejs.org/api/http.html#event-close_1
 
-Правильный шаблон — флаг `serverClosing`, который ставится в `finally`
-**до** `reply.raw.end()`, плюс слушаем оба события:
+Диагностический лог (есть в коммите `f607388`, потом удалён) однозначно
+показал картину:
+
+```
+sse-start          initialAborted=false   t+0 мс
+sse-client-gone    event=close            t+1 мс  ← POST-quirk
+sse-aborting       event=close            t+1 мс
+```
+
+Флаг `serverClosing` тут не помогает: к моменту срабатывания обработчика
+сервер ещё ничего не закрывал.
+
+#### Что работает
 
 ```js
 let serverClosing = false;
 const abortController = new AbortController();
-const onClientGone = () => {
+const onClientGone = (ev) => {
   if (serverClosing) return;
   if (abortController.signal.aborted) return;
   abortController.abort();
 };
-request.raw.on("aborted", onClientGone);
-request.raw.on("close", onClientGone);
+// "aborted" на запросе (deprecated, но всё ещё стреляет только при
+// настоящем разрыве клиента до получения полного тела) +
+// "close" на response-сокете (стреляет когда соединение реально
+// закрыто, штатное завершение отсекается флагом serverClosing).
+request.raw.on("aborted", () => onClientGone("request-aborted"));
+reply.raw.on("close", () => onClientGone("response-close"));
 
 try {
   await runStream({ abortSignal: abortController.signal });
@@ -344,10 +362,19 @@ try {
 }
 ```
 
-Если разрыв реальный (клиент закрыл вкладку, нажал «Стоп», обрыв сети) —
-`onClientGone` отработает до `finally` и `abortController.abort()` пройдёт.
-Если же сервер сам дошёл до `finally` и поставил `serverClosing = true`,
-последующее `close`-событие от собственного `end()` будет проигнорировано.
+Главное правило: **`request.raw.on("close")` для POST-стримов слушать
+нельзя.** Слушать нужно `request.raw.on("aborted")` (на запросе) и
+`reply.raw.on("close")` (на ответе). Флаг `serverClosing` обязателен, чтобы
+собственный `reply.raw.end()` в `finally` не вызывал ложный abort через
+`response-close`.
+
+При следующих изменениях этого роута проверочный grep:
+
+```bash
+grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
+```
+
+Должен быть пустым.
 
 ## История изменений
 
@@ -373,3 +400,10 @@ try {
   отменял стрим до отправки токенов. Введён флаг `serverClosing` + слушаем
   `"aborted"` и `"close"`. Урок про события Node HTTP — в «Известные
   технические тонкости».
+- 2026-05-16: hotfix #3 — флаг `serverClosing` не помог: диагностика
+  показала, что `close` на `request.raw` стреляет в первой же миллисекунде
+  POST-запроса (это норма для `http.IncomingMessage` после прочтения тела).
+  `request.raw.on("close")` убран совсем; теперь слушаем
+  `request.raw.on("aborted")` (deprecated, но корректное) и
+  `reply.raw.on("close")` (response-сокет — реальный сигнал «соединение
+  закрыто»). Диагностические `console.log` из коммита f607388 удалены.

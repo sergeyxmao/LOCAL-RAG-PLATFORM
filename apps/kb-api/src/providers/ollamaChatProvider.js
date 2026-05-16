@@ -11,11 +11,6 @@ export class OllamaChatProvider {
     timeoutMs = 180000,
     numPredict = 512,
   }) {
-    console.log("[ollama-stream] enter", {
-      hasSignal: !!abortSignal,
-      initialAborted: abortSignal?.aborted === true,
-      messagesCount: Array.isArray(messages) ? messages.length : -1,
-    });
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     let userAborted = false;
@@ -25,7 +20,6 @@ export class OllamaChatProvider {
     };
     if (abortSignal) {
       if (abortSignal.aborted) {
-        console.log("[ollama-stream] aborted on entry");
         onAbort();
       } else {
         abortSignal.addEventListener("abort", onAbort, { once: true });
@@ -34,7 +28,6 @@ export class OllamaChatProvider {
 
     let response;
     try {
-      console.log("[ollama-stream] before fetch", { url: `${this.baseUrl}/api/chat`, model: this.model, userAborted });
       response = await fetch(`${this.baseUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -53,7 +46,6 @@ export class OllamaChatProvider {
       });
     } catch (error) {
       clearTimeout(timeoutId);
-      console.log("[ollama-stream] fetch error", { userAborted, message: error?.message });
       if (userAborted) {
         return { content: "", aborted: true, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
       }
@@ -72,16 +64,11 @@ export class OllamaChatProvider {
     let fullContent = "";
     let evalCount = 0;
     let promptEvalCount = 0;
-    let chunkIndex = 0;
 
     try {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (chunkIndex < 3) {
-          console.log("[ollama-stream] chunk", { chunkIndex, chunkLength: value?.length || 0 });
-        }
-        chunkIndex++;
         buffer += decoder.decode(value, { stream: true });
         let newlineIndex;
         while ((newlineIndex = buffer.indexOf("\n")) >= 0) {

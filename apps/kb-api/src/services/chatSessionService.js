@@ -577,7 +577,6 @@ export class ChatSessionService {
   }
 
   async streamAssistantMessage(sessionId, content, { onMeta, onSources, onToken, onDone, onError, abortSignal } = {}) {
-    console.log("[stream-svc] enter", { sessionId, abortSignalAborted: abortSignal?.aborted === true });
     const session = await this.getSessionById(sessionId);
     if (!session) {
       const err = new Error("Сессия чата не найдена");
@@ -697,9 +696,7 @@ export class ChatSessionService {
 
     const messages = this.buildLocalAnswerMessages({ question, sources });
     try {
-      console.log("[stream-svc] before-provider (local)", { abortSignalAborted: abortSignal?.aborted === true, messages: messages.length });
       const result = await this.chatProvider.generateStream({ messages, onToken, abortSignal });
-      console.log("[stream-svc] after-provider (local)", { aborted: result.aborted, contentLength: (result.content || "").length });
       const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
       const assistant = await this.insertMessage(session.id, {
         role: "assistant",
@@ -752,7 +749,6 @@ export class ChatSessionService {
     const messages = this.buildCloudMessages({ question, sources, history: tail });
 
     try {
-      console.log("[stream-svc] before-provider (cloud)", { abortSignalAborted: abortSignal?.aborted === true, messages: messages.length, model: cloud.model });
       const result = await this.cloudChatProvider.generateStream({
         messages,
         model: cloud.model,
@@ -762,7 +758,6 @@ export class ChatSessionService {
         onToken,
         abortSignal,
       });
-      console.log("[stream-svc] after-provider (cloud)", { aborted: result.aborted, contentLength: (result.content || "").length });
       const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
       const assistant = await this.insertMessage(session.id, {
         role: "assistant",
