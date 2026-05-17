@@ -461,6 +461,16 @@ function renderKnowledgeCss() {
       font-family: "JetBrains Mono", monospace;
       color: var(--text);
     }
+    .kb-tags-intro {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 0 0 4px;
+    }
+    .kb-tags-table th[data-tag-sort] {
+      cursor: pointer;
+      user-select: none;
+    }
+    .kb-tags-table th[data-tag-sort]:hover { color: var(--text); }
     .kb-doc-table .doc-actions {
       display: flex;
       gap: 4px;
@@ -651,6 +661,9 @@ function renderKnowledgeScript(initialStateJson) {
         jobsPageSize: loadJobsPageSizeFromStorage(),
         jobsPage: 1,
         existingTags: [],
+        globalTags: [],
+        globalTagsSearch: "",
+        globalTagsSort: { by: "count", dir: "desc" },
         unsortedNodeId: null,
       };
 
@@ -897,6 +910,7 @@ function renderKnowledgeScript(initialStateJson) {
             '<td><div class="doc-tags">' + tagsHtml + '</div></td>' +
             '<td class="doc-date">' + escapeHtml(fmtDate(doc.created_at)) + '</td>' +
             '<td><div class="doc-actions">' +
+            '<button type="button" class="kb-doc-action" data-action="rename-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Переименовать документ">' + INITIAL_STATE.icons.edit + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="open-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Открыть исходник">' + INITIAL_STATE.icons.externalLink + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="move-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Переместить в раздел">' + INITIAL_STATE.icons.folder + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="edit-tags" data-doc-id="' + escapeHtml(doc.id) + '" title="Редактировать теги">' + INITIAL_STATE.icons.tag + '</button>' +
@@ -1006,10 +1020,11 @@ function renderKnowledgeScript(initialStateJson) {
               failed: "ошибка",
               cancelled: "остановлено",
             }[status] || status;
-            var title = job.original_file_path || job.document_title || job.original_file_name || job.job_type || job.id;
-            var canCancel = ["queued", "running", "cancel_requested"].indexOf(status) >= 0;
+            var isPreUpload = status === "queued" && !job.document_id;
+            var title = job.original_file_path || job.document_title || job.original_file_name || job.pending_filename || job.job_type || job.id;
+            var canCancel = !isPreUpload && ["queued", "running", "cancel_requested"].indexOf(status) >= 0;
             var canRestart = ["failed", "cancelled"].indexOf(status) >= 0 && job.original_file_path;
-            var canDelete = ["queued", "running", "cancel_requested"].indexOf(status) === -1;
+            var canDelete = isPreUpload || ["queued", "running", "cancel_requested"].indexOf(status) === -1;
             var meta = [];
             if (job.job_type) meta.push('<span>' + escapeHtml(job.job_type) + '</span>');
             if (job.total_items) meta.push('<span class="mono">' + (job.processed_items || 0) + ' / ' + job.total_items + '</span>');
@@ -1159,6 +1174,133 @@ function renderKnowledgeScript(initialStateJson) {
           state.existingTags = (data.items || []).map(function (t) { return typeof t === "string" ? t : t.tag; }).filter(Boolean);
         }).catch(function () {
           state.existingTags = [];
+        });
+      }
+
+      function loadGlobalTags() {
+        var body = document.getElementById("kbTagsBody");
+        if (body && !state.globalTags.length) {
+          body.innerHTML = '<tr><td colspan="3"><div class="kb-doc-empty">Загружается…</div></td></tr>';
+        }
+        return api("GET", "/tags?limit=500").then(function (data) {
+          state.globalTags = (data.items || []).map(function (t) {
+            if (typeof t === "string") return { tag: t, count: 0 };
+            return { tag: t.tag, count: Number(t.count || 0) };
+          });
+          renderGlobalTags();
+        }).catch(function (err) {
+          if (body) body.innerHTML = '<tr><td colspan="3"><div class="kb-doc-error">Не удалось загрузить теги: ' + escapeHtml(err.message) + '</div></td></tr>';
+        });
+      }
+
+      function renderGlobalTags() {
+        var body = document.getElementById("kbTagsBody");
+        var countEl = document.getElementById("kbTagsCount");
+        if (!body) return;
+        var term = (state.globalTagsSearch || "").toLowerCase().trim();
+        var rows = state.globalTags.slice();
+        if (term) rows = rows.filter(function (t) { return t.tag.toLowerCase().indexOf(term) !== -1; });
+        var by = state.globalTagsSort.by;
+        var dir = state.globalTagsSort.dir === "asc" ? 1 : -1;
+        rows.sort(function (a, b) {
+          if (by === "count") {
+            if (a.count !== b.count) return (a.count - b.count) * dir;
+            return a.tag.localeCompare(b.tag);
+          }
+          return a.tag.localeCompare(b.tag) * dir;
+        });
+        if (countEl) {
+          countEl.textContent = rows.length === state.globalTags.length
+            ? "Всего: " + rows.length
+            : "Показано: " + rows.length + " из " + state.globalTags.length;
+        }
+        if (!rows.length) {
+          body.innerHTML = '<tr><td colspan="3"><div class="kb-doc-empty">' + (term ? "Ничего не найдено" : "Тегов пока нет") + '</div></td></tr>';
+          return;
+        }
+        body.innerHTML = rows.map(function (t) {
+          var safeTag = escapeHtml(t.tag);
+          return '<tr>' +
+            '<td><span class="doc-tag">' + safeTag + '</span></td>' +
+            '<td class="mono">' + t.count + '</td>' +
+            '<td class="doc-actions" style="text-align:right">' +
+            '<button type="button" class="kb-doc-action" data-action="global-tag-rename" data-tag-name="' + safeTag + '" title="Переименовать">' + INITIAL_STATE.icons.edit + '</button>' +
+            '<button type="button" class="kb-doc-action is-danger" data-action="global-tag-delete" data-tag-name="' + safeTag + '" data-tag-count="' + t.count + '" title="Удалить">' + INITIAL_STATE.icons.trash + '</button>' +
+            '</td>' +
+            '</tr>';
+        }).join("");
+      }
+
+      function openGlobalTagRename(oldName) {
+        var existing = state.globalTags.find(function (t) { return t.tag === oldName; });
+        var count = existing ? existing.count : 0;
+        var wrap = document.createElement("div");
+        wrap.className = "kb-prompt";
+        var label = document.createElement("label");
+        label.textContent = "Новое имя для тега «" + oldName + "» (" + count + " док.)";
+        label.style.cssText = "font-size:12px;color:var(--text-muted);";
+        var input = document.createElement("input");
+        input.className = "kb-input";
+        input.type = "text";
+        input.maxLength = 64;
+        input.value = oldName;
+        var hint = document.createElement("p");
+        hint.style.cssText = "font-size:12px;color:var(--text-muted);margin:0;";
+        hint.textContent = "Если тег с новым именем уже есть — теги будут объединены без дубликатов.";
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        wrap.appendChild(hint);
+
+        function doRename(newName) {
+          api("PATCH", "/tags/" + encodeURIComponent(oldName), { newName: newName }).then(function (data) {
+            closeModal();
+            showToast("Переименовано в «" + newName + "» (документов: " + (data.updatedDocuments || 0) + ")");
+            return Promise.all([loadGlobalTags(), loadTags(), loadDocuments({ preserveScroll: true })]);
+          }).catch(function (err) { showToast("Не удалось переименовать: " + err.message, "error"); });
+        }
+
+        var saveBtn = makeButton("Сохранить", "btn--accent", function () {
+          var newName = input.value.trim();
+          if (!newName) { showToast("Имя не может быть пустым", "error"); return; }
+          if (newName === oldName) { closeModal(); return; }
+          var newKey = newName.toLowerCase();
+          var oldKey = oldName.toLowerCase();
+          var collision = state.globalTags.find(function (t) {
+            return t.tag.toLowerCase() === newKey && t.tag.toLowerCase() !== oldKey;
+          });
+          if (collision) {
+            openConfirmModal({
+              title: "Объединить теги?",
+              bodyHtml: '<p>Тег «<strong>' + escapeHtml(newName) + '</strong>» уже существует (' + collision.count + ' док.). ' +
+                'Все документы, у которых есть «<strong>' + escapeHtml(oldName) + '</strong>», получат «<strong>' + escapeHtml(newName) + '</strong>» и потеряют старый. Дубликаты будут схлопнуты.</p>',
+              confirmLabel: "Объединить",
+              onConfirm: function () { doRename(newName); },
+            });
+            return;
+          }
+          doRename(newName);
+        });
+        var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
+        openModal("Переименовать тег", wrap, [cancelBtn, saveBtn]);
+        setTimeout(function () { input.focus(); input.select(); }, 0);
+        input.addEventListener("keydown", function (e) { if (e.key === "Enter") saveBtn.click(); });
+      }
+
+      function confirmGlobalTagDelete(tagName, tagCount) {
+        var count = Number(tagCount || 0);
+        openConfirmModal({
+          title: "Удалить тег?",
+          bodyHtml: '<p>Удалить тег «<strong>' + escapeHtml(tagName) + '</strong>»? Он исчезнет у <strong>' + count + '</strong> ' +
+            pluralRu(count, ["документа", "документов", "документов"]) + '.</p>' +
+            '<p style="font-size:12px;color:var(--text-muted);margin:0;">Документы не удаляются, только тег. Действие нельзя отменить.</p>',
+          danger: true,
+          confirmLabel: "Удалить тег",
+          onConfirm: function () {
+            api("DELETE", "/tags/" + encodeURIComponent(tagName)).then(function (data) {
+              showToast("Тег удалён у " + (data.updatedDocuments || 0) + " документов");
+              return Promise.all([loadGlobalTags(), loadTags(), loadDocuments({ preserveScroll: true })]);
+            }).catch(function (err) { showToast("Не удалось удалить: " + err.message, "error"); });
+          },
         });
       }
 
@@ -1507,6 +1649,47 @@ function renderKnowledgeScript(initialStateJson) {
         setTimeout(function () { input.focus(); }, 0);
       }
 
+      function openRenameModal(documentId) {
+        var doc = state.documents.find(function (d) { return d.id === documentId; });
+        if (!doc) { showToast("Документ не найден в списке", "error"); return; }
+        var wrap = document.createElement("div");
+        wrap.className = "kb-prompt";
+        var label = document.createElement("label");
+        label.textContent = "Имя документа";
+        label.style.cssText = "font-size:12px;color:var(--text-muted);";
+        var input = document.createElement("input");
+        input.className = "kb-input";
+        input.type = "text";
+        input.maxLength = 255;
+        input.value = doc.title || doc.original_file_name || "";
+        var hint = document.createElement("p");
+        hint.style.cssText = "font-size:12px;color:var(--text-muted);margin:0;";
+        hint.textContent = "Меняется только видимое название документа. Файл в data/raw не переименовывается.";
+        wrap.appendChild(label);
+        wrap.appendChild(input);
+        wrap.appendChild(hint);
+
+        var saveBtn = makeButton("Сохранить", "btn--accent", function () {
+          var title = input.value.trim();
+          if (!title) { showToast("Введите название", "error"); return; }
+          if (title.length > 255) { showToast("Не больше 255 символов", "error"); return; }
+          api("PATCH", "/documents/" + documentId, { title: title }).then(function (data) {
+            var fresh = (data && data.document) || null;
+            if (fresh) {
+              var idx = state.documents.findIndex(function (d) { return d.id === documentId; });
+              if (idx >= 0) state.documents[idx] = Object.assign({}, state.documents[idx], { title: fresh.title });
+            }
+            closeModal();
+            renderDocuments();
+            showToast("Документ переименован");
+          }).catch(function (err) { showToast("Не удалось переименовать: " + err.message, "error"); });
+        });
+        var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
+        openModal("Переименовать документ", wrap, [cancelBtn, saveBtn]);
+        setTimeout(function () { input.focus(); input.select(); }, 0);
+        input.addEventListener("keydown", function (e) { if (e.key === "Enter") saveBtn.click(); });
+      }
+
       function openMoveModal(documentId) {
         var wrap = document.createElement("div");
         wrap.className = "kb-prompt";
@@ -1628,26 +1811,27 @@ function renderKnowledgeScript(initialStateJson) {
         confirmDeleteDocuments(Array.from(state.selectedDocIds));
       }
 
-      function uploadFileViaMultipart(file, relativePath) {
+      function uploadFileToJob(jobId, file) {
         var fd = new FormData();
         fd.append("file", file, file.name);
-        fd.append("title", file.name);
-        if (relativePath) fd.append("title", relativePath);
-        fd.append("categories", JSON.stringify([]));
-        var nodeId = dom.nodeSelect.value || state.activeNodeId || "";
-        if (nodeId) {
-          fd.append("nodeIds", JSON.stringify([nodeId]));
-          fd.append("primaryNodeId", nodeId);
-        }
         return new Promise(function (resolve, reject) {
           var xhr = new XMLHttpRequest();
-          xhr.open("POST", "/documents/upload");
+          xhr.open("PUT", "/jobs/" + encodeURIComponent(jobId) + "/upload");
           xhr.onload = function () {
             try {
               var data = JSON.parse(xhr.responseText || "{}");
-              if (xhr.status >= 200 && xhr.status < 300 && data.ok !== false) resolve(data);
-              else reject(new Error(data.error || ("HTTP " + xhr.status)));
-            } catch (e) { reject(e); }
+              if (xhr.status >= 200 && xhr.status < 300 && data.ok !== false) {
+                resolve(data);
+              } else {
+                var err = new Error(data.error || ("HTTP " + xhr.status));
+                err.status = xhr.status;
+                reject(err);
+              }
+            } catch (e) {
+              var err2 = new Error("Не удалось распарсить ответ");
+              err2.status = xhr.status;
+              reject(err2);
+            }
           };
           xhr.onerror = function () { reject(new Error("Сетевая ошибка")); };
           xhr.send(fd);
@@ -1657,43 +1841,78 @@ function renderKnowledgeScript(initialStateJson) {
       function handleFiles(fileList) {
         var files = Array.from(fileList || []);
         if (!files.length) return;
-        showToast("Загрузка " + files.length + " файла(ов)…");
         state.jobsCollapsed = false;
         renderJobs();
 
-        var concurrency = Math.min(3, files.length);
-        var index = 0;
-        var done = 0;
-        var ok = 0;
-        var fail = 0;
+        var nodeId = dom.nodeSelect.value || state.activeNodeId || "";
+        var createVisualAssets = !dom.lightModeChk.checked;
+        var items = files.map(function (file) {
+          return {
+            filename: file.webkitRelativePath || file.relativePath || file.name,
+            size: file.size || 0,
+            nodeId: nodeId || null,
+            primaryNodeId: nodeId || null,
+            createVisualAssets: createVisualAssets,
+            categories: [],
+          };
+        });
 
-        function next() {
-          if (index >= files.length) {
-            if (done === files.length) finalize();
-            return;
+        showToast("Регистрируем " + files.length + " задач(и) в очереди…");
+        api("POST", "/jobs/queue", { items: items }).then(function (data) {
+          var jobs = Array.isArray(data && data.jobs) ? data.jobs : [];
+          if (jobs.length !== files.length) {
+            showToast("В очередь добавлено " + jobs.length + " из " + files.length, "error");
           }
-          var file = files[index++];
-          var rel = file.webkitRelativePath || file.relativePath || file.name;
-          uploadFileViaMultipart(file, rel).then(function () {
-            ok += 1;
-          }).catch(function (err) {
-            fail += 1;
-            // eslint-disable-next-line no-console
-            console.warn("Upload failed for", file.name, err);
-          }).then(function () {
-            done += 1;
-            next();
-          });
-        }
-
-        function finalize() {
-          if (fail) showToast("Загружено: " + ok + ", ошибок: " + fail, fail ? "error" : undefined);
-          else showToast("Все файлы загружены: " + ok);
-          refreshNodes({ reloadDocuments: true });
           loadJobs();
-        }
 
-        for (var i = 0; i < concurrency; i++) next();
+          var queue = files.map(function (file, i) {
+            return jobs[i] ? { file: file, jobId: jobs[i].id } : null;
+          }).filter(Boolean);
+
+          var concurrency = Math.min(3, queue.length);
+          var index = 0;
+          var done = 0;
+          var ok = 0;
+          var fail = 0;
+          var aborted = 0;
+
+          function pump() {
+            if (index >= queue.length) {
+              if (done === queue.length) finalize();
+              return;
+            }
+            var task = queue[index++];
+            uploadFileToJob(task.jobId, task.file).then(function () {
+              ok += 1;
+            }).catch(function (err) {
+              if (err && (err.status === 404 || err.status === 409)) {
+                aborted += 1;
+              } else {
+                fail += 1;
+                console.warn("Upload failed", task.file.name, err);
+              }
+            }).then(function () {
+              done += 1;
+              loadJobs();
+              pump();
+            });
+          }
+
+          function finalize() {
+            var parts = [];
+            if (ok) parts.push("отправлено: " + ok);
+            if (fail) parts.push("ошибок: " + fail);
+            if (aborted) parts.push("отменено: " + aborted);
+            showToast(parts.join(", ") || "Готово", fail ? "error" : undefined);
+            refreshNodes({ reloadDocuments: true });
+            loadJobs();
+          }
+
+          if (queue.length === 0) finalize();
+          for (var i = 0; i < concurrency; i++) pump();
+        }).catch(function (err) {
+          showToast("Не удалось зарегистрировать очередь: " + err.message, "error");
+        });
       }
 
       function importServerPath() {
@@ -1879,6 +2098,8 @@ function renderKnowledgeScript(initialStateJson) {
             renderBulkBar();
             return;
           }
+          var renameBtn = event.target.closest("[data-action='rename-doc']");
+          if (renameBtn) { openRenameModal(renameBtn.getAttribute("data-doc-id")); return; }
           var openBtn = event.target.closest("[data-action='open-doc']");
           if (openBtn) {
             window.open("/documents/" + openBtn.getAttribute("data-doc-id") + "/original", "_blank", "noopener");
@@ -1894,6 +2115,42 @@ function renderKnowledgeScript(initialStateJson) {
             confirmDeleteDocuments([docId], { label: "Удалить" });
             return;
           }
+        });
+
+        document.addEventListener("click", function (event) {
+          var renameTagBtn = event.target.closest("[data-action='global-tag-rename']");
+          if (renameTagBtn) {
+            openGlobalTagRename(renameTagBtn.getAttribute("data-tag-name"));
+            return;
+          }
+          var deleteTagBtn = event.target.closest("[data-action='global-tag-delete']");
+          if (deleteTagBtn) {
+            confirmGlobalTagDelete(
+              deleteTagBtn.getAttribute("data-tag-name"),
+              Number(deleteTagBtn.getAttribute("data-tag-count") || 0)
+            );
+            return;
+          }
+        });
+
+        document.addEventListener("input", function (event) {
+          if (event.target && event.target.id === "kbTagsSearch") {
+            state.globalTagsSearch = event.target.value || "";
+            renderGlobalTags();
+          }
+        });
+
+        document.addEventListener("click", function (event) {
+          var sortHead = event.target.closest("[data-tag-sort]");
+          if (!sortHead) return;
+          var by = sortHead.getAttribute("data-tag-sort");
+          if (state.globalTagsSort.by === by) {
+            state.globalTagsSort.dir = state.globalTagsSort.dir === "asc" ? "desc" : "asc";
+          } else {
+            state.globalTagsSort.by = by;
+            state.globalTagsSort.dir = by === "count" ? "desc" : "asc";
+          }
+          renderGlobalTags();
         });
 
         dom.modalBackdrop.addEventListener("click", function (e) {
@@ -1913,7 +2170,7 @@ function renderKnowledgeScript(initialStateJson) {
       }
 
       function setActiveTab(name) {
-        var validTabs = ["upload", "jobs", "documents"];
+        var validTabs = ["upload", "jobs", "documents", "tags"];
         if (validTabs.indexOf(name) === -1) name = "upload";
         document.querySelectorAll("[data-kb-tab]").forEach(function (btn) {
           btn.classList.toggle("is-active", btn.getAttribute("data-kb-tab") === name);
@@ -1922,6 +2179,7 @@ function renderKnowledgeScript(initialStateJson) {
           panel.classList.toggle("is-active", panel.getAttribute("data-kb-panel") === name);
         });
         try { localStorage.setItem("localrag.knowledge.activeTab", name); } catch (err) {}
+        if (name === "tags") loadGlobalTags();
       }
 
       function bindKnowledgeTabs() {
@@ -1955,6 +2213,15 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
     <div class="kb-summary" id="kbSummary"><span>База знаний загружается…</span></div>
   `;
 
+  const headerTabs = `
+    <nav class="kb-tabs" id="kbTabs" role="tablist" aria-label="Разделы базы знаний">
+      <button type="button" class="header-tab is-active" data-kb-tab="upload" role="tab">${ICONS.upload}<span>Загрузка</span></button>
+      <button type="button" class="header-tab" data-kb-tab="jobs" role="tab">${ICONS.refresh}<span>Задачи импорта</span></button>
+      <button type="button" class="header-tab" data-kb-tab="documents" role="tab">${ICONS.fileText}<span>Документы</span></button>
+      <button type="button" class="header-tab" data-kb-tab="tags" role="tab">${ICONS.tag}<span>Теги</span></button>
+    </nav>
+  `;
+
   const contextSidebar = `
     <div class="sidebar-context__title">Разделы</div>
     <button type="button" class="btn btn--accent" id="kbTreeNewBtn">${ICONS.plus}<span>Раздел</span></button>
@@ -1969,11 +2236,6 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
   const content = `
     <main class="kb-page" id="kbPage">
       <section class="kb-main">
-        <nav class="kb-tabs" id="kbTabs" role="tablist">
-          <button type="button" class="kb-tab is-active" data-kb-tab="upload" role="tab">${ICONS.upload}<span>Загрузка</span></button>
-          <button type="button" class="kb-tab" data-kb-tab="jobs" role="tab">${ICONS.refresh}<span>Задачи импорта</span></button>
-          <button type="button" class="kb-tab" data-kb-tab="documents" role="tab">${ICONS.fileText}<span>Документы</span></button>
-        </nav>
         <div class="kb-tab-panel is-active" data-kb-panel="upload">
         <div class="kb-card" id="kbUploadCard">
           <div class="kb-card__head">
@@ -2076,6 +2338,43 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
           </div>
         </div>
         </div>
+
+        <div class="kb-tab-panel" data-kb-panel="tags">
+          <div class="kb-card">
+            <div class="kb-card__head">
+              <div class="kb-card__title">${ICONS.tag}<span>Глобальное управление тегами</span></div>
+              <span class="settings-hint">Тут можно переименовать или удалить теги во всех документах сразу</span>
+            </div>
+            <div class="kb-card__body">
+              <p class="kb-tags-intro">
+                Добавлять новые теги — только через редактор тегов конкретного
+                документа. Здесь можно массово переименовывать (объединять при
+                совпадении) и удалять устаревшие теги во всех документах сразу.
+              </p>
+              <div class="kb-doc-toolbar">
+                <div class="document-search">
+                  <span class="document-search__icon">${ICONS.search}</span>
+                  <input class="document-search__input" type="search" id="kbTagsSearch" placeholder="Поиск тега" />
+                </div>
+                <span class="settings-hint" id="kbTagsCount"></span>
+              </div>
+              <div style="overflow-x:auto;">
+                <table class="kb-doc-table kb-tags-table">
+                  <thead>
+                    <tr>
+                      <th data-tag-sort="name">Тег</th>
+                      <th data-tag-sort="count" style="width:140px">Документов</th>
+                      <th style="width:220px;text-align:right">Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody id="kbTagsBody">
+                    <tr><td colspan="3"><div class="kb-doc-empty">Список тегов загружается…</div></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <div class="kb-modal-backdrop" id="kbModalBackdrop">
@@ -2112,6 +2411,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
     pageDocumentTitle: "База знаний — LOCAL-RAG",
     content,
     headerExtra,
+    headerTabs,
     contextSidebar,
     pageScript: renderKnowledgeScript(initialStateJson),
     bodyClass: "page-knowledge",

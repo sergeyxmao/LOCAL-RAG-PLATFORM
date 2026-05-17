@@ -63,7 +63,9 @@ export class PostgresProvider {
       ALTER TABLE ingestion_jobs
       ADD COLUMN IF NOT EXISTS total_items INTEGER,
       ADD COLUMN IF NOT EXISTS processed_items INTEGER DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS progress_message TEXT
+      ADD COLUMN IF NOT EXISTS progress_message TEXT,
+      ADD COLUMN IF NOT EXISTS pending_filename TEXT,
+      ADD COLUMN IF NOT EXISTS pending_options JSONB
     `);
 
     await this.ensureKnowledgeNodeSchema();
@@ -1802,6 +1804,138 @@ export class PostgresProvider {
     return result.rows;
   }
 
+  async listDocumentsWithTag(tagName) {
+    const normalized = String(tagName ?? "").trim();
+    if (!normalized) return [];
+    const result = await this.pool.query(
+      `
+      SELECT id, categories
+      FROM documents
+      WHERE jsonb_typeof(categories) = 'array'
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(categories) AS t(value)
+          WHERE lower(trim(t.value)) = lower($1)
+        )
+      `,
+      [normalized]
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      categories: Array.isArray(row.categories) ? row.categories : [],
+    }));
+  }
+
+  async renameTagAcrossDocuments(oldName, newName) {
+    const oldTrim = String(oldName ?? "").trim();
+    const newTrim = String(newName ?? "").trim();
+    if (!oldTrim || !newTrim) {
+      throw Object.assign(new Error("Имя тега не может быть пустым"), { statusCode: 400 });
+    }
+    const oldLower = oldTrim.toLowerCase();
+    const newLower = newTrim.toLowerCase();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const docs = await client.query(
+        `
+        SELECT id, categories
+        FROM documents
+        WHERE jsonb_typeof(categories) = 'array'
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(categories) AS t(value)
+            WHERE lower(trim(t.value)) = $1
+          )
+        FOR UPDATE
+        `,
+        [oldLower]
+      );
+      const updatedIds = [];
+      for (const row of docs.rows) {
+        const before = Array.isArray(row.categories) ? row.categories : [];
+        const map = new Map();
+        for (const raw of before) {
+          const value = String(raw ?? "").trim();
+          if (!value) continue;
+          const lower = value.toLowerCase();
+          if (lower === oldLower) {
+            if (!map.has(newLower)) map.set(newLower, newTrim);
+            continue;
+          }
+          if (!map.has(lower)) map.set(lower, value);
+        }
+        if (oldLower !== newLower && !map.has(newLower)) {
+          map.set(newLower, newTrim);
+        }
+        const after = Array.from(map.values());
+        await client.query(
+          `UPDATE documents SET categories = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+          [row.id, JSON.stringify(after)]
+        );
+        await client.query(
+          `UPDATE document_chunks SET categories = $2::jsonb, updated_at = NOW() WHERE document_id = $1`,
+          [row.id, JSON.stringify(after)]
+        );
+        updatedIds.push(row.id);
+      }
+      await client.query("COMMIT");
+      return { updatedIds, count: updatedIds.length };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteTagAcrossDocuments(tagName) {
+    const normalized = String(tagName ?? "").trim();
+    if (!normalized) {
+      throw Object.assign(new Error("Имя тега не может быть пустым"), { statusCode: 400 });
+    }
+    const targetLower = normalized.toLowerCase();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const docs = await client.query(
+        `
+        SELECT id, categories
+        FROM documents
+        WHERE jsonb_typeof(categories) = 'array'
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(categories) AS t(value)
+            WHERE lower(trim(t.value)) = $1
+          )
+        FOR UPDATE
+        `,
+        [targetLower]
+      );
+      const updatedIds = [];
+      for (const row of docs.rows) {
+        const before = Array.isArray(row.categories) ? row.categories : [];
+        const after = before.filter((value) => String(value ?? "").trim().toLowerCase() !== targetLower);
+        await client.query(
+          `UPDATE documents SET categories = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+          [row.id, JSON.stringify(after)]
+        );
+        await client.query(
+          `UPDATE document_chunks SET categories = $2::jsonb, updated_at = NOW() WHERE document_id = $1`,
+          [row.id, JSON.stringify(after)]
+        );
+        updatedIds.push(row.id);
+      }
+      await client.query("COMMIT");
+      return { updatedIds, count: updatedIds.length };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listAllDocumentIds() {
     const result = await this.pool.query(
       `
@@ -2864,6 +2998,8 @@ export class PostgresProvider {
         j.total_items,
         j.processed_items,
         j.progress_message,
+        j.pending_filename,
+        j.pending_options,
         CASE
           WHEN j.total_items IS NOT NULL AND j.total_items > 0
           THEN ROUND((COALESCE(j.processed_items, 0)::numeric / j.total_items::numeric) * 100, 1)
@@ -3745,9 +3881,11 @@ export class PostgresProvider {
         processed_items,
         progress_message,
         started_at,
-        finished_at
+        finished_at,
+        pending_filename,
+        pending_options
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
       RETURNING *
       `,
       [
@@ -3760,10 +3898,23 @@ export class PostgresProvider {
         job.progressMessage ?? null,
         job.startedAt ?? null,
         job.finishedAt ?? null,
+        job.pendingFilename ?? null,
+        job.pendingOptions ? JSON.stringify(job.pendingOptions) : null,
       ]
     );
 
     return result.rows[0];
+  }
+
+  async attachDocumentToJob(jobId, documentId) {
+    const result = await this.pool.query(
+      `UPDATE ingestion_jobs
+       SET document_id = $2, pending_filename = NULL, pending_options = NULL
+       WHERE id = $1
+       RETURNING *`,
+      [jobId, documentId]
+    );
+    return result.rows[0] ?? null;
   }
 
   async updateJobStatus(jobId, status, errorMessage = null) {
@@ -3806,6 +3957,18 @@ export class PostgresProvider {
       [jobId, processedItems, totalItems, progressMessage]
     );
 
+    return result.rows[0] ?? null;
+  }
+
+  async updateJobStartedAt(jobId) {
+    const result = await this.pool.query(
+      `UPDATE ingestion_jobs
+       SET started_at = COALESCE(started_at, NOW()),
+           status = CASE WHEN status = 'queued' THEN 'running' ELSE status END
+       WHERE id = $1
+       RETURNING *`,
+      [jobId]
+    );
     return result.rows[0] ?? null;
   }
 

@@ -68,29 +68,26 @@ function renderChatCss() {
     }
     .chat-mode-toggle {
       display: inline-flex;
-      background: var(--surface-2);
-      border-radius: 8px;
-      padding: 4px;
-      gap: 2px;
+      gap: 4px;
+      align-items: center;
     }
     .chat-mode-toggle__btn {
       border: none;
       background: transparent;
       color: var(--text-muted);
-      padding: 6px 14px;
+      padding: 8px 14px;
       border-radius: 6px;
       font-size: 13px;
       font-weight: 500;
-      transition: background 0.12s ease, color 0.12s ease;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
     }
+    .chat-mode-toggle__btn:hover { color: var(--text); }
     .chat-mode-toggle__btn.is-active {
-      background: var(--surface);
-      color: var(--text-strong);
-      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-    }
-    html[data-theme="dark"] .chat-mode-toggle__btn.is-active {
-      background: var(--accent-soft);
       color: var(--accent);
+      background: var(--accent-soft);
+      border-color: var(--accent-soft);
     }
     .chat-mode-hint {
       font-size: 12px;
@@ -731,6 +728,29 @@ function renderChatCss() {
       letter-spacing: 0.06em;
       color: var(--text-muted);
       margin-bottom: 8px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .filters-section__count {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: none;
+      letter-spacing: 0;
+      opacity: 0.8;
+    }
+    .filters-section--docs {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .filters-section--docs > .document-list {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none;
     }
     .node-tree {
       display: flex;
@@ -1029,6 +1049,7 @@ function renderChatScript(initialStateJson) {
         closeFiltersBtn: document.getElementById("closeFiltersBtn"),
         nodeTree: document.getElementById("nodeTree"),
         documentList: document.getElementById("documentList"),
+        documentListCount: document.getElementById("documentListCount"),
         documentSearch: document.getElementById("documentSearch"),
         tagsFilterSelected: document.getElementById("tagsFilterSelected"),
         tagsFilterInput: document.getElementById("tagsFilterInput"),
@@ -1886,19 +1907,56 @@ function renderChatScript(initialStateJson) {
         dom.nodeTree.innerHTML = html.join("");
       }
 
+      function docTagsOf(doc) {
+        if (!doc) return [];
+        if (Array.isArray(doc.categories)) return doc.categories;
+        if (Array.isArray(doc.tags)) return doc.tags;
+        return [];
+      }
+
       function renderDocuments() {
         if (!dom.documentList) return;
         var term = state.documentSearchTerm.toLowerCase().trim();
+        var totalAll = state.documents.length;
+        var selectedTagSet = state.selectedTags;
+        var hasTagFilter = selectedTagSet && selectedTagSet.size > 0;
         var docs = state.documents.filter(function (d) {
-          if (!term) return true;
-          var hay = ((d.title || "") + " " + (d.source_path || "")).toLowerCase();
-          return hay.indexOf(term) !== -1;
+          if (term) {
+            var hay = ((d.title || "") + " " + (d.source_path || "")).toLowerCase();
+            if (hay.indexOf(term) === -1) return false;
+          }
+          if (hasTagFilter) {
+            var tags = docTagsOf(d);
+            if (!tags.length) return false;
+            var hit = false;
+            for (var i = 0; i < tags.length; i++) {
+              if (selectedTagSet.has(tags[i])) { hit = true; break; }
+            }
+            if (!hit) return false;
+          }
+          return true;
         });
+
+        if (dom.documentListCount) {
+          if (hasTagFilter || term) {
+            dom.documentListCount.textContent = totalAll > 0
+              ? "(" + docs.length + " из " + totalAll + ")"
+              : "";
+          } else {
+            dom.documentListCount.textContent = totalAll > 0 ? "(" + totalAll + ")" : "";
+          }
+        }
+
         if (!docs.length) {
-          var note = state.selectedNodeIds.size
-            ? "В выбранных разделах документов не найдено."
-            : "Выберите раздел, чтобы увидеть документы. Или ищите по всей базе.";
-          dom.documentList.innerHTML = '<div class="filters-empty">' + note + '</div>';
+          var note;
+          if (hasTagFilter) {
+            note = "Нет документов с этими тегами.";
+          } else if (state.selectedNodeIds.size) {
+            note = "В выбранных разделах документов не найдено.";
+          } else {
+            note = "Выберите раздел, чтобы увидеть документы. Или ищите по всей базе.";
+          }
+          dom.documentList.innerHTML = '<div class="filters-empty">' + escapeHtml(note) + '</div>';
           return;
         }
         dom.documentList.innerHTML = docs.slice(0, 200).map(function (doc) {
@@ -2088,6 +2146,7 @@ function renderChatScript(initialStateJson) {
 
       function renderTagsFilter() {
         if (!dom.tagsFilterSelected || !dom.tagsFilterSuggest) return;
+        renderDocuments();
         var selected = Array.from(state.selectedTags);
         if (selected.length) {
           dom.tagsFilterSelected.innerHTML = selected.map(function (t) {
@@ -2534,10 +2593,6 @@ export function renderChatPage({ ICONS, renderLayout }) {
             <textarea id="composerInput" class="composer__textarea" rows="1" placeholder="Спросите по вашим документам… (Enter — отправить, Shift+Enter — перенос строки)"></textarea>
             <button type="button" class="composer__send" id="composerSend" aria-label="Отправить">${ICONS.send}</button>
           </div>
-          <div class="composer__hint">
-            <span><span class="mono">Enter</span> — отправить</span>
-            <span><span class="mono">Shift+Enter</span> — перенос строки</span>
-          </div>
         </div>
       </section>
       <aside class="filters-panel" id="filtersPanel" aria-label="Фильтры базы">
@@ -2561,8 +2616,11 @@ export function renderChatPage({ ICONS, renderLayout }) {
               <div class="tags-filter__suggest" id="tagsFilterSuggest"><div class="filters-empty">Начните вводить или выберите из списка.</div></div>
             </div>
           </div>
-          <div>
-            <div class="filters-section__title">Документы</div>
+          <div class="filters-section filters-section--docs">
+            <div class="filters-section__title">
+              <span>Документы</span>
+              <span class="filters-section__count" id="documentListCount"></span>
+            </div>
             <div class="document-search">
               <span class="document-search__icon">${ICONS.search}</span>
               <input class="document-search__input" id="documentSearch" type="search" placeholder="Поиск по названию документа" />

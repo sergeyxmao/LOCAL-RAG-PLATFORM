@@ -94,6 +94,64 @@ function renderSettingsCss() {
     }
     .settings-tab-panel { display: none; flex-direction: column; gap: 14px; }
     .settings-tab-panel.is-active { display: flex; }
+    .settings-field__label-with-help {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .help-tip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      cursor: help;
+      outline: none;
+    }
+    .help-tip__icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1;
+      border: 1px solid var(--border);
+    }
+    .help-tip:hover .help-tip__icon,
+    .help-tip:focus .help-tip__icon {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .help-tip__bubble {
+      position: absolute;
+      left: 22px;
+      top: -8px;
+      width: 280px;
+      padding: 8px 10px;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      line-height: 1.4;
+      z-index: 30;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-2px);
+      transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+    }
+    .help-tip:hover .help-tip__bubble,
+    .help-tip:focus .help-tip__bubble {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
     .settings-anchors { display: flex; flex-direction: column; gap: 2px; }
     .settings-anchor {
       display: block;
@@ -416,12 +474,22 @@ function renderSettingsScript(initialStateJson) {
       }
 
       var RETRIEVAL_FIELDS = [
-        { path: ["semantic", "top_k"], label: "Кандидатов из semantic-поиска", type: "number", min: 1, max: 50, hint: "semantic.top_k" },
-        { path: ["bm25", "top_k"], label: "Кандидатов из BM25 (лексический)", type: "number", min: 1, max: 50, hint: "bm25.top_k" },
-        { path: ["fusion", "top_k_final"], label: "Итоговых фрагментов в ответ", type: "number", min: 1, max: 30, hint: "fusion.top_k_final" },
-        { path: ["reranking", "enabled"], label: "Re-ranking включён", type: "boolean", hint: "reranking.enabled" },
-        { path: ["reranking", "candidate_pool"], label: "Пул кандидатов для re-ranking", type: "number", min: 1, max: 100, hint: "reranking.candidate_pool" },
+        { path: ["semantic", "top_k"], label: "Кандидатов из semantic-поиска", type: "number", min: 1, max: 50, hint: "semantic.top_k",
+          help: "Сколько ближайших кандидатов вытащить из векторного поиска (Qdrant). Чем больше — точнее, но медленнее. Типично 8–20." },
+        { path: ["bm25", "top_k"], label: "Кандидатов из BM25 (лексический)", type: "number", min: 1, max: 50, hint: "bm25.top_k",
+          help: "Сколько кандидатов взять из лексического поиска (Postgres BM25). Дополняет векторный поиск редкими словами и цифрами." },
+        { path: ["fusion", "top_k_final"], label: "Итоговых фрагментов в ответ", type: "number", min: 1, max: 30, hint: "fusion.top_k_final",
+          help: "Сколько финальных фрагментов попадёт в контекст LLM. Больше — точнее ответ, но больше токенов и медленнее." },
+        { path: ["reranking", "enabled"], label: "Re-ranking включён", type: "boolean", hint: "reranking.enabled",
+          help: "Если включено, после первичного поиска кандидаты переоцениваются reranker-моделью. Точнее, но медленнее." },
+        { path: ["reranking", "candidate_pool"], label: "Пул кандидатов для re-ranking", type: "number", min: 1, max: 100, hint: "reranking.candidate_pool",
+          help: "Размер пула для re-ranking. Берётся лучшая часть кандидатов из semantic+bm25 для повторной оценки." },
       ];
+
+      function renderHelpIcon(helpText) {
+        if (!helpText) return "";
+        return '<span class="help-tip" tabindex="0" aria-label="Подсказка"><span class="help-tip__icon" aria-hidden="true">?</span><span class="help-tip__bubble" role="tooltip">' + escapeHtml(helpText) + '</span></span>';
+      }
 
       function getRetrievalValue(obj, pathArr) {
         var cur = obj;
@@ -452,18 +520,20 @@ function renderSettingsScript(initialStateJson) {
           var curVal = getRetrievalValue(effective, f.path);
           if (curVal === undefined) curVal = defVal;
           var inputId = "rf_" + f.path.join("_");
+          var helpHtml = renderHelpIcon(f.help);
           if (f.type === "boolean") {
             var checked = curVal === true ? "checked" : "";
             return '<div class="settings-field">' +
               '<label class="settings-toggle" for="' + inputId + '">' +
               '<input type="checkbox" id="' + inputId + '" data-retrieval-path="' + f.path.join(".") + '" data-retrieval-type="boolean" ' + checked + ' /> ' +
               escapeHtml(f.label) +
+              helpHtml +
               '</label>' +
               '<span class="settings-hint mono">' + escapeHtml(f.hint) + ' · по умолчанию: ' + (defVal ? "вкл" : "выкл") + '</span>' +
               '</div>';
           }
           return '<div class="settings-field">' +
-            '<label for="' + inputId + '">' + escapeHtml(f.label) + '</label>' +
+            '<label for="' + inputId + '" class="settings-field__label-with-help">' + escapeHtml(f.label) + helpHtml + '</label>' +
             '<input type="number" class="settings-input" id="' + inputId + '" data-retrieval-path="' + f.path.join(".") + '" data-retrieval-type="number" min="' + (f.min || 0) + '" max="' + (f.max || 9999) + '" value="' + escapeHtml(curVal) + '" />' +
             '<span class="settings-hint mono">' + escapeHtml(f.hint) + ' · по умолчанию: ' + escapeHtml(defVal) + '</span>' +
             '</div>';
@@ -1062,7 +1132,7 @@ function renderSettingsScript(initialStateJson) {
       }
 
       function setActiveSettingsTab(name) {
-        var valid = ["models", "search", "prompt", "services", "theme", "maintenance", "backups"];
+        var valid = ["models", "search", "prompt", "services", "maintenance", "backups"];
         if (valid.indexOf(name) === -1) name = "models";
         document.querySelectorAll("[data-settings-tab]").forEach(function (btn) {
           btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === name);
@@ -1114,7 +1184,6 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       <a class="settings-anchor" href="#" data-settings-tab-link="search">Поиск</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="prompt">Системный промпт</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="services">Сервисы</a>
-      <a class="settings-anchor" href="#" data-settings-tab-link="theme">Внешний вид</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="maintenance">Обслуживание</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="backups">Бэкапы</a>
     </nav>
@@ -1124,17 +1193,19 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
     </div>
   `;
 
+  const headerTabs = `
+    <nav class="settings-tabs" id="settingsTabs" role="tablist" aria-label="Разделы настроек">
+      <button type="button" class="header-tab is-active" data-settings-tab="models" role="tab">${ICONS.settings}<span>Модели и облако</span></button>
+      <button type="button" class="header-tab" data-settings-tab="search" role="tab">${ICONS.search}<span>Поиск</span></button>
+      <button type="button" class="header-tab" data-settings-tab="prompt" role="tab">${ICONS.fileText}<span>Промпт</span></button>
+      <button type="button" class="header-tab" data-settings-tab="services" role="tab">${ICONS.alertCircle}<span>Сервисы</span></button>
+      <button type="button" class="header-tab" data-settings-tab="maintenance" role="tab">${ICONS.alertCircle}<span>Обслуживание</span></button>
+      <button type="button" class="header-tab" data-settings-tab="backups" role="tab">${ICONS.database}<span>Бэкапы</span></button>
+    </nav>
+  `;
+
   const content = `
     <main class="settings-page">
-      <nav class="settings-tabs" id="settingsTabs" role="tablist">
-        <button type="button" class="settings-tab is-active" data-settings-tab="models" role="tab">${ICONS.settings}<span>Модели и облако</span></button>
-        <button type="button" class="settings-tab" data-settings-tab="search" role="tab">${ICONS.search}<span>Поиск</span></button>
-        <button type="button" class="settings-tab" data-settings-tab="prompt" role="tab">${ICONS.fileText}<span>Промпт</span></button>
-        <button type="button" class="settings-tab" data-settings-tab="services" role="tab">${ICONS.alertCircle}<span>Сервисы</span></button>
-        <button type="button" class="settings-tab" data-settings-tab="theme" role="tab">${ICONS.moon}<span>Внешний вид</span></button>
-        <button type="button" class="settings-tab" data-settings-tab="maintenance" role="tab">${ICONS.alertCircle}<span>Обслуживание</span></button>
-        <button type="button" class="settings-tab" data-settings-tab="backups" role="tab">${ICONS.database}<span>Бэкапы</span></button>
-      </nav>
       <div class="settings-tab-panel is-active" data-settings-panel="models">
       <div class="settings-card" id="section-models">
         <div class="settings-card__head">
@@ -1238,31 +1309,6 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       </div>
       </div>
 
-      <div class="settings-tab-panel" data-settings-panel="theme">
-      <div class="settings-card" id="section-theme">
-        <div class="settings-card__head">
-          <div class="settings-card__title">${ICONS.moon}<span>Внешний вид</span></div>
-        </div>
-        <div class="settings-card__body">
-          <div class="settings-row">
-            <div class="settings-field">
-              <label for="cfgThemeDefault">Тема по умолчанию</label>
-              <select class="settings-select" id="cfgThemeDefault">
-                <option value="dark">Тёмная</option>
-                <option value="light">Светлая</option>
-                <option value="system">Системная</option>
-              </select>
-            </div>
-            <div class="settings-field" style="justify-content:end">
-              <button type="button" class="btn btn--accent" id="cfgThemeSave" style="align-self:end">${ICONS.check}<span>Сохранить</span></button>
-            </div>
-          </div>
-          <div class="settings-banner" id="cfgThemeBanner"></div>
-          <p class="settings-hint">Применяется к пользователям без личного выбора темы. Личный выбор хранится в <span class="mono">localStorage.localrag.theme</span> и не перезаписывается.</p>
-        </div>
-      </div>
-      </div>
-
       <div class="settings-tab-panel" data-settings-panel="prompt">
       <div class="settings-card" id="section-prompt">
         <div class="settings-card__head">
@@ -1309,6 +1355,30 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <div class="settings-banner" id="cfgMaintBanner"></div>
         </div>
       </div>
+
+      <div class="settings-card" id="section-theme">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.moon}<span>Тема интерфейса</span></div>
+          <span class="settings-hint">Личный выбор — в шапке боковой панели</span>
+        </div>
+        <div class="settings-card__body">
+          <div class="settings-row">
+            <div class="settings-field">
+              <label for="cfgThemeDefault">Тема по умолчанию для новых пользователей</label>
+              <select class="settings-select" id="cfgThemeDefault">
+                <option value="dark">Тёмная</option>
+                <option value="light">Светлая</option>
+                <option value="system">Системная</option>
+              </select>
+            </div>
+            <div class="settings-field" style="justify-content:end">
+              <button type="button" class="btn btn--accent" id="cfgThemeSave" style="align-self:end">${ICONS.check}<span>Сохранить</span></button>
+            </div>
+          </div>
+          <div class="settings-banner" id="cfgThemeBanner"></div>
+          <p class="settings-hint">Применяется к пользователям без личного выбора темы. Личный выбор хранится в <span class="mono">localStorage.localrag.theme</span> и не перезаписывается.</p>
+        </div>
+      </div>
       </div>
 
       <div class="settings-tab-panel" data-settings-panel="backups">
@@ -1351,6 +1421,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
     pageTitle: "Настройки",
     pageDocumentTitle: "Настройки — LOCAL-RAG",
     content,
+    headerTabs,
     contextSidebar,
     pageScript: renderSettingsScript(initialStateJson),
     bodyClass: "page-settings",
