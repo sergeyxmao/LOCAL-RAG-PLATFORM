@@ -1186,29 +1186,22 @@ function renderChatScript(initialStateJson) {
         return { group: "Раньше", order: 4 };
       }
 
+      function pad2(n) { return n < 10 ? "0" + n : String(n); }
+
       function formatSessionDate(updatedAt) {
         if (!updatedAt) return "";
         var d = new Date(updatedAt);
         if (isNaN(d.getTime())) return "";
         var now = new Date();
-        var today = startOfDay(now);
-        var yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        var weekAgo = new Date(today);
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        var dDay = startOfDay(d);
-        if (dDay.getTime() === today.getTime()) {
-          return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+        var isSameDay = d.toDateString() === now.toDateString();
+        if (isSameDay) {
+          return pad2(d.getHours()) + ":" + pad2(d.getMinutes());
         }
-        if (dDay.getTime() === yesterday.getTime()) return "вчера";
-        if (d >= weekAgo) {
-          return ["вс", "пн", "вт", "ср", "чт", "пт", "сб"][d.getDay()];
-        }
-        var months = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
         var sameYear = d.getFullYear() === now.getFullYear();
-        return sameYear
-          ? d.getDate() + " " + months[d.getMonth()]
-          : d.getDate() + " " + months[d.getMonth()] + " " + String(d.getFullYear()).slice(-2);
+        if (sameYear) {
+          return pad2(d.getDate()) + "." + pad2(d.getMonth() + 1);
+        }
+        return pad2(d.getDate()) + "." + pad2(d.getMonth() + 1) + "." + String(d.getFullYear()).slice(-2);
       }
 
       function renderHistory() {
