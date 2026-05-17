@@ -128,60 +128,120 @@ function renderLayoutCss() {
 
     .app-shell {
       display: grid;
-      grid-template-columns: 240px 1fr;
+      grid-template-columns: 64px 240px 1fr;
       min-height: 100vh;
     }
-    .sidebar {
+    .sidebar-icon {
       background: var(--surface);
       border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      padding: 16px 12px;
-      gap: 16px;
+      align-items: center;
+      padding: 12px 0;
+      gap: 6px;
       position: sticky;
       top: 0;
       height: 100vh;
       overflow-y: auto;
     }
-    .brand {
+    .sidebar-context {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
       display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 10px;
-      font-weight: 600;
-      color: var(--text-strong);
-      font-size: 15px;
+      flex-direction: column;
+      padding: 14px 12px;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
     }
+    .sidebar-context__title {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      padding: 4px 6px 0;
+    }
+    .sidebar-context__hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 4px 6px;
+    }
+    .sidebar-context__footer {
+      margin-top: auto;
+      padding: 8px 6px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .sidebar-context__footer a { color: var(--text-muted); }
+    .sidebar-context__footer a:hover { color: var(--accent); }
+
     .brand-mark {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
       background: var(--accent);
       color: white;
       font-family: "JetBrains Mono", monospace;
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 700;
+      margin-bottom: 6px;
     }
-    .nav { display: flex; flex-direction: column; gap: 2px; }
-    .nav__link {
+    .nav-icons {
       display: flex;
+      flex-direction: column;
+      gap: 4px;
       align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border-radius: 8px;
+      width: 100%;
+    }
+    .nav-icons__link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
       color: var(--text-muted);
       transition: background 0.12s ease, color 0.12s ease;
-      font-weight: 500;
     }
-    .nav__link:hover { background: var(--surface-2); color: var(--text); }
-    .nav__link--active {
+    .nav-icons__link:hover { background: var(--surface-2); color: var(--text); }
+    .nav-icons__link--active {
       background: var(--accent-soft);
       color: var(--accent);
     }
-    .nav__link svg { flex: 0 0 auto; }
+    .sidebar-icon__footer {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 0;
+      border-top: 1px solid var(--border);
+      width: 100%;
+    }
+    .sidebar-icon__footer .theme-toggle,
+    .sidebar-icon__footer .nav-icons__link {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+    }
+
+    @media (max-width: 1100px) {
+      .app-shell { grid-template-columns: 64px 200px 1fr; }
+      .sidebar-context { padding: 12px 8px; }
+    }
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 64px 1fr; }
+      .sidebar-context { display: none; }
+    }
     .nav__group-title {
       font-size: 11px;
       text-transform: uppercase;
@@ -204,6 +264,14 @@ function renderLayoutCss() {
       gap: 2px;
       padding: 0 2px;
     }
+    .sidebar__history-group-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      padding: 14px 10px 4px;
+    }
+    .sidebar__history-group-title:first-child { padding-top: 4px; }
     .sidebar__history-item {
       display: flex;
       align-items: center;
@@ -228,6 +296,14 @@ function renderLayoutCss() {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .sidebar__history-date {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10px;
+      color: var(--text-muted);
+      flex: 0 0 auto;
+      opacity: 0.85;
+    }
+    .sidebar__history-item.is-active .sidebar__history-date { color: var(--accent); }
     .sidebar__history-delete {
       background: none;
       border: none;
@@ -245,23 +321,6 @@ function renderLayoutCss() {
       color: var(--text-muted);
       font-size: 12px;
     }
-    .sidebar__footer {
-      border-top: 1px solid var(--border);
-      padding-top: 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .sidebar__legacy-link {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 6px;
-      color: var(--text-muted);
-      font-size: 12px;
-    }
-    .sidebar__legacy-link:hover { background: var(--surface-2); color: var(--text); }
 
     .main {
       display: flex;
@@ -361,10 +420,6 @@ function renderLayoutCss() {
     html[data-theme="light"] .theme-toggle .icon-moon { display: none; }
     html[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
 
-    @media (max-width: 900px) {
-      .app-shell { grid-template-columns: 1fr; }
-      .sidebar { position: relative; height: auto; }
-    }
   `;
 }
 
@@ -419,26 +474,30 @@ function renderCommonScript() {
   `;
 }
 
-function renderSidebar({ activeNav, sidebarExtra = "" }) {
+function renderIconSidebar({ activeNav }) {
   const linksHtml = NAV_ITEMS.map((item) => {
     const isActive = item.key === activeNav;
-    const cls = `nav__link${isActive ? " nav__link--active" : ""}`;
-    return `<a class="${cls}" href="${item.href}">${item.icon}<span>${item.label}</span></a>`;
+    const cls = `nav-icons__link${isActive ? " nav-icons__link--active" : ""}`;
+    return `<a class="${cls}" href="${item.href}" title="${escapeAttr(item.label)}" aria-label="${escapeAttr(item.label)}">${item.icon}</a>`;
   }).join("");
 
   return `
-    <aside class="sidebar" aria-label="Боковая навигация">
-      <div class="brand">
-        <span class="brand-mark">LR</span>
-        <span>LOCAL-RAG</span>
-      </div>
-      <nav class="nav" aria-label="Главные разделы">${linksHtml}</nav>
-      ${sidebarExtra}
-      <div class="sidebar__footer">
-        <a class="sidebar__legacy-link" href="/ui/consult?admin=1" title="Включает админ-режим на 1 час">${ICONS.arrowLeft}<span>Админ-режим (старый интерфейс)</span></a>
+    <aside class="sidebar-icon" aria-label="Главная навигация">
+      <a class="brand-mark" href="/ui/v2/chat" title="LOCAL-RAG" aria-label="LOCAL-RAG">LR</a>
+      <nav class="nav-icons" aria-label="Разделы">${linksHtml}</nav>
+      <div class="sidebar-icon__footer">
+        <button type="button" class="theme-toggle nav-icons__link" data-action="toggle-theme" title="Переключить тему" aria-label="Переключить тему">
+          <span class="icon-sun">${ICONS.sun}</span>
+          <span class="icon-moon">${ICONS.moon}</span>
+        </button>
+        <a class="nav-icons__link" href="/ui/consult?admin=1" title="Старый интерфейс (админ-режим, 1 час)" aria-label="Старый интерфейс">${ICONS.arrowLeft}</a>
       </div>
     </aside>
   `;
+}
+
+function renderContextSidebar({ activeNav, contextSidebar = "" }) {
+  return `<aside class="sidebar-context" aria-label="Контекстная панель">${contextSidebar}</aside>`;
 }
 
 function renderHeader({ pageTitle, headerExtra = "" }) {
@@ -447,10 +506,6 @@ function renderHeader({ pageTitle, headerExtra = "" }) {
       <h1 class="page-header__title">${pageTitle}</h1>
       <div class="page-header__actions">
         ${headerExtra}
-        <button type="button" class="theme-toggle" data-action="toggle-theme" title="Переключить тему" aria-label="Переключить тему">
-          <span class="icon-sun">${ICONS.sun}</span>
-          <span class="icon-moon">${ICONS.moon}</span>
-        </button>
       </div>
     </header>
   `;
@@ -471,11 +526,13 @@ export function renderLayout({
   content,
   headerExtra = "",
   sidebarExtra = "",
+  contextSidebar = "",
   bodyClass = "",
   pageScript = "",
   themeDefault = "dark",
 }) {
   const documentTitle = pageDocumentTitle || `${pageTitle} — LOCAL-RAG`;
+  const finalContextSidebar = contextSidebar || sidebarExtra || "";
 
   return `<!doctype html>
 <html lang="ru">
@@ -491,7 +548,8 @@ export function renderLayout({
 </head>
 <body class="${escapeAttr(bodyClass)}">
   <div class="app-shell">
-    ${renderSidebar({ activeNav, sidebarExtra })}
+    ${renderIconSidebar({ activeNav })}
+    ${renderContextSidebar({ activeNav, contextSidebar: finalContextSidebar })}
     <div class="main">
       ${renderHeader({ pageTitle, headerExtra })}
       ${content}

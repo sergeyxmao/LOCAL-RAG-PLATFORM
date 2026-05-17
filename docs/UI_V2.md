@@ -18,6 +18,9 @@ UI скрыт за `?admin=1`.
 - `apps/kb-api/src/routes/uiV2Chat.js` — страница чата (HTML + CSS + JS).
 - `apps/kb-api/src/routes/uiV2Knowledge.js` — страница «База знаний».
 - `apps/kb-api/src/routes/uiV2Settings.js` — страница «Настройки».
+- `apps/kb-api/src/services/systemPromptService.js` — шаблон системного
+  промпта по умолчанию, форматтеры источников и истории, функция
+  `renderSystemPrompt(template, vars)`. Добавлен в полировке #3.
 - `apps/kb-api/src/routes/chatSessions.js` — REST API сессий и сообщений.
 - `apps/kb-api/src/routes/settingsApi.js` — REST API настроек `/api/v2/settings/*`.
 - `apps/kb-api/src/routes/adminFlag.js` — preHandler с проверкой `?admin=1` /
@@ -676,3 +679,68 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
     нужную строку 1.4-секундной CSS-анимацией. Состояние
     «развёрнут/свёрнут» хранится в `state.expandedSources[messageId]`
     (только в памяти, без localStorage).
+- 2026-05-17: полировка #3 — восемь связанных улучшений:
+  - **A. Каскадное удаление разделов с подразделами.** `confirmDeleteNode`
+    в `uiV2Knowledge.js` больше не блокирует удаление узлов с потомками;
+    показывает confirm-модалку с pluralization («N подразделов · M
+    документов»). Новый метод `deleteKnowledgeNodeCascade(rootNodeId)` в
+    `postgresProvider` рекурсивно удаляет всё поддерево, перенося
+    документы в системный раздел «Без раздела». В роуте
+    `DELETE /nodes/:id` добавлен query-параметр `cascade=true` (вместе
+    с `strategy=move_to_unsorted`).
+  - **B. Автообновление дерева после мутаций.** Новая обёртка
+    `refreshNodes({reloadDocuments})` в `uiV2Knowledge.js` вызывается
+    после создания/переименования/удаления раздела. Активный узел
+    сбрасывается, если он был удалён. Скролл таблицы документов
+    сохраняется через \`window.scrollY\` (опция \`preserveScroll\`).
+  - **C. Расширенный парсер сносок \`[N]\`.** Регулярка в \`decorateRefs\`
+    теперь \`/\\[\\s*(?:Источник|Source)?\\s*(\\d+(?:\\s*,\\s*\\d+)*)\\s*\\]/g\`.
+    Поддерживаются: \`[1]\`, \`[1, 2]\`, \`[Источник 6]\`, \`[Источник 2, 6]\`,
+    \`[Source 5]\`. Каждое число в группе становится отдельным
+    \`<sup class="msg__ref"><a>[N]</a></sup>\`.
+  - **D. Фильтр по тегам в чате + кликабельные документы.** Новая
+    секция «Теги» в правой панели фильтров чата (поиск + плашки
+    выбранных + suggestions из \`/tags\`). Выбранные теги передаются
+    как \`filters.tags\` в \`chat_sessions\` и далее
+    \`searchService.hybridSearch({selectedTags})\` (уже поддерживается).
+    Имена документов в списке фильтров — \`<a target="_blank">\` на
+    \`/documents/:id/original\`, hover-подчёркивание, чекбокс остаётся
+    рядом для выбора в фильтр (\`<div>\` вместо \`<label>\`, чтобы клик по
+    ссылке не задевал состояние чекбокса).
+  - **E. Группировка истории чатов по датам.** В сайдбаре чата сессии
+    группируются по полю \`updatedAt\`: «Сегодня», «Вчера», «За
+    последние 7 дней», «За последние 30 дней», «Раньше». Под каждой
+    группой — заголовок в верхнем регистре. У каждой записи справа —
+    короткая дата (время для сегодня, день недели для текущей
+    недели, «12 мая» для месяца).
+  - **F. Узкий главный сайдбар + контекстный сайдбар.** Layout
+    \`app-shell\` теперь grid \`64px 240px 1fr\`. Главный сайдбар
+    \`.sidebar-icon\` — только иконки с \`title=\` tooltip'ами,
+    переключатель темы переехал сюда из шапки. Контекстный сайдбар
+    \`.sidebar-context\` 240px содержит: чат — кнопку «+ Новый чат»
+    + историю; база знаний — дерево разделов с кнопкой «+ Раздел»
+    + ссылку на расширенный редактор; настройки — якорные ссылки
+    на блоки. На странице базы знаний колонка с деревом убрана из
+    \`.kb-page\` — теперь \`grid-template-columns: 1fr\`. \`position:
+    fixed\` для сайдбаров намеренно не используется.
+  - **G. Редактируемые параметры retrieval в Настройках.** Новый блок
+    «Поиск (retrieval)» в \`/ui/v2/settings\` с полями: semantic.top_k,
+    bm25.top_k, fusion.top_k_final, reranking.enabled,
+    reranking.candidate_pool. Эндпоинты \`GET/PATCH/DELETE
+    /api/v2/settings/retrieval\` в \`settingsApi.js\`. Значения
+    сохраняются в \`app_settings.retrieval\` (JSONB) и переопределяют
+    \`config/retrieval.yaml\`. \`appSettingsService\` кэширует
+    \`retrievalEffective\` (yaml + db override) и предоставляет sync-геттер
+    для \`SearchService\`, чтобы не делать async на каждый поиск.
+  - **H. Редактируемый системный промпт с плейсхолдерами.** Новый
+    файл \`apps/kb-api/src/services/systemPromptService.js\` с константой
+    \`DEFAULT_SYSTEM_PROMPT\`, форматтерами \`formatSourcesBlock\`,
+    \`formatHistoryBlock\` и \`renderSystemPrompt(template, vars)\`.
+    Плейсхолдеры: \`{sources}\`, \`{question}\`, \`{history}\`.
+    Эндпоинты \`GET/PATCH/DELETE /api/v2/settings/system-prompt\`.
+    \`chatSessionService.buildLocalAnswerMessages\` и
+    \`buildCloudMessages\` теперь \`async\` — читают шаблон из
+    \`appSettingsService.getSystemPrompt()\`. В Настройках — карточка
+    «Системный промпт» с textarea, предупреждениями об отсутствии
+    \`{sources}\`/\`{question}\` и слишком длинном шаблоне, кнопками
+    «Сохранить» и «Восстановить по умолчанию» (с window.confirm).

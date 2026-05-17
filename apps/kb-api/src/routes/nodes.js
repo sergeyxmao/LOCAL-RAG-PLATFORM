@@ -792,6 +792,8 @@ export async function nodeRoutes(app) {
       }
 
       const strategy = String(request.query?.strategy ?? "block");
+      const cascade = parseBoolean(request.query?.cascade, false);
+
       if (strategy === "cascade_documents") {
         const result = await deleteNodeCascadeDocuments(app, request.params.id, {
           confirm: request.body?.confirm ?? request.query?.confirm,
@@ -801,6 +803,25 @@ export async function nodeRoutes(app) {
         return {
           ok: true,
           ...result,
+        };
+      }
+
+      if (cascade) {
+        const documentIds = await app.postgresProvider.listDocumentIdsForKnowledgeNode(
+          request.params.id,
+          { includeChildren: true }
+        );
+        const result = await app.postgresProvider.deleteKnowledgeNodeCascade(request.params.id);
+        clearNodeRowsCache();
+        const sync = await autoSyncNodePayload(app, documentIds || [], {
+          scope: "node",
+          targetId: request.params.id,
+          reason: "node-cascade-deleted",
+        });
+        return {
+          ok: true,
+          ...result,
+          sync,
         };
       }
 

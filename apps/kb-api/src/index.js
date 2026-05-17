@@ -69,10 +69,17 @@ const ingestionService = new IngestionService({
   visualAssetService,
 });
 
+const appSettingsService = new AppSettingsService({
+  postgresProvider,
+  retrievalDefaults: appConfig.retrieval,
+});
+await appSettingsService.refreshRetrievalCache();
+
 const searchService = new SearchService({
   embeddingProvider,
   qdrantProvider,
   retrievalConfig: appConfig.retrieval,
+  appSettingsService,
 });
 qdrantProvider.postgresProvider = postgresProvider;
 
@@ -82,8 +89,6 @@ const answerService = new AnswerService({
   postgresProvider,
   modelsConfig: appConfig.models,
 });
-
-const appSettingsService = new AppSettingsService({ postgresProvider });
 const cloudChatProvider = new CloudChatProvider();
 const backupService = new BackupService({
   postgresConfig: appConfig.postgres,

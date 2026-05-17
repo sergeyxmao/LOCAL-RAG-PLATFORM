@@ -1,4 +1,5 @@
 import { CloudProviderError } from "../providers/cloudChatProvider.js";
+import { renderSystemPrompt } from "./systemPromptService.js";
 
 const DEFAULT_TITLE = "Новый чат";
 const MAX_TITLE_LENGTH = 60;
@@ -32,7 +33,7 @@ function normalizeProvider(value) {
 
 function normalizeFilters(value) {
   if (!value || typeof value !== "object") {
-    return { nodeIds: [], documentIds: [] };
+    return { nodeIds: [], documentIds: [], tags: [] };
   }
   const nodeIds = Array.isArray(value.nodeIds)
     ? value.nodeIds.map((id) => String(id).trim()).filter(Boolean)
@@ -40,7 +41,10 @@ function normalizeFilters(value) {
   const documentIds = Array.isArray(value.documentIds)
     ? value.documentIds.map((id) => String(id).trim()).filter(Boolean)
     : [];
-  return { nodeIds, documentIds };
+  const tags = Array.isArray(value.tags)
+    ? value.tags.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+  return { nodeIds, documentIds, tags };
 }
 
 function mapMessageRow(row) {
@@ -66,7 +70,7 @@ function mapSessionRow(row) {
     id: row.id,
     title: row.title,
     mode: row.mode,
-    filters: row.filters ?? { nodeIds: [], documentIds: [] },
+    filters: row.filters ?? { nodeIds: [], documentIds: [], tags: [] },
     provider: row.provider || "local",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -293,6 +297,9 @@ export class ChatSessionService {
       options.nodeIds = filters.nodeIds;
       options.includeChildren = true;
     }
+    if (filters.tags.length > 0) {
+      options.selectedTags = filters.tags;
+    }
     return { options, filters };
   }
 
@@ -435,7 +442,7 @@ export class ChatSessionService {
     }
 
     const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
-    const messages = this.buildCloudMessages({ question, sources, history });
+    const messages = await this.buildCloudMessages({ question, sources, history });
 
     try {
       const result = await this.cloudChatProvider.generate({
@@ -499,33 +506,15 @@ export class ChatSessionService {
       .map((row) => ({ role: row.role, content: String(row.content || "") }));
   }
 
-  buildCloudMessages({ question, sources, history }) {
-    const contextBlock = (sources || [])
-      .slice(0, 6)
-      .map((source, index) => {
-        const lines = [`Источник ${index + 1}:`];
-        if (source.title) lines.push(`Заголовок: ${source.title}`);
-        if (source.source_path) lines.push(`Путь: ${source.source_path}`);
-        if (Array.isArray(source.node_paths) && source.node_paths.length) {
-          lines.push(`Разделы: ${source.node_paths.join("; ")}`);
-        }
-        if (typeof source.page_number === "number") {
-          lines.push(`Страница: ${source.page_number}`);
-        }
-        if (typeof source.text === "string") {
-          lines.push(source.text.slice(0, 1200));
-        }
-        return lines.join("\n");
-      })
-      .join("\n\n---\n\n");
-
-    const systemContent = [
-      "Ты локальный консультант по рабочим документам АСУ ТП.",
-      "Отвечай только на основе предоставленных источников. Если источников недостаточно — скажи об этом прямо.",
-      "Добавляй ссылки на источники в виде [1], [2]. Отвечай по-русски.",
-      contextBlock ? `Источники:\n${contextBlock}` : "Источники не найдены.",
-    ].join("\n\n");
-
+  async buildCloudMessages({ question, sources, history }) {
+    const settings = this.appSettingsService
+      ? await this.appSettingsService.getSystemPrompt()
+      : { template: null };
+    const systemContent = renderSystemPrompt(settings.template, {
+      question,
+      sources,
+      history,
+    });
     return [
       { role: "system", content: systemContent },
       ...(history || []),
@@ -551,28 +540,18 @@ export class ChatSessionService {
     return message;
   }
 
-  buildLocalAnswerMessages({ question, sources }) {
-    const contextBlock = (sources || [])
-      .slice(0, 6)
-      .map((source, index) => {
-        const lines = [`Источник ${index + 1}:`];
-        if (source.title) lines.push(`Заголовок: ${source.title}`);
-        if (source.source_path) lines.push(`Путь: ${source.source_path}`);
-        if (typeof source.page_number === "number") lines.push(`Страница: ${source.page_number}`);
-        if (typeof source.text === "string") lines.push(source.text.slice(0, 1200));
-        return lines.join("\n");
-      })
-      .join("\n\n---\n\n");
+  async buildLocalAnswerMessages({ question, sources }) {
+    const settings = this.appSettingsService
+      ? await this.appSettingsService.getSystemPrompt()
+      : { template: null };
+    const systemContent = renderSystemPrompt(settings.template, {
+      question,
+      sources,
+      history: [],
+    });
     return [
-      {
-        role: "system",
-        content:
-          "Ты локальный консультант по рабочим документам. Отвечай только по предоставленным источникам. Если источников недостаточно — скажи об этом прямо. Добавляй ссылки на источники в виде [1], [2]. Отвечай по-русски.",
-      },
-      {
-        role: "user",
-        content: `Вопрос:\n${question}\n\nИсточники:\n${contextBlock}`,
-      },
+      { role: "system", content: systemContent },
+      { role: "user", content: question },
     ];
   }
 
@@ -694,7 +673,7 @@ export class ChatSessionService {
       return assistant;
     }
 
-    const messages = this.buildLocalAnswerMessages({ question, sources });
+    const messages = await this.buildLocalAnswerMessages({ question, sources });
     try {
       const result = await this.chatProvider.generateStream({ messages, onToken, abortSignal });
       const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
@@ -746,7 +725,7 @@ export class ChatSessionService {
 
     const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
     const tail = history.filter((m) => m.role !== "user" || m.content.trim() !== question);
-    const messages = this.buildCloudMessages({ question, sources, history: tail });
+    const messages = await this.buildCloudMessages({ question, sources, history: tail });
 
     try {
       const result = await this.cloudChatProvider.generateStream({
