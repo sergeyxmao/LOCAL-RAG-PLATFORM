@@ -89,11 +89,6 @@ function renderChatCss() {
       background: var(--accent-soft);
       border-color: var(--accent-soft);
     }
-    .chat-mode-hint {
-      font-size: 12px;
-      color: var(--text-muted);
-    }
-    .chat-mode-hint .mono { color: var(--text); }
     .chat-mode-row__group {
       display: flex;
       align-items: center;
@@ -194,7 +189,7 @@ function renderChatCss() {
       font-size: 12px;
       display: none;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
     html[data-theme="dark"] .cloud-banner {
       color: #FCD34D;
@@ -202,6 +197,25 @@ function renderChatCss() {
       border-color: rgba(245, 158, 11, 0.30);
     }
     .cloud-banner.is-visible { display: flex; }
+    .cloud-banner__text { flex: 1; min-width: 0; }
+    .cloud-banner__close {
+      flex: 0 0 auto;
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-size: 14px;
+      line-height: 1;
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.7;
+    }
+    .cloud-banner__close:hover { opacity: 1; background: rgba(0,0,0,0.05); }
+    html[data-theme="dark"] .cloud-banner__close:hover { background: rgba(255,255,255,0.08); }
     .msg__error {
       margin-top: 6px;
       padding: 8px 10px;
@@ -1034,7 +1048,6 @@ function renderChatScript(initialStateJson) {
         history: document.getElementById("historyList"),
         newChatBtn: document.getElementById("newChatBtn"),
         modeToggle: document.getElementById("modeToggle"),
-        modeHint: document.getElementById("modeHint"),
         providerPicker: document.getElementById("providerPicker"),
         providerPickerTrigger: document.getElementById("providerPickerTrigger"),
         providerPickerLabel: document.getElementById("providerPickerLabel"),
@@ -1326,15 +1339,35 @@ function renderChatScript(initialStateJson) {
           info.configured ? "Текущий провайдер: " + info.label : "Облако не настроено"
         );
         renderProviderMenu(current);
-        if (dom.cloudBanner) {
-          if (isCloudProviderValue(current) && info.configured) {
-            dom.cloudBanner.classList.add("is-visible");
-            dom.cloudBanner.innerHTML = "Фрагменты документов уйдут во внешний API (" + escapeHtml(info.label) + ").";
-          } else {
-            dom.cloudBanner.classList.remove("is-visible");
-            dom.cloudBanner.innerHTML = "";
-          }
+        renderCloudBanner(current, info);
+      }
+
+      function cloudBannerStorageKey(provider) {
+        return "localrag.chat.cloudWarnDismissed." + (state.activeSessionId || "_") + "::" + (provider || "");
+      }
+
+      function isCloudBannerDismissed(provider) {
+        try { return localStorage.getItem(cloudBannerStorageKey(provider)) === "1"; }
+        catch (err) { return false; }
+      }
+
+      function dismissCloudBanner(provider) {
+        try { localStorage.setItem(cloudBannerStorageKey(provider), "1"); } catch (err) {}
+      }
+
+      function renderCloudBanner(current, info) {
+        if (!dom.cloudBanner) return;
+        var shouldShow = isCloudProviderValue(current) && info && info.configured;
+        if (!shouldShow || isCloudBannerDismissed(current)) {
+          dom.cloudBanner.classList.remove("is-visible");
+          dom.cloudBanner.innerHTML = "";
+          return;
         }
+        dom.cloudBanner.classList.add("is-visible");
+        dom.cloudBanner.innerHTML =
+          '<span class="cloud-banner__text">⚠ Фрагменты документов уйдут во внешний API (' +
+            escapeHtml(info.label) + ').</span>' +
+          '<button type="button" class="cloud-banner__close" data-action="dismiss-cloud-banner" aria-label="Скрыть предупреждение">×</button>';
       }
 
       function renderProviderMenu(currentProvider) {
@@ -1442,11 +1475,6 @@ function renderChatScript(initialStateJson) {
         dom.modeToggle.querySelectorAll(".chat-mode-toggle__btn").forEach(function (btn) {
           btn.classList.toggle("is-active", btn.getAttribute("data-mode") === mode);
         });
-        if (dom.modeHint) {
-          dom.modeHint.innerHTML = mode === "pages"
-            ? 'Режим: <span class="mono">найти страницы</span> — без ответа ИИ, только страницы документов.'
-            : 'Режим: <span class="mono">ответ ИИ</span> — модель ответит по найденным источникам.';
-        }
       }
 
       function renderFilterSummary() {
@@ -2494,6 +2522,16 @@ function renderChatScript(initialStateJson) {
           }
         });
 
+        if (dom.cloudBanner) {
+          dom.cloudBanner.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-action='dismiss-cloud-banner']");
+            if (!btn) return;
+            dismissCloudBanner(getActiveProvider());
+            dom.cloudBanner.classList.remove("is-visible");
+            dom.cloudBanner.innerHTML = "";
+          });
+        }
+
         if (dom.providerPickerTrigger) {
           dom.providerPickerTrigger.addEventListener("click", function (event) {
             event.stopPropagation();
@@ -2581,7 +2619,6 @@ export function renderChatPage({ ICONS, renderLayout }) {
               <div class="provider-picker__menu" id="providerPickerMenu" role="listbox" aria-label="Выбор провайдера"></div>
             </div>
           </div>
-          <div class="chat-mode-hint" id="modeHint">Режим: <span class="mono">ответ ИИ</span></div>
         </div>
         <div class="cloud-banner" id="cloudBanner"></div>
         <div class="chat-mode-row" style="border-top:none;padding-top:0;padding-bottom:10px;">

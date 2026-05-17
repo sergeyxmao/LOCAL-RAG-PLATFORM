@@ -18,6 +18,8 @@ async function extractPlainText(fullPath) {
   return fs.readFile(fullPath, "utf8");
 }
 
+const PDF_EMPTY_PAGE_THRESHOLD = 10; // меньше 10 символов на странице = скорее всего скан
+
 async function extractPdfText(fullPath) {
   const buffer = await fs.readFile(fullPath);
   const loadingTask = pdfjs.getDocument({
@@ -29,6 +31,7 @@ async function extractPdfText(fullPath) {
   const pdf = await loadingTask.promise;
   const pages = [];
   const pageTexts = [];
+  const emptyPages = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -39,18 +42,19 @@ async function extractPdfText(fullPath) {
       .replace(/\s+/g, " ")
       .trim();
 
-    if (pageText) {
-      pageTexts.push({
-        page: pageNumber,
-        text: pageText,
-      });
+    if (pageText && pageText.length >= PDF_EMPTY_PAGE_THRESHOLD) {
+      pageTexts.push({ page: pageNumber, text: pageText });
       pages.push(`PDF Page ${pageNumber}\n${pageText}`);
+    } else {
+      emptyPages.push(pageNumber);
     }
   }
 
   return {
     text: pages.join("\n\n"),
     pageTexts,
+    emptyPages,
+    totalPages: pdf.numPages,
   };
 }
 
@@ -173,12 +177,16 @@ export class ExtractorService {
     let prebuiltChunks = null;
     let pageTexts = null;
 
+    let emptyPdfPages = null;
+    let totalPdfPages = null;
     if (extension === ".txt" || extension === ".md") {
       text = await extractPlainText(fullPath);
     } else if (extension === ".pdf") {
       const extracted = await extractPdfText(fullPath);
       text = extracted.text;
       pageTexts = extracted.pageTexts;
+      emptyPdfPages = extracted.emptyPages;
+      totalPdfPages = extracted.totalPages;
       sourceType = "pdf";
     } else if (extension === ".docx") {
       text = await extractDocxText(fullPath);
@@ -198,18 +206,24 @@ export class ExtractorService {
     }
 
     const normalized = normalizeExtractedText(text);
-    if (!normalized) {
-      throw new Error("Extractor returned empty text");
-    }
-
-    await this.saveParsedText(relativePath, normalized);
 
     return {
       text: normalized,
       sourceType,
       prebuiltChunks,
       pageTexts,
+      emptyPdfPages,
+      totalPdfPages,
+      fullPath,
+      relativePath,
     };
+  }
+
+  async finalizeExtraction(relativePath, normalized) {
+    if (!normalized) {
+      throw new Error("Extractor returned empty text");
+    }
+    await this.saveParsedText(relativePath, normalized);
   }
 
   async saveParsedText(relativePath, text) {

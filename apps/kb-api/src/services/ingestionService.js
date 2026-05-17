@@ -90,6 +90,8 @@ export class IngestionService {
     embeddingProvider,
     extractorService,
     visualAssetService,
+    ocrService = null,
+    appSettingsService = null,
   }) {
     this.config = config;
     this.postgresProvider = postgresProvider;
@@ -97,6 +99,58 @@ export class IngestionService {
     this.embeddingProvider = embeddingProvider;
     this.extractorService = extractorService;
     this.visualAssetService = visualAssetService;
+    this.ocrService = ocrService;
+    this.appSettingsService = appSettingsService;
+  }
+
+  async maybeRunOcr(extracted, { existingJobId = null } = {}) {
+    if (extracted.sourceType !== "pdf" || !this.ocrService) return;
+    const emptyPages = Array.isArray(extracted.emptyPdfPages) ? extracted.emptyPdfPages : [];
+    if (emptyPages.length === 0) return;
+
+    let ocrConfig = { autoOcrEmptyPages: true, ocrAll: false };
+    if (this.appSettingsService && typeof this.appSettingsService.getOcrSettings === "function") {
+      try { ocrConfig = await this.appSettingsService.getOcrSettings(); } catch (err) { /* keep defaults */ }
+    }
+    if (!ocrConfig.autoOcrEmptyPages && !ocrConfig.ocrAll) return;
+
+    const targetPages = ocrConfig.ocrAll
+      ? Array.from({ length: extracted.totalPdfPages || emptyPages.length }, (_, i) => i + 1)
+      : emptyPages;
+
+    const ocrAvailable = await this.ocrService.isAvailable();
+    if (!ocrAvailable) return;
+
+    const onProgress = (info) => {
+      if (existingJobId) {
+        this.postgresProvider
+          .updateJobProgress(existingJobId, {
+            progressMessage: `OCR: страница ${info.processed + 1} из ${info.total}`,
+          })
+          .catch(() => {});
+      }
+    };
+
+    const ocrMap = await this.ocrService.ocrPdfPages(extracted.fullPath, targetPages, { onProgress });
+    if (ocrMap.size === 0) return;
+
+    const existingByPage = new Map(
+      (extracted.pageTexts || []).map((entry) => [entry.page, entry.text])
+    );
+    const mergedPageTexts = [];
+    const totalPages = extracted.totalPdfPages || Math.max(...ocrMap.keys(), ...existingByPage.keys());
+    for (let p = 1; p <= totalPages; p += 1) {
+      const ocrText = ocrMap.get(p);
+      const existing = existingByPage.get(p);
+      const finalText = existing && existing.length > 10 ? existing : ocrText;
+      if (finalText) mergedPageTexts.push({ page: p, text: finalText });
+    }
+    extracted.pageTexts = mergedPageTexts;
+    extracted.text = mergedPageTexts
+      .map((entry) => `PDF Page ${entry.page}\n${entry.text}`)
+      .join("\n\n");
+    extracted.ocrApplied = true;
+    extracted.ocrPagesProcessed = ocrMap.size;
   }
 
   buildChunksForExtraction(extracted, title, categories) {
@@ -366,6 +420,8 @@ export class IngestionService {
     }
 
     const extracted = await this.extractorService.extractFromFile(fullPath, safeRelativePath);
+    await this.maybeRunOcr(extracted, { existingJobId });
+    await this.extractorService.finalizeExtraction(safeRelativePath, extracted.text);
     const chunks = this.buildChunksForExtraction(extracted, effectiveTitle, categories);
 
     if (chunks.length === 0) {

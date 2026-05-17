@@ -14,9 +14,12 @@ import { AnswerService } from "./services/answerService.js";
 import { VisualAssetService } from "./services/visualAssetService.js";
 import { ChatSessionService } from "./services/chatSessionService.js";
 import { AppSettingsService } from "./services/appSettingsService.js";
+import { DiagnosticsService } from "./services/diagnosticsService.js";
+import { OcrService } from "./services/ocrService.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
 import { backupApiRoutes } from "./routes/backupApi.js";
+import { diagnosticsRoutes } from "./routes/diagnosticsApi.js";
 import { healthRoutes } from "./routes/health.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { documentRoutes } from "./routes/documents.js";
@@ -109,6 +112,14 @@ const visualAssetService = new VisualAssetService({
   options: appConfig.ingestion.visual_assets,
 });
 
+const ocrService = new OcrService({ logger: app.log });
+
+const appSettingsService = new AppSettingsService({
+  postgresProvider,
+  retrievalDefaults: appConfig.retrieval,
+});
+await appSettingsService.refreshRetrievalCache();
+
 const ingestionService = new IngestionService({
   config: appConfig,
   postgresProvider,
@@ -116,13 +127,14 @@ const ingestionService = new IngestionService({
   embeddingProvider,
   extractorService,
   visualAssetService,
+  ocrService,
+  appSettingsService,
 });
 
-const appSettingsService = new AppSettingsService({
+const diagnosticsService = new DiagnosticsService({
   postgresProvider,
-  retrievalDefaults: appConfig.retrieval,
+  qdrantProvider,
 });
-await appSettingsService.refreshRetrievalCache();
 await runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger: app.log });
 
 const searchService = new SearchService({
@@ -168,6 +180,8 @@ app.decorate("searchService", searchService);
 app.decorate("answerService", answerService);
 app.decorate("chatSessionService", chatSessionService);
 app.decorate("appSettingsService", appSettingsService);
+app.decorate("diagnosticsService", diagnosticsService);
+app.decorate("ocrService", ocrService);
 app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("backupService", backupService);
 
@@ -184,6 +198,7 @@ await app.register(uiStateRoutes);
 await app.register(settingsApiRoutes);
 await app.register(chatSessionRoutes);
 await app.register(backupApiRoutes);
+await app.register(diagnosticsRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 

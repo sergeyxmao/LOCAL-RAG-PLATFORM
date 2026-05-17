@@ -311,6 +311,31 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get("/api/v2/settings/ocr", async (request, reply) => {
+    try {
+      const ocr = await app.appSettingsService.getOcrSettings();
+      const available = app.ocrService ? await app.ocrService.isAvailable() : false;
+      return { ok: true, ocr, available };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки OCR");
+      return respondError(reply, 500, error.message || "Не удалось получить настройки OCR");
+    }
+  });
+
+  app.patch("/api/v2/settings/ocr", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const ocr = await app.appSettingsService.updateOcrSettings({
+        autoOcrEmptyPages: body.autoOcrEmptyPages,
+        ocrAll: body.ocrAll,
+      });
+      return { ok: true, ocr };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сохранить настройки OCR");
+      return respondError(reply, 500, error.message || "Не удалось сохранить настройки OCR");
+    }
+  });
+
   app.get("/api/v2/settings/retrieval", async (request, reply) => {
     try {
       const retrieval = await app.appSettingsService.getRetrievalPublic();
