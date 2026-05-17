@@ -1466,7 +1466,7 @@ function renderKnowledgeScript(initialStateJson) {
         }
         function parseTagInput(raw) {
           return String(raw || "")
-            .split(/[,;\n]+/)
+            .split(/[,;\\n]+/)
             .map(function (s) { return s.trim().replace(/^#+/, ""); })
             .filter(function (s) { return s.length > 0 && s.length <= 64; });
         }
