@@ -5,10 +5,18 @@ import {
 } from "../utils/tags.js";
 
 export class SearchService {
-  constructor({ embeddingProvider, qdrantProvider, retrievalConfig }) {
+  constructor({ embeddingProvider, qdrantProvider, retrievalConfig, appSettingsService = null }) {
     this.embeddingProvider = embeddingProvider;
     this.qdrantProvider = qdrantProvider;
-    this.retrievalConfig = retrievalConfig;
+    this._retrievalDefaults = retrievalConfig;
+    this.appSettingsService = appSettingsService;
+  }
+
+  get retrievalConfig() {
+    if (this.appSettingsService && typeof this.appSettingsService.getRetrievalConfigSync === "function") {
+      return this.appSettingsService.getRetrievalConfigSync() || this._retrievalDefaults;
+    }
+    return this._retrievalDefaults;
   }
 
   isUuid(value) {

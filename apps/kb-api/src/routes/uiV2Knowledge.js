@@ -3,46 +3,12 @@ function renderKnowledgeCss() {
     .kb-page {
       flex: 1;
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: 1fr;
       min-height: 0;
     }
-    .kb-tree {
-      background: var(--surface);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
+    #kbTree {
+      padding: 4px 2px 4px 4px;
     }
-    .kb-tree__head {
-      padding: 14px 16px 8px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid var(--border);
-    }
-    .kb-tree__head .filters-section__title {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-    }
-    .kb-tree__body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px 8px 4px;
-    }
-    .kb-tree__footer {
-      padding: 10px 16px;
-      border-top: 1px solid var(--border);
-    }
-    .kb-tree__footer a {
-      color: var(--text-muted);
-      font-size: 12px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .kb-tree__footer a:hover { color: var(--accent); }
 
     .kb-node-row {
       display: flex;
@@ -591,12 +557,7 @@ function renderKnowledgeCss() {
     }
 
     @media (max-width: 1024px) {
-      .kb-page { grid-template-columns: 240px 1fr; }
       .kb-upload-fields { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 760px) {
-      .kb-page { grid-template-columns: 1fr; }
-      .kb-tree { display: none; }
     }
   `;
 }
@@ -1111,6 +1072,9 @@ function renderKnowledgeScript(initialStateJson) {
           var unsorted = state.nodes.find(function (n) { return n.isSystem; });
           state.unsortedNodeId = unsorted ? unsorted.id : null;
           state.nodeCounts = (results[1] && results[1].byNodeId) || {};
+          if (state.activeNodeId && !getNodeById(state.activeNodeId)) {
+            state.activeNodeId = null;
+          }
           renderTree();
           renderNodeSelect();
         }).catch(function (err) {
@@ -1118,9 +1082,18 @@ function renderKnowledgeScript(initialStateJson) {
         });
       }
 
+      function refreshNodes(opts) {
+        opts = opts || {};
+        return loadNodes().then(function () {
+          if (opts.reloadDocuments) return loadDocuments({ preserveScroll: true });
+        });
+      }
+
       function loadDocuments(opts) {
         opts = opts || {};
         var append = opts.append === true;
+        var preserveScroll = opts.preserveScroll === true;
+        var savedScrollY = preserveScroll ? window.scrollY : 0;
         if (!append) {
           state.documentOffset = 0;
           state.selectedDocIds = new Set();
@@ -1143,8 +1116,11 @@ function renderKnowledgeScript(initialStateJson) {
             state.documents = items;
           }
           renderDocuments();
+          if (preserveScroll) {
+            window.scrollTo({ top: savedScrollY, behavior: "instant" });
+          }
         }).catch(function (err) {
-          dom.docTableBody.innerHTML = '<tr><td colspan="7"><div class="kb-doc-error">Не удалось загрузить документы: ' + escapeHtml(err.message) + '</div></td></tr>';
+          dom.docTableBody.innerHTML = '<tr><td colspan="8"><div class="kb-doc-error">Не удалось загрузить документы: ' + escapeHtml(err.message) + '</div></td></tr>';
         });
       }
 
@@ -1260,7 +1236,7 @@ function renderKnowledgeScript(initialStateJson) {
           if (!name) { showToast("Введите название раздела", "error"); return; }
           api("POST", "/nodes", { name: name, parentId: parentId || null }).then(function (data) {
             closeModal();
-            return loadNodes().then(function () {
+            return refreshNodes().then(function () {
               if (data && data.node) {
                 state.nodeExpanded.add(parentId || data.node.id);
                 if (parentId) state.nodeExpanded.add(parentId);
@@ -1295,7 +1271,7 @@ function renderKnowledgeScript(initialStateJson) {
           if (!name) { showToast("Введите название", "error"); return; }
           api("PATCH", "/nodes/" + nodeId, { name: name }).then(function () {
             closeModal();
-            return loadNodes();
+            return refreshNodes();
           }).catch(function (err) { showToast("Не удалось переименовать: " + err.message, "error"); });
         });
         var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
@@ -1304,33 +1280,73 @@ function renderKnowledgeScript(initialStateJson) {
         input.addEventListener("keydown", function (e) { if (e.key === "Enter") saveBtn.click(); });
       }
 
+      function pluralRu(n, forms) {
+        var mod10 = n % 10;
+        var mod100 = n % 100;
+        if (mod10 === 1 && mod100 !== 11) return forms[0];
+        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return forms[1];
+        return forms[2];
+      }
+
       function confirmDeleteNode(nodeId) {
         var node = getNodeById(nodeId);
         if (!node) return;
-        var hasChildren = getDescendantIds(nodeId).size > 0;
+        var descendantIds = getDescendantIds(nodeId);
+        var hasChildren = descendantIds.size > 0;
+        var counts = state.nodeCounts[nodeId] || {};
+        var docCount = Number(counts.scopeDocuments || 0);
+
         if (hasChildren) {
+          var subnodesCount = descendantIds.size;
+          var subWord = pluralRu(subnodesCount, ["подраздел", "подраздела", "подразделов"]);
+          var docWord = pluralRu(docCount, ["документ", "документа", "документов"]);
+          var lines = [
+            '<p style="margin:0;">Удалить раздел «<strong>' + escapeHtml(node.name) + '</strong>»?</p>',
+            '<p style="margin:0;color:var(--text-muted);font-size:12px;">Это удалит:</p>',
+            '<ul style="margin:0;padding-left:20px;font-size:12px;color:var(--text-muted);">',
+            '<li><strong>' + subnodesCount + '</strong> ' + subWord + ' (включая все вложенные)</li>',
+            (docCount > 0
+              ? '<li><strong>' + docCount + '</strong> ' + docWord + ' внутри них — будут перенесены в «Без раздела»</li>'
+              : '<li>Документов в этих разделах нет</li>'),
+            '</ul>',
+            '<p style="margin:0;color:var(--danger);font-size:12px;">Это действие нельзя отменить.</p>',
+          ];
           openConfirmModal({
-            title: "Нельзя удалить",
-            bodyHtml:
-              '<p>В разделе «<strong>' + escapeHtml(node.name) + '</strong>» есть вложенные разделы.</p>' +
-              '<p style="font-size:12px;color:var(--text-muted);">' +
-              'Сначала переместите или удалите вложенные разделы — это можно сделать в ' +
-              '<a href="/ui/nodes" target="_blank" rel="noopener" style="color:var(--accent);">расширенном редакторе</a>.</p>',
-            danger: false,
-            confirmLabel: "Понятно",
-            onConfirm: function () {},
+            title: "Удалить раздел и поддерево?",
+            bodyHtml: lines.join(""),
+            danger: true,
+            confirmLabel: "Удалить со всем поддеревом",
+            onConfirm: function () {
+              api("DELETE", "/nodes/" + encodeURIComponent(nodeId) + "?strategy=move_to_unsorted&cascade=true")
+                .then(function (data) {
+                  if (state.activeNodeId === nodeId) state.activeNodeId = null;
+                  state.nodeExpanded.delete(nodeId);
+                  descendantIds.forEach(function (id) {
+                    state.nodeExpanded.delete(id);
+                    if (state.activeNodeId === id) state.activeNodeId = null;
+                  });
+                  var movedMsg = data && data.movedDocuments
+                    ? " Перенесено документов: " + data.movedDocuments + "."
+                    : "";
+                  showToast("Раздел и " + subnodesCount + " " + subWord + " удалены." + movedMsg);
+                  return refreshNodes({ reloadDocuments: true });
+                })
+                .catch(function (err) {
+                  showToast("Не удалось удалить: " + err.message, "error");
+                });
+            },
           });
           return;
         }
-        var counts = state.nodeCounts[nodeId] || {};
-        var docCount = Number(counts.scopeDocuments || 0);
+
         var hasDocs = docCount > 0;
         var moveTarget = node.parentId ? "родительский раздел" : "«Без раздела»";
         var bodyHtml =
           '<p style="margin:0;">Удалить раздел «<strong>' + escapeHtml(node.name) + '</strong>»?</p>' +
           (hasDocs
             ? '<p style="font-size:12px;color:var(--text-muted);margin:0;">В разделе ' +
-              docCount + ' документ(ов). Они будут перемещены в <strong>' + moveTarget +
+              docCount + ' ' + pluralRu(docCount, ["документ", "документа", "документов"]) +
+              '. Они будут перемещены в <strong>' + moveTarget +
               '</strong>. Сами документы и их векторы не удаляются.</p>'
             : '<p style="font-size:12px;color:var(--text-muted);margin:0;">Документов в разделе нет. Раздел будет удалён сразу.</p>');
         openConfirmModal({
@@ -1347,7 +1363,7 @@ function renderKnowledgeScript(initialStateJson) {
                 if (state.activeNodeId === nodeId) state.activeNodeId = null;
                 state.nodeExpanded.delete(nodeId);
                 showToast("Раздел удалён");
-                return loadNodes().then(function () { return loadDocuments(); });
+                return refreshNodes({ reloadDocuments: hasDocs });
               })
               .catch(function (err) {
                 showToast("Не удалось удалить: " + err.message, "error");
@@ -1857,21 +1873,19 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
     <div class="kb-summary" id="kbSummary"><span>База знаний загружается…</span></div>
   `;
 
+  const contextSidebar = `
+    <div class="sidebar-context__title">Разделы</div>
+    <button type="button" class="btn btn--accent" id="kbTreeNewBtn">${ICONS.plus}<span>Раздел</span></button>
+    <div class="kb-tree__body" id="kbTree" style="flex:1;min-height:0;overflow-y:auto;">
+      <div class="filters-empty">Дерево загружается…</div>
+    </div>
+    <div class="sidebar-context__footer">
+      <a href="/ui/nodes" target="_blank" rel="noopener">Расширенный редактор →</a>
+    </div>
+  `;
+
   const content = `
     <main class="kb-page" id="kbPage">
-      <aside class="kb-tree" aria-label="Дерево разделов">
-        <div class="kb-tree__head">
-          <div class="filters-section__title">Разделы</div>
-          <button type="button" class="btn btn--accent" id="kbTreeNewBtn">${ICONS.plus}<span>Раздел</span></button>
-        </div>
-        <div class="kb-tree__body" id="kbTree">
-          <div class="filters-empty">Дерево загружается…</div>
-        </div>
-        <div class="kb-tree__footer">
-          <a href="/ui/nodes">Расширенный редактор дерева →</a>
-        </div>
-      </aside>
-
       <section class="kb-main">
         <div class="kb-card" id="kbUploadCard">
           <div class="kb-card__head">
@@ -2005,6 +2019,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
     pageDocumentTitle: "База знаний — LOCAL-RAG",
     content,
     headerExtra,
+    contextSidebar,
     pageScript: renderKnowledgeScript(initialStateJson),
     bodyClass: "page-knowledge",
   }).replace("</style>", `${renderKnowledgeCss()}</style>`);

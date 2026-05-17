@@ -1502,6 +1502,123 @@ export class PostgresProvider {
     }
   }
 
+  async deleteKnowledgeNodeCascade(rootNodeId) {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const rootResult = await client.query(
+        `SELECT * FROM knowledge_nodes WHERE id = $1 FOR UPDATE`,
+        [rootNodeId]
+      );
+      const root = rootResult.rows[0] ?? null;
+      if (!root) {
+        throw providerError("NODE_NOT_FOUND", "Раздел не найден");
+      }
+      if (root.is_system) {
+        throw providerError("SYSTEM_NODE_LOCKED", "Системный раздел нельзя удалить");
+      }
+
+      const unsortedResult = await client.query(
+        `
+        SELECT id
+        FROM knowledge_nodes
+        WHERE is_system = TRUE AND lower(name) = lower($1)
+        ORDER BY created_at ASC
+        LIMIT 1
+        `,
+        [UNSORTED_NODE_NAME]
+      );
+      const unsortedId = unsortedResult.rows[0]?.id ?? null;
+      if (!unsortedId) {
+        throw providerError("TARGET_NODE_NOT_FOUND", 'Не найден системный раздел "Без раздела"');
+      }
+
+      const subtreeResult = await client.query(
+        `
+        SELECT c.descendant_id AS id, c.depth
+        FROM knowledge_node_closure c
+        WHERE c.ancestor_id = $1
+        ORDER BY c.depth DESC
+        `,
+        [rootNodeId]
+      );
+      const subtreeNodes = subtreeResult.rows;
+      const subtreeIds = subtreeNodes.map((r) => r.id);
+
+      if (subtreeIds.includes(unsortedId)) {
+        throw providerError(
+          "SYSTEM_NODE_LOCKED",
+          'Системный раздел "Без раздела" попал в поддерево — операция отменена'
+        );
+      }
+
+      const docsResult = await client.query(
+        `SELECT DISTINCT document_id FROM document_node_links WHERE node_id = ANY($1::uuid[])`,
+        [subtreeIds]
+      );
+      const documentIds = docsResult.rows.map((r) => r.document_id);
+
+      if (documentIds.length > 0) {
+        await client.query(
+          `
+          INSERT INTO document_node_links (document_id, node_id, is_primary)
+          SELECT DISTINCT document_id, $2::uuid, FALSE
+          FROM document_node_links
+          WHERE node_id = ANY($1::uuid[])
+          ON CONFLICT (document_id, node_id) DO NOTHING
+          `,
+          [subtreeIds, unsortedId]
+        );
+
+        await client.query(
+          `DELETE FROM document_node_links WHERE node_id = ANY($1::uuid[])`,
+          [subtreeIds]
+        );
+
+        await client.query(
+          `
+          UPDATE document_node_links target
+          SET is_primary = TRUE
+          WHERE target.node_id = $2
+            AND target.document_id = ANY($1::uuid[])
+            AND NOT EXISTS (
+              SELECT 1
+              FROM document_node_links existing
+              WHERE existing.document_id = target.document_id
+                AND existing.is_primary = TRUE
+            )
+          `,
+          [documentIds, unsortedId]
+        );
+      }
+
+      await client.query(
+        `DELETE FROM job_node_links WHERE node_id = ANY($1::uuid[])`,
+        [subtreeIds]
+      );
+
+      for (const node of subtreeNodes) {
+        await client.query(`DELETE FROM knowledge_nodes WHERE id = $1`, [node.id]);
+      }
+
+      await client.query("COMMIT");
+      return {
+        deleted: true,
+        cascade: true,
+        movedDocuments: documentIds.length,
+        deletedNodes: subtreeIds.length,
+        documentIds,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listDocumentsForKnowledgeNode(nodeId, { includeChildren = true, limit = 100 } = {}) {
     const parsedLimit = Number(limit);
     const normalizedLimit = Number.isFinite(parsedLimit)

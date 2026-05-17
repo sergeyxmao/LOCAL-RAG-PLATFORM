@@ -773,12 +773,72 @@ function renderChatCss() {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .document-row__label--link {
+      color: var(--text);
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .document-row__label--link:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
     .document-row__meta {
       font-family: "JetBrains Mono", monospace;
       font-size: 11px;
       color: var(--text-muted);
     }
     .filters-empty { color: var(--text-muted); font-size: 12px; padding: 8px 0; }
+
+    .tags-filter { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .tags-filter__selected {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      min-height: 0;
+    }
+    .tags-filter__selected:empty { display: none; }
+    .tags-filter__chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+    }
+    .tags-filter__chip button {
+      background: none;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      padding: 0 2px;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .tags-filter__chip button:hover { color: var(--danger); }
+    .tags-filter__suggest {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+    .tags-filter__suggest button {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .tags-filter__suggest button:hover {
+      color: var(--text);
+      border-color: var(--border-strong);
+    }
 
     .filters-panel__footer {
       padding: 12px 16px;
@@ -884,6 +944,9 @@ function renderChatScript(initialStateJson) {
         documents: [],
         selectedNodeIds: new Set(),
         selectedDocumentIds: new Set(),
+        selectedTags: new Set(),
+        availableTags: [],
+        tagsSearchTerm: "",
         nodeExpanded: new Set(),
         filtersOpen: false,
         loadingMessage: false,
@@ -911,6 +974,9 @@ function renderChatScript(initialStateJson) {
         nodeTree: document.getElementById("nodeTree"),
         documentList: document.getElementById("documentList"),
         documentSearch: document.getElementById("documentSearch"),
+        tagsFilterSelected: document.getElementById("tagsFilterSelected"),
+        tagsFilterInput: document.getElementById("tagsFilterInput"),
+        tagsFilterSuggest: document.getElementById("tagsFilterSuggest"),
         resetFiltersBtn: document.getElementById("resetFiltersBtn"),
         applyFiltersBtn: document.getElementById("applyFiltersBtn"),
         chatPage: document.getElementById("chatPage"),
@@ -1038,20 +1104,89 @@ function renderChatScript(initialStateJson) {
         } catch (err) { return ""; }
       }
 
+      function startOfDay(d) {
+        var x = new Date(d);
+        x.setHours(0, 0, 0, 0);
+        return x;
+      }
+
+      function classifySessionDate(updatedAt) {
+        if (!updatedAt) return { group: "Раньше", order: 5 };
+        var d = new Date(updatedAt);
+        if (isNaN(d.getTime())) return { group: "Раньше", order: 5 };
+        var now = new Date();
+        var today = startOfDay(now);
+        var yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        var weekAgo = new Date(today);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        var monthAgo = new Date(today);
+        monthAgo.setDate(monthAgo.getDate() - 30);
+        var dDay = startOfDay(d);
+        if (dDay.getTime() === today.getTime()) return { group: "Сегодня", order: 0 };
+        if (dDay.getTime() === yesterday.getTime()) return { group: "Вчера", order: 1 };
+        if (d >= weekAgo) return { group: "За последние 7 дней", order: 2 };
+        if (d >= monthAgo) return { group: "За последние 30 дней", order: 3 };
+        return { group: "Раньше", order: 4 };
+      }
+
+      function formatSessionDate(updatedAt) {
+        if (!updatedAt) return "";
+        var d = new Date(updatedAt);
+        if (isNaN(d.getTime())) return "";
+        var now = new Date();
+        var today = startOfDay(now);
+        var yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        var weekAgo = new Date(today);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        var dDay = startOfDay(d);
+        if (dDay.getTime() === today.getTime()) {
+          return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+        }
+        if (dDay.getTime() === yesterday.getTime()) return "вчера";
+        if (d >= weekAgo) {
+          return ["вс", "пн", "вт", "ср", "чт", "пт", "сб"][d.getDay()];
+        }
+        var months = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+        var sameYear = d.getFullYear() === now.getFullYear();
+        return sameYear
+          ? d.getDate() + " " + months[d.getMonth()]
+          : d.getDate() + " " + months[d.getMonth()] + " " + String(d.getFullYear()).slice(-2);
+      }
+
       function renderHistory() {
         if (!dom.history) return;
         if (!state.sessions.length) {
           dom.history.innerHTML = '<div class="sidebar__empty">История пуста. Задайте первый вопрос.</div>';
           return;
         }
-        dom.history.innerHTML = state.sessions.map(function (session) {
-          var isActive = session.id === state.activeSessionId ? " is-active" : "";
-          return '<div class="sidebar__history-item' + isActive + '" data-session-id="' + escapeHtml(session.id) + '">' +
-            '<span class="sidebar__history-title" title="' + escapeHtml(session.title) + '">' + escapeHtml(session.title) + '</span>' +
-            '<button type="button" class="sidebar__history-delete" data-action="delete-session" data-session-id="' + escapeHtml(session.id) + '" aria-label="Удалить чат">' +
-            INITIAL_STATE.icons.trash +
-            '</button></div>';
+        var groups = [];
+        var byKey = {};
+        state.sessions.forEach(function (session) {
+          var info = classifySessionDate(session.updatedAt || session.updated_at);
+          var key = info.order + ":" + info.group;
+          if (!byKey[key]) {
+            byKey[key] = { title: info.group, order: info.order, items: [] };
+            groups.push(byKey[key]);
+          }
+          byKey[key].items.push(session);
+        });
+        groups.sort(function (a, b) { return a.order - b.order; });
+        var html = groups.map(function (g) {
+          var itemsHtml = g.items.map(function (session) {
+            var isActive = session.id === state.activeSessionId ? " is-active" : "";
+            var dateStr = formatSessionDate(session.updatedAt || session.updated_at);
+            return '<div class="sidebar__history-item' + isActive + '" data-session-id="' + escapeHtml(session.id) + '">' +
+              '<span class="sidebar__history-title" title="' + escapeHtml(session.title) + '">' + escapeHtml(session.title) + '</span>' +
+              (dateStr ? '<span class="sidebar__history-date">' + escapeHtml(dateStr) + '</span>' : '') +
+              '<button type="button" class="sidebar__history-delete" data-action="delete-session" data-session-id="' + escapeHtml(session.id) + '" aria-label="Удалить чат">' +
+              INITIAL_STATE.icons.trash +
+              '</button></div>';
+          }).join("");
+          return '<div class="sidebar__history-group-title">' + escapeHtml(g.title) + '</div>' + itemsHtml;
         }).join("");
+        dom.history.innerHTML = html;
       }
 
       function getActiveSession() {
@@ -1148,13 +1283,15 @@ function renderChatScript(initialStateJson) {
         if (!dom.filterSummary) return;
         var nodeCount = state.selectedNodeIds.size;
         var docCount = state.selectedDocumentIds.size;
-        if (!nodeCount && !docCount) {
+        var tagCount = state.selectedTags.size;
+        if (!nodeCount && !docCount && !tagCount) {
           dom.filterSummary.innerHTML = '<span>Фильтры не заданы — поиск идёт по всей базе.</span>';
           return;
         }
         var chips = [];
         if (nodeCount) chips.push('<span class="filter-summary__chip">' + nodeCount + ' разд.</span>');
         if (docCount) chips.push('<span class="filter-summary__chip">' + docCount + ' док.</span>');
+        if (tagCount) chips.push('<span class="filter-summary__chip">' + tagCount + ' тег.</span>');
         dom.filterSummary.innerHTML = '<span>Активные фильтры:</span>' + chips.join("");
       }
 
@@ -1299,34 +1436,42 @@ function renderChatScript(initialStateJson) {
 
       function decorateRefs(container, sourcesCount, messageId) {
         if (!container || sourcesCount <= 0) return;
+        var REF_PATTERN = /\\[\\s*(?:Источник|Source)?\\s*(\\d+(?:\\s*,\\s*\\d+)*)\\s*\\]/g;
         var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
         var nodes = [];
         var node;
         while ((node = walker.nextNode())) {
           if (node.parentNode && node.parentNode.closest("code, pre, a, .msg__ref")) continue;
-          if (/\\[(\\d+)\\]/.test(node.textContent)) nodes.push(node);
+          var probe = new RegExp(REF_PATTERN.source);
+          if (probe.test(node.textContent)) nodes.push(node);
+        }
+        function makeRef(n) {
+          var sup = document.createElement("sup");
+          sup.className = "msg__ref";
+          var a = document.createElement("a");
+          a.href = "#src-" + messageId + "-" + n;
+          a.setAttribute("data-source-index", String(n));
+          a.setAttribute("data-message-id", String(messageId));
+          a.textContent = "[" + n + "]";
+          sup.appendChild(a);
+          return sup;
         }
         nodes.forEach(function (textNode) {
           var text = textNode.textContent;
           var frag = document.createDocumentFragment();
           var lastIndex = 0;
-          var re = /\\[(\\d+)\\]/g;
+          var re = new RegExp(REF_PATTERN.source, "g");
           var match;
           while ((match = re.exec(text)) !== null) {
-            var n = parseInt(match[1], 10);
             if (lastIndex < match.index) {
               frag.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
             }
-            if (n >= 1 && n <= sourcesCount) {
-              var sup = document.createElement("sup");
-              sup.className = "msg__ref";
-              var a = document.createElement("a");
-              a.href = "#src-" + messageId + "-" + n;
-              a.setAttribute("data-source-index", String(n));
-              a.setAttribute("data-message-id", String(messageId));
-              a.textContent = "[" + n + "]";
-              sup.appendChild(a);
-              frag.appendChild(sup);
+            var numbers = String(match[1])
+              .split(",")
+              .map(function (s) { return parseInt(s.trim(), 10); })
+              .filter(function (n) { return Number.isFinite(n) && n >= 1 && n <= sourcesCount; });
+            if (numbers.length) {
+              numbers.forEach(function (n) { frag.appendChild(makeRef(n)); });
             } else {
               frag.appendChild(document.createTextNode(match[0]));
             }
@@ -1609,11 +1754,13 @@ function renderChatScript(initialStateJson) {
         }
         dom.documentList.innerHTML = docs.slice(0, 200).map(function (doc) {
           var selected = state.selectedDocumentIds.has(doc.id) ? "checked" : "";
-          return '<label class="document-row">' +
+          var docTitle = doc.title || doc.source_path || doc.id;
+          var docHref = "/documents/" + encodeURIComponent(doc.id) + "/original";
+          return '<div class="document-row">' +
             '<input type="checkbox" class="node-row__checkbox" data-action="select-document" data-doc-id="' + escapeHtml(doc.id) + '" ' + selected + ' />' +
-            '<span class="document-row__label" title="' + escapeHtml(doc.title || doc.source_path || doc.id) + '">' + escapeHtml(doc.title || doc.source_path || doc.id) + '</span>' +
+            '<a class="document-row__label document-row__label--link" href="' + escapeHtml(docHref) + '" target="_blank" rel="noopener" title="' + escapeHtml(docTitle) + '" data-action="open-doc-preview">' + escapeHtml(docTitle) + '</a>' +
             '<span class="document-row__meta mono">' + escapeHtml(doc.asset_count || doc.chunk_count || "") + '</span>' +
-            '</label>';
+            '</div>';
         }).join("");
       }
 
@@ -1648,12 +1795,17 @@ function renderChatScript(initialStateJson) {
           var session = data.session;
           state.selectedNodeIds = new Set((session.filters && session.filters.nodeIds) || []);
           state.selectedDocumentIds = new Set((session.filters && session.filters.documentIds) || []);
+          state.selectedTags = new Set((session.filters && session.filters.tags) || []);
+          state.tagsSearchTerm = "";
+          if (dom.tagsFilterInput) dom.tagsFilterInput.value = "";
           var idx = state.sessions.findIndex(function (s) { return s.id === state.activeSessionId; });
           if (idx >= 0) state.sessions[idx] = session;
           renderHistory();
           renderModeToggle();
           renderProviderToggle();
           renderFilterSummary();
+          renderTagsFilter();
+          loadAvailableTags();
           renderStream();
           renderNodeTree();
           renderDocuments();
@@ -1705,7 +1857,7 @@ function renderChatScript(initialStateJson) {
         var payload = {
           title: "Новый чат",
           mode: mode || "answer",
-          filters: { nodeIds: [], documentIds: [] },
+          filters: { nodeIds: [], documentIds: [], tags: [] },
         };
         if (provider) payload.provider = provider;
         return api("POST", "/api/v2/chat/sessions", payload).then(function (data) {
@@ -1714,10 +1866,12 @@ function renderChatScript(initialStateJson) {
           state.messages = [];
           state.selectedNodeIds = new Set();
           state.selectedDocumentIds = new Set();
+          state.selectedTags = new Set();
           renderHistory();
           renderModeToggle();
           renderProviderToggle();
           renderFilterSummary();
+          renderTagsFilter();
           renderStream();
         });
       }
@@ -1746,6 +1900,7 @@ function renderChatScript(initialStateJson) {
         var filters = {
           nodeIds: Array.from(state.selectedNodeIds),
           documentIds: Array.from(state.selectedDocumentIds),
+          tags: Array.from(state.selectedTags),
         };
         return api("PATCH", "/api/v2/chat/sessions/" + state.activeSessionId, { filters: filters }).then(function (data) {
           var idx = state.sessions.findIndex(function (s) { return s.id === state.activeSessionId; });
@@ -1760,8 +1915,60 @@ function renderChatScript(initialStateJson) {
       function resetFilters() {
         state.selectedNodeIds = new Set();
         state.selectedDocumentIds = new Set();
+        state.selectedTags = new Set();
         renderNodeTree();
         renderDocuments();
+        renderTagsFilter();
+      }
+
+      function loadAvailableTags() {
+        var nodeIds = Array.from(state.selectedNodeIds);
+        var url = nodeIds.length
+          ? "/tags?nodeId=" + encodeURIComponent(nodeIds[0]) + "&limit=200"
+          : "/tags?limit=200";
+        return api("GET", url).then(function (data) {
+          state.availableTags = (data.items || []).map(function (t) {
+            return typeof t === "string" ? { tag: t, count: 0 } : t;
+          });
+          renderTagsFilter();
+        }).catch(function () {
+          state.availableTags = [];
+          renderTagsFilter();
+        });
+      }
+
+      function renderTagsFilter() {
+        if (!dom.tagsFilterSelected || !dom.tagsFilterSuggest) return;
+        var selected = Array.from(state.selectedTags);
+        if (selected.length) {
+          dom.tagsFilterSelected.innerHTML = selected.map(function (t) {
+            return '<span class="tags-filter__chip">' + escapeHtml(t) +
+              '<button type="button" data-action="remove-tag" data-tag="' + escapeHtml(t) + '" aria-label="Убрать тег">×</button>' +
+              '</span>';
+          }).join("");
+        } else {
+          dom.tagsFilterSelected.innerHTML = "";
+        }
+        var term = String(state.tagsSearchTerm || "").toLowerCase().trim();
+        var suggestions = state.availableTags.filter(function (t) {
+          var tag = (t.tag || "").toLowerCase();
+          if (!tag) return false;
+          if (state.selectedTags.has(t.tag)) return false;
+          if (!term) return true;
+          return tag.indexOf(term) !== -1;
+        }).slice(0, 30);
+        if (suggestions.length) {
+          dom.tagsFilterSuggest.innerHTML = suggestions.map(function (t) {
+            return '<button type="button" data-action="add-tag" data-tag="' + escapeHtml(t.tag) + '">' +
+              escapeHtml(t.tag) +
+              (t.count ? ' <span style="opacity:0.6;">·' + escapeHtml(t.count) + '</span>' : '') +
+              '</button>';
+          }).join("");
+        } else {
+          dom.tagsFilterSuggest.innerHTML = state.availableTags.length
+            ? '<div class="filters-empty">Ничего не найдено.</div>'
+            : '<div class="filters-empty">Тегов пока нет.</div>';
+        }
       }
 
       function setComposerStreaming(streaming) {
@@ -1983,6 +2190,7 @@ function renderChatScript(initialStateJson) {
           toggleNodeSelection(nodeId, cb.checked);
           renderNodeTree();
           loadDocuments();
+          loadAvailableTags();
         });
         dom.documentList.addEventListener("change", function (event) {
           var cb = event.target.closest("[data-action='select-document']");
@@ -1990,10 +2198,37 @@ function renderChatScript(initialStateJson) {
           var id = cb.getAttribute("data-doc-id");
           if (cb.checked) state.selectedDocumentIds.add(id); else state.selectedDocumentIds.delete(id);
         });
+        dom.documentList.addEventListener("click", function (event) {
+          var link = event.target.closest("[data-action='open-doc-preview']");
+          if (link) event.stopPropagation();
+        });
         dom.documentSearch.addEventListener("input", function (event) {
           state.documentSearchTerm = event.target.value;
           renderDocuments();
         });
+        if (dom.tagsFilterInput) {
+          dom.tagsFilterInput.addEventListener("input", function (event) {
+            state.tagsSearchTerm = event.target.value;
+            renderTagsFilter();
+          });
+        }
+        if (dom.tagsFilterSuggest) {
+          dom.tagsFilterSuggest.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-action='add-tag']");
+            if (!btn) return;
+            var tag = btn.getAttribute("data-tag");
+            if (tag) state.selectedTags.add(tag);
+            renderTagsFilter();
+          });
+        }
+        if (dom.tagsFilterSelected) {
+          dom.tagsFilterSelected.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-action='remove-tag']");
+            if (!btn) return;
+            state.selectedTags.delete(btn.getAttribute("data-tag"));
+            renderTagsFilter();
+          });
+        }
         dom.applyFiltersBtn.addEventListener("click", applyFilters);
         dom.resetFiltersBtn.addEventListener("click", resetFilters);
         dom.textarea.addEventListener("input", autoresizeTextarea);
@@ -2077,7 +2312,11 @@ function renderChatScript(initialStateJson) {
         renderEmpty();
         bindEvents();
         bindModal();
-        loadCloudProviderInfo().then(loadSessions).then(loadActiveSession).then(loadNodes);
+        loadCloudProviderInfo()
+          .then(loadSessions)
+          .then(loadActiveSession)
+          .then(loadNodes)
+          .then(loadAvailableTags);
       }
 
       bootstrap();
@@ -2086,9 +2325,9 @@ function renderChatScript(initialStateJson) {
 }
 
 export function renderChatPage({ ICONS, renderLayout }) {
-  const sidebarExtra = `
-    <div class="nav__group-title">История</div>
-    <button type="button" class="btn" id="newChatBtn">${ICONS.plus}<span>Новый чат</span></button>
+  const contextSidebar = `
+    <button type="button" class="btn btn--accent" id="newChatBtn">${ICONS.plus}<span>Новый чат</span></button>
+    <div class="sidebar-context__title">История</div>
     <div class="sidebar__history">
       <div class="sidebar__history-list" id="historyList">
         <div class="sidebar__empty">История загружается…</div>
@@ -2143,6 +2382,17 @@ export function renderChatPage({ ICONS, renderLayout }) {
             <div class="node-tree" id="nodeTree"><div class="filters-empty">Дерево загружается…</div></div>
           </div>
           <div>
+            <div class="filters-section__title">Теги</div>
+            <div class="tags-filter">
+              <div class="tags-filter__selected" id="tagsFilterSelected"></div>
+              <div class="document-search">
+                <span class="document-search__icon">${ICONS.search}</span>
+                <input class="document-search__input" id="tagsFilterInput" type="search" placeholder="Поиск тега" autocomplete="off" />
+              </div>
+              <div class="tags-filter__suggest" id="tagsFilterSuggest"><div class="filters-empty">Начните вводить или выберите из списка.</div></div>
+            </div>
+          </div>
+          <div>
             <div class="filters-section__title">Документы</div>
             <div class="document-search">
               <span class="document-search__icon">${ICONS.search}</span>
@@ -2184,7 +2434,7 @@ export function renderChatPage({ ICONS, renderLayout }) {
     pageDocumentTitle: "Чат — LOCAL-RAG",
     content,
     headerExtra,
-    sidebarExtra,
+    contextSidebar,
     pageScript: `${renderChatScript(renderChatStateJson(initialState))}`,
     bodyClass: "page-chat",
   })

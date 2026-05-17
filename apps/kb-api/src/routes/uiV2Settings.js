@@ -46,6 +46,38 @@ function renderSettingsCss() {
       gap: 12px;
     }
     .settings-row--triple { grid-template-columns: 1fr 1fr 1fr; }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .settings-grid .settings-field { gap: 6px; }
+    .settings-field .settings-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .settings-banner--warn {
+      background: var(--warning-soft, var(--accent-soft));
+      color: var(--warning, var(--accent));
+      border: 1px solid var(--warning, var(--accent));
+    }
+    .settings-anchors { display: flex; flex-direction: column; gap: 2px; }
+    .settings-anchor {
+      display: block;
+      padding: 6px 10px;
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 13px;
+      text-decoration: none;
+      transition: background 0.12s ease, color 0.12s ease;
+    }
+    .settings-anchor:hover { background: var(--surface-2); color: var(--text); }
+    .settings-anchor:target,
+    .settings-anchor:active { color: var(--accent); }
+    .settings-card { scroll-margin-top: 16px; }
     .settings-field {
       display: flex;
       flex-direction: column;
@@ -195,7 +227,16 @@ function renderSettingsScript(initialStateJson) {
         chatModel: document.getElementById("cfgChatModel"),
         embedModel: document.getElementById("cfgEmbedModel"),
         ollamaUrl: document.getElementById("cfgOllamaUrl"),
-        retrievalText: document.getElementById("cfgRetrieval"),
+        retrievalFields: document.getElementById("retrievalFields"),
+        retrievalSave: document.getElementById("retrievalSave"),
+        retrievalReset: document.getElementById("retrievalReset"),
+        retrievalBanner: document.getElementById("retrievalBanner"),
+        promptTemplate: document.getElementById("cfgPromptTemplate"),
+        promptSave: document.getElementById("cfgPromptSave"),
+        promptReset: document.getElementById("cfgPromptReset"),
+        promptBanner: document.getElementById("cfgPromptBanner"),
+        promptWarn: document.getElementById("cfgPromptWarn"),
+        promptStatus: document.getElementById("promptStatus"),
         servicesList: document.getElementById("cfgServices"),
         servicesRefresh: document.getElementById("cfgServicesRefresh"),
         themeSelect: document.getElementById("cfgThemeDefault"),
@@ -271,13 +312,112 @@ function renderSettingsScript(initialStateJson) {
         dom.ollamaUrl.value = state.models.chat.baseUrl || "";
       }
 
+      var RETRIEVAL_FIELDS = [
+        { path: ["semantic", "top_k"], label: "Кандидатов из semantic-поиска", type: "number", min: 1, max: 50, hint: "semantic.top_k" },
+        { path: ["bm25", "top_k"], label: "Кандидатов из BM25 (лексический)", type: "number", min: 1, max: 50, hint: "bm25.top_k" },
+        { path: ["fusion", "top_k_final"], label: "Итоговых фрагментов в ответ", type: "number", min: 1, max: 30, hint: "fusion.top_k_final" },
+        { path: ["reranking", "enabled"], label: "Re-ranking включён", type: "boolean", hint: "reranking.enabled" },
+        { path: ["reranking", "candidate_pool"], label: "Пул кандидатов для re-ranking", type: "number", min: 1, max: 100, hint: "reranking.candidate_pool" },
+      ];
+
+      function getRetrievalValue(obj, pathArr) {
+        var cur = obj;
+        for (var i = 0; i < pathArr.length; i++) {
+          if (!cur || typeof cur !== "object") return undefined;
+          cur = cur[pathArr[i]];
+        }
+        return cur;
+      }
+
+      function setRetrievalValue(obj, pathArr, value) {
+        var cur = obj;
+        for (var i = 0; i < pathArr.length - 1; i++) {
+          if (!cur[pathArr[i]] || typeof cur[pathArr[i]] !== "object") cur[pathArr[i]] = {};
+          cur = cur[pathArr[i]];
+        }
+        cur[pathArr[pathArr.length - 1]] = value;
+      }
+
       function renderRetrieval() {
-        if (!state.retrieval) return;
-        var lines = [];
-        if (state.retrieval.semantic) lines.push("semantic.top_k: " + (state.retrieval.semantic.top_k ?? "—"));
-        if (state.retrieval.lexical) lines.push("lexical.top_k: " + (state.retrieval.lexical.top_k ?? "—"));
-        if (state.retrieval.fusion) lines.push("fusion.top_k_final: " + (state.retrieval.fusion.top_k_final ?? "—"));
-        dom.retrievalText.value = lines.join("\\n") || "Параметры retrieval не заданы в config/retrieval.yaml";
+        if (!dom.retrievalFields) return;
+        var data = state.retrieval || {};
+        var effective = data.effective || {};
+        var defaults = data.defaults || {};
+        var html = RETRIEVAL_FIELDS.map(function (f) {
+          var defVal = getRetrievalValue(defaults, f.path);
+          if (defVal === undefined) return "";
+          var curVal = getRetrievalValue(effective, f.path);
+          if (curVal === undefined) curVal = defVal;
+          var inputId = "rf_" + f.path.join("_");
+          if (f.type === "boolean") {
+            var checked = curVal === true ? "checked" : "";
+            return '<div class="settings-field">' +
+              '<label class="settings-toggle" for="' + inputId + '">' +
+              '<input type="checkbox" id="' + inputId + '" data-retrieval-path="' + f.path.join(".") + '" data-retrieval-type="boolean" ' + checked + ' /> ' +
+              escapeHtml(f.label) +
+              '</label>' +
+              '<span class="settings-hint mono">' + escapeHtml(f.hint) + ' · по умолчанию: ' + (defVal ? "вкл" : "выкл") + '</span>' +
+              '</div>';
+          }
+          return '<div class="settings-field">' +
+            '<label for="' + inputId + '">' + escapeHtml(f.label) + '</label>' +
+            '<input type="number" class="settings-input" id="' + inputId + '" data-retrieval-path="' + f.path.join(".") + '" data-retrieval-type="number" min="' + (f.min || 0) + '" max="' + (f.max || 9999) + '" value="' + escapeHtml(curVal) + '" />' +
+            '<span class="settings-hint mono">' + escapeHtml(f.hint) + ' · по умолчанию: ' + escapeHtml(defVal) + '</span>' +
+            '</div>';
+        }).filter(Boolean).join("");
+        dom.retrievalFields.innerHTML = html;
+      }
+
+      function collectRetrievalPatch() {
+        var patch = {};
+        if (!dom.retrievalFields) return patch;
+        var inputs = dom.retrievalFields.querySelectorAll("[data-retrieval-path]");
+        inputs.forEach(function (el) {
+          var pathStr = el.getAttribute("data-retrieval-path");
+          var type = el.getAttribute("data-retrieval-type");
+          var pathArr = pathStr.split(".");
+          if (type === "boolean") {
+            setRetrievalValue(patch, pathArr, el.checked);
+          } else {
+            var n = Number(el.value);
+            if (Number.isFinite(n)) setRetrievalValue(patch, pathArr, n);
+          }
+        });
+        return patch;
+      }
+
+      function renderSystemPromptCard() {
+        if (!dom.promptTemplate || !state.systemPrompt) return;
+        var sp = state.systemPrompt;
+        if (dom.promptTemplate.value !== sp.template) {
+          dom.promptTemplate.value = sp.template || "";
+        }
+        if (dom.promptStatus) {
+          dom.promptStatus.textContent = sp.isCustom ? "переопределён" : "значение по умолчанию";
+        }
+        validateSystemPromptTextarea();
+      }
+
+      function validateSystemPromptTextarea() {
+        if (!dom.promptTemplate || !dom.promptWarn) return;
+        var text = dom.promptTemplate.value || "";
+        var warnings = [];
+        if (text.indexOf("{sources}") === -1) {
+          warnings.push("⚠ Без {sources} модель не получит контекст документов.");
+        }
+        if (text.indexOf("{question}") === -1) {
+          warnings.push("⚠ Без {question} модель не увидит вопрос пользователя явно.");
+        }
+        if (text.length > 8000) {
+          warnings.push("⚠ Длина шаблона > 8000 символов — может вытеснять источники из контекста модели.");
+        }
+        if (warnings.length) {
+          dom.promptWarn.className = "settings-banner settings-banner--warn";
+          dom.promptWarn.textContent = warnings.join(" ");
+        } else {
+          dom.promptWarn.className = "settings-banner";
+          dom.promptWarn.textContent = "";
+        }
       }
 
       function renderCloud() {
@@ -329,12 +469,68 @@ function renderSettingsScript(initialStateJson) {
         return api("GET", "/api/v2/settings").then(function (data) {
           state.settings = data.settings;
           state.models = data.models;
-          state.retrieval = data.retrieval;
+          state.retrieval = (data.settings && data.settings.retrieval) || data.retrieval;
+          state.systemPrompt = data.settings && data.settings.systemPrompt;
           renderModels();
           renderRetrieval();
           renderCloud();
           renderTheme();
+          renderSystemPromptCard();
         }).catch(function (err) { showToast("Не удалось загрузить настройки: " + err.message, "error"); });
+      }
+
+      function saveRetrieval() {
+        var patch = collectRetrievalPatch();
+        setBanner(dom.retrievalBanner, "Сохранение…", "success");
+        api("PATCH", "/api/v2/settings/retrieval", patch).then(function (data) {
+          state.retrieval = data.retrieval;
+          renderRetrieval();
+          setBanner(dom.retrievalBanner, "Параметры retrieval сохранены.", "success");
+        }).catch(function (err) {
+          setBanner(dom.retrievalBanner, "Не удалось сохранить: " + err.message, "error");
+        });
+      }
+
+      function resetRetrieval() {
+        api("DELETE", "/api/v2/settings/retrieval").then(function (data) {
+          state.retrieval = data.retrieval;
+          renderRetrieval();
+          setBanner(dom.retrievalBanner, "Возвращены значения из config/retrieval.yaml.", "success");
+        }).catch(function (err) {
+          setBanner(dom.retrievalBanner, "Не удалось сбросить: " + err.message, "error");
+        });
+      }
+
+      function saveSystemPrompt() {
+        var template = dom.promptTemplate ? dom.promptTemplate.value : "";
+        setBanner(dom.promptBanner, "Сохранение…", "success");
+        api("PATCH", "/api/v2/settings/system-prompt", { template: template }).then(function (data) {
+          state.systemPrompt = data.systemPrompt;
+          renderSystemPromptCard();
+          setBanner(dom.promptBanner, "Системный промпт сохранён.", "success");
+        }).catch(function (err) {
+          setBanner(dom.promptBanner, "Не удалось сохранить: " + err.message, "error");
+        });
+      }
+
+      function confirmResetSystemPrompt() {
+        if (state.systemPrompt && !state.systemPrompt.isCustom) {
+          api("DELETE", "/api/v2/settings/system-prompt").then(function (data) {
+            state.systemPrompt = data.systemPrompt;
+            renderSystemPromptCard();
+            setBanner(dom.promptBanner, "Промпт уже соответствует значению по умолчанию.", "success");
+          });
+          return;
+        }
+        var ok = window.confirm("Все ваши изменения будут потеряны. Восстановить рабочий промпт по умолчанию?");
+        if (!ok) return;
+        api("DELETE", "/api/v2/settings/system-prompt").then(function (data) {
+          state.systemPrompt = data.systemPrompt;
+          renderSystemPromptCard();
+          setBanner(dom.promptBanner, "Промпт сброшен к значению по умолчанию.", "success");
+        }).catch(function (err) {
+          setBanner(dom.promptBanner, "Не удалось сбросить: " + err.message, "error");
+        });
       }
 
       function loadServices() {
@@ -581,6 +777,11 @@ function renderSettingsScript(initialStateJson) {
           var res = event.target.closest("[data-action='restore-backup']");
           if (res) { restoreBackup(res.getAttribute("data-name")); return; }
         });
+        if (dom.retrievalSave) dom.retrievalSave.addEventListener("click", saveRetrieval);
+        if (dom.retrievalReset) dom.retrievalReset.addEventListener("click", resetRetrieval);
+        if (dom.promptSave) dom.promptSave.addEventListener("click", saveSystemPrompt);
+        if (dom.promptReset) dom.promptReset.addEventListener("click", confirmResetSystemPrompt);
+        if (dom.promptTemplate) dom.promptTemplate.addEventListener("input", validateSystemPromptTextarea);
       }
 
       function bootstrap() {
@@ -596,9 +797,27 @@ function renderSettingsScript(initialStateJson) {
 }
 
 export function renderSettingsPage({ ICONS, renderLayout }) {
+  const contextSidebar = `
+    <div class="sidebar-context__title">Разделы настроек</div>
+    <nav class="settings-anchors" aria-label="Якоря настроек">
+      <a class="settings-anchor" href="#section-models">Модели</a>
+      <a class="settings-anchor" href="#section-cloud">Облачный ИИ</a>
+      <a class="settings-anchor" href="#section-services">Сервисы</a>
+      <a class="settings-anchor" href="#section-retrieval">Поиск</a>
+      <a class="settings-anchor" href="#section-theme">Внешний вид</a>
+      <a class="settings-anchor" href="#section-prompt">Системный промпт</a>
+      <a class="settings-anchor" href="#section-maintenance">Обслуживание</a>
+      <a class="settings-anchor" href="#section-backups">Бэкапы</a>
+    </nav>
+    <div class="sidebar-context__footer">
+      <span>LOCAL-RAG</span>
+      <a href="https://github.com/sergeyxmao/local-rag-platform" target="_blank" rel="noopener">GitHub →</a>
+    </div>
+  `;
+
   const content = `
     <main class="settings-page">
-      <div class="settings-card">
+      <div class="settings-card" id="section-models">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.settings}<span>Модели</span></div>
           <span class="settings-hint">Источник: <span class="mono">config/models.yaml</span></span>
@@ -622,7 +841,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card" id="section-cloud">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.upload}<span>Облачный ИИ</span></div>
           <span class="settings-hint">OpenAI-совместимый API · подробности — <a href="/docs/CLOUD_PROVIDER.md" style="color:var(--accent)" target="_blank">CLOUD_PROVIDER.md</a></span>
@@ -659,7 +878,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card" id="section-services">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.alertCircle}<span>Сервисы</span></div>
           <button type="button" class="btn btn--ghost" id="cfgServicesRefresh">${ICONS.refresh}<span>Обновить</span></button>
@@ -671,20 +890,23 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card" id="section-retrieval">
         <div class="settings-card__head">
-          <div class="settings-card__title">${ICONS.search}<span>Поиск</span></div>
-          <span class="settings-hint">Источник: <span class="mono">config/retrieval.yaml</span></span>
+          <div class="settings-card__title">${ICONS.search}<span>Поиск (retrieval)</span></div>
+          <span class="settings-hint">База: <span class="mono">config/retrieval.yaml</span></span>
         </div>
         <div class="settings-card__body">
-          <div class="settings-field">
-            <label for="cfgRetrieval">Параметры retrieval</label>
-            <textarea class="settings-input settings-input--mono" id="cfgRetrieval" rows="3" readonly></textarea>
+          <div class="settings-grid" id="retrievalFields"></div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="retrievalSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--ghost" id="retrievalReset">Сбросить к значениям из файла</button>
           </div>
+          <div class="settings-banner" id="retrievalBanner"></div>
+          <p class="settings-hint">Значения из YAML — базовые. Изменения в UI сохраняются в БД и переопределяют файл. Применяются к следующему запросу.</p>
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card" id="section-theme">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.moon}<span>Внешний вид</span></div>
         </div>
@@ -707,7 +929,32 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card" id="section-prompt">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.fileText}<span>Системный промпт</span></div>
+          <span class="settings-hint" id="promptStatus"></span>
+        </div>
+        <div class="settings-card__body">
+          <div class="settings-field">
+            <label for="cfgPromptTemplate">Шаблон промпта</label>
+            <textarea class="settings-input settings-input--mono" id="cfgPromptTemplate" rows="14"></textarea>
+            <div class="settings-banner" id="cfgPromptWarn"></div>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="cfgPromptSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--ghost" id="cfgPromptReset">Восстановить по умолчанию</button>
+          </div>
+          <div class="settings-banner" id="cfgPromptBanner"></div>
+          <p class="settings-hint">Доступные плейсхолдеры:</p>
+          <ul class="settings-hint" style="margin:0;padding-left:18px;">
+            <li><span class="mono">{sources}</span> — найденные фрагменты документов</li>
+            <li><span class="mono">{question}</span> — текущий вопрос пользователя</li>
+            <li><span class="mono">{history}</span> — последние сообщения чата (для контекста)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-maintenance">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.alertCircle}<span>Обслуживание</span></div>
         </div>
@@ -726,7 +973,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
         </div>
       </div>
 
-      <div class="settings-card">
+      <div class="settings-card" id="section-backups">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.database}<span>Бэкапы</span></div>
           <div style="display:flex;gap:6px;align-items:center;">
@@ -764,6 +1011,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
     pageTitle: "Настройки",
     pageDocumentTitle: "Настройки — LOCAL-RAG",
     content,
+    contextSidebar,
     pageScript: renderSettingsScript(initialStateJson),
     bodyClass: "page-settings",
   }).replace("</style>", `${renderSettingsCss()}</style>`);

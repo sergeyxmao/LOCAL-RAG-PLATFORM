@@ -173,6 +173,69 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get("/api/v2/settings/retrieval", async (request, reply) => {
+    try {
+      const retrieval = await app.appSettingsService.getRetrievalPublic();
+      return { ok: true, retrieval };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить параметры retrieval");
+      return respondError(reply, 500, error.message || "Не удалось получить параметры retrieval");
+    }
+  });
+
+  app.patch("/api/v2/settings/retrieval", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const retrieval = await app.appSettingsService.updateRetrieval(body);
+      return { ok: true, retrieval };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сохранить параметры retrieval");
+      return respondError(reply, 500, error.message || "Не удалось сохранить параметры retrieval");
+    }
+  });
+
+  app.delete("/api/v2/settings/retrieval", async (request, reply) => {
+    try {
+      const retrieval = await app.appSettingsService.resetRetrieval();
+      return { ok: true, retrieval };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сбросить параметры retrieval");
+      return respondError(reply, 500, error.message || "Не удалось сбросить параметры retrieval");
+    }
+  });
+
+  app.get("/api/v2/settings/system-prompt", async (request, reply) => {
+    try {
+      const systemPrompt = await app.appSettingsService.getSystemPrompt();
+      return { ok: true, systemPrompt };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить системный промпт");
+      return respondError(reply, 500, error.message || "Не удалось получить системный промпт");
+    }
+  });
+
+  app.patch("/api/v2/settings/system-prompt", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const template = typeof body.template === "string" ? body.template : "";
+      const systemPrompt = await app.appSettingsService.updateSystemPrompt(template);
+      return { ok: true, systemPrompt };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сохранить системный промпт");
+      return respondError(reply, 500, error.message || "Не удалось сохранить системный промпт");
+    }
+  });
+
+  app.delete("/api/v2/settings/system-prompt", async (request, reply) => {
+    try {
+      const systemPrompt = await app.appSettingsService.resetSystemPrompt();
+      return { ok: true, systemPrompt };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сбросить системный промпт");
+      return respondError(reply, 500, error.message || "Не удалось сбросить системный промпт");
+    }
+  });
+
   app.get("/api/v2/settings/services", async (request, reply) => {
     const ollamaBase = app.config.models.chat.base_url;
     const [postgres, qdrant, ollama] = await Promise.all([

@@ -1,3 +1,5 @@
+import { DEFAULT_SYSTEM_PROMPT } from "./systemPromptService.js";
+
 const DEFAULT_CLOUD_PROVIDER = {
   name: "",
   baseUrl: "",
@@ -47,14 +49,135 @@ function sanitizeTheme(raw) {
   };
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function deepMerge(target, source) {
+  if (!isPlainObject(source)) return target;
+  const out = isPlainObject(target) ? { ...target } : {};
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    if (isPlainObject(sv)) {
+      out[key] = deepMerge(out[key], sv);
+    } else if (sv !== undefined) {
+      out[key] = sv;
+    }
+  }
+  return out;
+}
+
+const RETRIEVAL_BOOL_KEYS = new Set(["reranking.enabled"]);
+const RETRIEVAL_NUM_KEYS = new Set([
+  "semantic.top_k",
+  "bm25.top_k",
+  "fusion.top_k_final",
+  "reranking.candidate_pool",
+]);
+
+function sanitizeRetrievalOverride(raw) {
+  if (!isPlainObject(raw)) return {};
+  const allowedRoots = ["semantic", "bm25", "fusion", "reranking"];
+  const result = {};
+  for (const root of allowedRoots) {
+    if (!isPlainObject(raw[root])) continue;
+    const section = {};
+    for (const [k, v] of Object.entries(raw[root])) {
+      const flat = `${root}.${k}`;
+      if (RETRIEVAL_NUM_KEYS.has(flat)) {
+        const n = Number(v);
+        if (Number.isFinite(n)) section[k] = Math.max(0, Math.trunc(n));
+      } else if (RETRIEVAL_BOOL_KEYS.has(flat)) {
+        section[k] = v === true || v === "true" || v === 1;
+      } else if (typeof v === "string") {
+        section[k] = v;
+      } else if (Number.isFinite(v) || typeof v === "boolean") {
+        section[k] = v;
+      }
+    }
+    if (Object.keys(section).length > 0) result[root] = section;
+  }
+  return result;
+}
+
+function sanitizeSystemPrompt(raw) {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === "string") return raw;
+  if (isPlainObject(raw) && typeof raw.template === "string") return raw.template;
+  return null;
+}
+
 export class AppSettingsService {
-  constructor({ postgresProvider }) {
+  constructor({ postgresProvider, retrievalDefaults = {} } = {}) {
     this.postgresProvider = postgresProvider;
     this.cache = new Map();
+    this.retrievalDefaults = retrievalDefaults || {};
+    this.retrievalEffective = retrievalDefaults || {};
   }
 
   get pool() {
     return this.postgresProvider.pool;
+  }
+
+  async refreshRetrievalCache() {
+    const override = (await this.getRawValue("retrieval")) || {};
+    this.retrievalEffective = deepMerge(this.retrievalDefaults, sanitizeRetrievalOverride(override));
+    return this.retrievalEffective;
+  }
+
+  getRetrievalConfigSync() {
+    return this.retrievalEffective || this.retrievalDefaults || {};
+  }
+
+  async getRetrievalPublic() {
+    const override = (await this.getRawValue("retrieval")) || {};
+    const cleanOverride = sanitizeRetrievalOverride(override);
+    const effective = deepMerge(this.retrievalDefaults, cleanOverride);
+    return {
+      defaults: this.retrievalDefaults,
+      override: cleanOverride,
+      effective,
+    };
+  }
+
+  async updateRetrieval(patch) {
+    const current = (await this.getRawValue("retrieval")) || {};
+    const merged = sanitizeRetrievalOverride(deepMerge(current, patch));
+    await this.setRawValue("retrieval", merged);
+    await this.refreshRetrievalCache();
+    return this.getRetrievalPublic();
+  }
+
+  async resetRetrieval() {
+    await this.pool.query(`DELETE FROM app_settings WHERE key = $1`, ["retrieval"]);
+    this.cache.delete("retrieval");
+    await this.refreshRetrievalCache();
+    return this.getRetrievalPublic();
+  }
+
+  async getSystemPrompt() {
+    const raw = await this.getRawValue("systemPrompt");
+    const template = sanitizeSystemPrompt(raw);
+    return {
+      template: template || DEFAULT_SYSTEM_PROMPT,
+      isCustom: template !== null && template !== DEFAULT_SYSTEM_PROMPT,
+      default: DEFAULT_SYSTEM_PROMPT,
+    };
+  }
+
+  async updateSystemPrompt(template) {
+    if (typeof template !== "string") {
+      throw new Error("Шаблон промпта должен быть строкой");
+    }
+    const value = template.length > 0 ? template : null;
+    await this.setRawValue("systemPrompt", value === null ? null : { template: value });
+    return this.getSystemPrompt();
+  }
+
+  async resetSystemPrompt() {
+    await this.pool.query(`DELETE FROM app_settings WHERE key = $1`, ["systemPrompt"]);
+    this.cache.delete("systemPrompt");
+    return this.getSystemPrompt();
   }
 
   async getRawValue(key) {
@@ -137,7 +260,9 @@ export class AppSettingsService {
   async getAllPublic() {
     const cloudProvider = await this.getCloudProviderPublic();
     const theme = await this.getTheme();
-    return { cloudProvider, theme };
+    const retrieval = await this.getRetrievalPublic();
+    const systemPrompt = await this.getSystemPrompt();
+    return { cloudProvider, theme, retrieval, systemPrompt };
   }
 }
 
