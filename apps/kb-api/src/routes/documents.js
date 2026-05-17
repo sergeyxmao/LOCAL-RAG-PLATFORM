@@ -779,7 +779,16 @@ export async function documentRoutes(app) {
     }
 
     const pointIds = await app.postgresProvider.getDocumentPointIds(document.id);
-    await app.qdrantProvider.deletePoints(pointIds);
+    let qdrantError = null;
+    try {
+      await app.qdrantProvider.deletePoints(pointIds);
+    } catch (error) {
+      qdrantError = error?.message || "Qdrant недоступен";
+      app.log.warn(
+        { err: error, documentId: document.id },
+        "Qdrant недоступен при удалении документа; продолжаю удаление в Postgres"
+      );
+    }
     const removedDocuments = await app.postgresProvider.deleteDocumentsByIds([document.id]);
     let removedStoredFile = false;
     const shouldRemoveStoredFile = String(request.query?.removeStoredFile ?? "") === "true";
@@ -793,12 +802,18 @@ export async function documentRoutes(app) {
       }
     }
 
+    const message = qdrantError
+      ? "Документ удалён из базы. Qdrant был недоступен — точки удалятся при следующем «Пересобрать Qdrant»."
+      : "Документ удалён.";
+
     return {
       ok: true,
       document: mapDocumentRow(document),
       removedDocuments,
-      removedVectors: pointIds.length,
+      removedVectors: qdrantError ? 0 : pointIds.length,
       removedStoredFile,
+      qdrantError,
+      message,
     };
   });
 

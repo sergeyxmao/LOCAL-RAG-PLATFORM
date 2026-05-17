@@ -89,6 +89,31 @@ Qdrant payload документа теперь можно пересчитать
 
 `GET /admin/qdrant-status` показывает фактически найденные `payloadIndexedFields`, чтобы состояние можно было проверить без прямого доступа к Qdrant.
 
+## Документ и page_count (API)
+
+Таблица `documents` (см. `infra/postgres/init/001_init.sql`) не
+хранит поле `page_count` физически — оно вычисляется в API при
+выдаче списка документов:
+
+```sql
+COUNT(*) FROM document_assets WHERE document_id = d.id AS page_count
+```
+
+Из этого следуют важные правила:
+
+- `page_count = 0` означает либо однопстраничный документ типа
+  `.txt`/`.md`/`.csv`, либо PDF, **загруженный в лёгком режиме**
+  (`createVisualAssets=false`). Это **by design**, не баг.
+- Физическое количество страниц PDF при этом не теряется — оно
+  доступно через парсинг исходного файла из `data/raw`, но
+  отдельно в БД не сохраняется.
+- Колонка «Страниц» в UI «База знаний → Документы» берётся
+  напрямую из `page_count` API и поэтому показывает `0` для
+  документов, загруженных лёгким режимом.
+- Чтобы «достроить» страницы постфактум, см.
+  `POST /documents/:id/rebuild-visual-assets` и `reindex` в
+  `docs/INGESTION_PIPELINE.md`.
+
 ## PDF page assets
 
 `document_assets` хранит page-level записи PDF. Для страниц в `metadata_json` сохраняются:
@@ -231,3 +256,10 @@ Phase — единый источник правды для UI. `status` ост�
   индексации» в Настройки → Сервисы. `setMax(n)` применяется мгновенно.
 - При старте `kb-api` значение читается и передаётся в конструктор
   `IngestionService`.
+
+## История изменений
+
+- 2026-05-17: hotfix #12 — DELETE-устойчивость к недоступности
+  Qdrant, корректная двух-метричная диагностика sync,
+  документация лёгкого режима (`createVisualAssets=false`) и
+  правил вычисления `page_count` в API.
