@@ -92,6 +92,7 @@ export class IngestionService {
     visualAssetService,
     ocrService = null,
     appSettingsService = null,
+    indexingSemaphore = null,
   }) {
     this.config = config;
     this.postgresProvider = postgresProvider;
@@ -101,6 +102,29 @@ export class IngestionService {
     this.visualAssetService = visualAssetService;
     this.ocrService = ocrService;
     this.appSettingsService = appSettingsService;
+    this.indexingSemaphore = indexingSemaphore;
+  }
+
+  async withIndexingSlot(jobId, fn) {
+    if (!this.indexingSemaphore) return fn();
+    if (jobId) {
+      // Сразу пометить как "в очереди на индексацию" — пользователь видит,
+      // что файл загружен и ждёт своей очереди (не "уже в работе").
+      await this.postgresProvider
+        .updateJobPhase(jobId, "awaiting_processing")
+        .catch(() => {});
+    }
+    const release = await this.indexingSemaphore.acquire();
+    if (jobId) {
+      await this.postgresProvider
+        .updateJobPhase(jobId, "processing")
+        .catch(() => {});
+    }
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
   }
 
   async maybeRunOcr(extracted, { existingJobId = null } = {}) {
@@ -272,7 +296,11 @@ export class IngestionService {
     return processedItems;
   }
 
-  async ingestTextDocument({
+  async ingestTextDocument(params) {
+    return this.withIndexingSlot(null, () => this._ingestTextDocumentImpl(params));
+  }
+
+  async _ingestTextDocumentImpl({
     title,
     text,
     sourceLabel = "manual",
@@ -362,7 +390,13 @@ export class IngestionService {
     }
   }
 
-  async ingestFileFromRaw({
+  async ingestFileFromRaw(params) {
+    return this.withIndexingSlot(params?.existingJobId ?? null, () =>
+      this._ingestFileFromRawImpl(params)
+    );
+  }
+
+  async _ingestFileFromRawImpl({
     relativePath,
     title,
     categories = [],

@@ -16,6 +16,7 @@ import { ChatSessionService } from "./services/chatSessionService.js";
 import { AppSettingsService } from "./services/appSettingsService.js";
 import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
+import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
 import { backupApiRoutes } from "./routes/backupApi.js";
@@ -120,6 +121,13 @@ const appSettingsService = new AppSettingsService({
 });
 await appSettingsService.refreshRetrievalCache();
 
+const indexingSettings = await appSettingsService.getIndexingSettings();
+const indexingSemaphore = new Semaphore(indexingSettings.concurrency);
+app.log.info(
+  { concurrency: indexingSettings.concurrency },
+  "Indexing semaphore initialised"
+);
+
 const ingestionService = new IngestionService({
   config: appConfig,
   postgresProvider,
@@ -129,6 +137,7 @@ const ingestionService = new IngestionService({
   visualAssetService,
   ocrService,
   appSettingsService,
+  indexingSemaphore,
 });
 
 const diagnosticsService = new DiagnosticsService({
@@ -182,6 +191,7 @@ app.decorate("chatSessionService", chatSessionService);
 app.decorate("appSettingsService", appSettingsService);
 app.decorate("diagnosticsService", diagnosticsService);
 app.decorate("ocrService", ocrService);
+app.decorate("indexingSemaphore", indexingSemaphore);
 app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("backupService", backupService);
 

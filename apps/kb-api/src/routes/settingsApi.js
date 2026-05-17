@@ -322,6 +322,37 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get("/api/v2/settings/indexing", async (request, reply) => {
+    try {
+      const indexing = await app.appSettingsService.getIndexingSettings();
+      const semaphore = app.indexingSemaphore ? app.indexingSemaphore.size() : null;
+      return { ok: true, indexing, semaphore };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки индексации");
+      return respondError(reply, 500, error.message || "Не удалось получить настройки индексации");
+    }
+  });
+
+  app.patch("/api/v2/settings/indexing", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const indexing = await app.appSettingsService.updateIndexingSettings({
+        concurrency: body.concurrency,
+      });
+      if (app.indexingSemaphore) {
+        app.indexingSemaphore.setMax(indexing.concurrency);
+      }
+      return { ok: true, indexing };
+    } catch (error) {
+      const code = error.statusCode || 500;
+      if (code !== 500) {
+        return respondError(reply, code, error.message);
+      }
+      request.log.error({ err: error }, "Не удалось сохранить настройки индексации");
+      return respondError(reply, 500, error.message || "Не удалось сохранить настройки индексации");
+    }
+  });
+
   app.patch("/api/v2/settings/ocr", async (request, reply) => {
     try {
       const body = request.body ?? {};

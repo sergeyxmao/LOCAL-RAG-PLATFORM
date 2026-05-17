@@ -480,6 +480,28 @@ export class AppSettingsService {
     };
   }
 
+  async getIndexingSettings() {
+    const raw = (await this.getRawValue("indexing")) || {};
+    const n = Number(raw.concurrency);
+    const concurrency = Number.isFinite(n) ? Math.max(1, Math.min(4, Math.trunc(n))) : 1;
+    return { concurrency };
+  }
+
+  async updateIndexingSettings(patch) {
+    const current = await this.getIndexingSettings();
+    let concurrency = current.concurrency;
+    if (patch && patch.concurrency !== undefined) {
+      const n = Number(patch.concurrency);
+      if (!Number.isFinite(n) || n < 1 || n > 4) {
+        throw Object.assign(new Error("concurrency должен быть от 1 до 4"), { statusCode: 400 });
+      }
+      concurrency = Math.trunc(n);
+    }
+    const next = { concurrency };
+    await this.setRawValue("indexing", next);
+    return next;
+  }
+
   async updateOcrSettings(patch) {
     const current = await this.getOcrSettings();
     const next = {
