@@ -16,6 +16,7 @@ import { ChatSessionService } from "./services/chatSessionService.js";
 import { AppSettingsService } from "./services/appSettingsService.js";
 import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
+import { GraphService } from "./services/graphService.js";
 import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
@@ -34,6 +35,7 @@ import { uiStateRoutes } from "./routes/uiState.js";
 import { uiRoutes } from "./routes/ui.js";
 import { uiV2Routes } from "./routes/uiV2.js";
 import { chatSessionRoutes } from "./routes/chatSessions.js";
+import { graphRoutes } from "./routes/graph.js";
 import { parseTagList } from "./utils/tags.js";
 
 async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger }) {
@@ -177,6 +179,11 @@ const chatSessionService = new ChatSessionService({
   modelsConfig: appConfig.models,
 });
 
+const graphService = new GraphService({
+  postgresProvider,
+  logger: app.log,
+});
+
 app.decorate("config", appConfig);
 app.decorate("postgresProvider", postgresProvider);
 app.decorate("qdrantProvider", qdrantProvider);
@@ -194,6 +201,7 @@ app.decorate("ocrService", ocrService);
 app.decorate("indexingSemaphore", indexingSemaphore);
 app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("backupService", backupService);
+app.decorate("graphService", graphService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -209,6 +217,7 @@ await app.register(settingsApiRoutes);
 await app.register(chatSessionRoutes);
 await app.register(backupApiRoutes);
 await app.register(diagnosticsRoutes);
+await app.register(graphRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 

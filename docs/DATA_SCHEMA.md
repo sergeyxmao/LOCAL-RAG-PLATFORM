@@ -14,6 +14,8 @@
 - ui_state
 - query_logs
 - system_settings
+- graph_nodes
+- graph_edges
 
 ## Разделы базы знаний
 
@@ -257,8 +259,75 @@ Phase — единый источник правды для UI. `status` ост�
 - При старте `kb-api` значение читается и передаётся в конструктор
   `IngestionService`.
 
+## Таблицы графа знаний АСУ ТП (#8.1.a)
+
+Граф знаний — параллельный RAG-слой со структурированными данными
+об оборудовании. Полная картина — `docs/GRAPH_SCHEMA.md`.
+Идемпотентно создаётся в `PostgresProvider.ensureGraphSchema()`
+при каждом старте `kb-api`.
+
+`graph_nodes`:
+
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`;
+- `type TEXT NOT NULL` — тип узла (`system`/`cabinet`/`card`/
+  `signal`/...). Свободная строка, не enum;
+- `name TEXT NOT NULL` — человекочитаемое имя;
+- `description TEXT` — опциональное описание;
+- `attributes JSONB NOT NULL DEFAULT '{}'::jsonb` — type-specific
+  поля. Для `card`: `{card_type, address, station, fbc, ibc,
+  card_slot}`. Для `signal`: `{signal_kind, channel, loop_tag,
+  device_tag}`. Для `cabinet`: `{cabinet_id, vendor}`;
+- `source_document_id UUID REFERENCES documents(id) ON DELETE SET NULL`
+  — документ-источник;
+- `source_page_number INTEGER`, `source_xlsx_sheet TEXT`,
+  `source_xlsx_row INTEGER` — для трассировки до места в исходных
+  данных;
+- `confidence REAL NOT NULL DEFAULT 1.0 CHECK (confidence BETWEEN 0 AND 1)`
+  — уверенность в данных. `1.0` — точные (XLSX/ручной ввод),
+  `0.5..0.9` — LLM-извлечение, `0.0` — отвергнуто пользователем;
+- `author TEXT NOT NULL DEFAULT 'user:manual'` — кто создал:
+  `import:xlsx:<profile_id>`, `agent:llm-extraction`,
+  `user:manual`, `system:reconciler`;
+- `is_archived BOOLEAN NOT NULL DEFAULT FALSE` — soft-delete:
+  `DELETE /api/v2/graph/nodes/:id` только архивирует, физическое
+  удаление — через psql вручную;
+- `created_at`, `updated_at TIMESTAMPTZ` — `updated_at`
+  обновляется триггером `trg_graph_nodes_set_updated_at`.
+
+Индексы: `idx_graph_nodes_type` (partial по `is_archived=FALSE`),
+`idx_graph_nodes_source_document` (partial по `IS NOT NULL`),
+`idx_graph_nodes_author`, `idx_graph_nodes_name`,
+`idx_graph_nodes_attributes` (GIN по JSONB).
+
+`graph_edges`:
+
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`;
+- `source_node_id UUID NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE`;
+- `target_node_id UUID NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE`;
+- `relation TEXT NOT NULL` — тип связи (`part_of`/`installed_in`/
+  `connected_to`/`addressed_at`/`described_in`/`supplies`/
+  `regulates`). Свободная строка;
+- `attributes JSONB NOT NULL DEFAULT '{}'::jsonb` — свойства самой
+  связи (например, `{channel_number: 4}` для `connected_to`);
+- `confidence REAL NOT NULL DEFAULT 1.0 CHECK (...)`;
+- `author TEXT NOT NULL DEFAULT 'user:manual'`;
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+- `UNIQUE (source_node_id, target_node_id, relation)` — защита от
+  дублей. `POST /api/v2/graph/edges` использует `ON CONFLICT DO
+  NOTHING`, повторное создание того же триплета идемпотентно.
+
+Индексы: `idx_graph_edges_source`, `idx_graph_edges_target`,
+`idx_graph_edges_relation`.
+
+Цепочка REST API — в `docs/GRAPH_SCHEMA.md`. Точка входа
+сервиса — `apps/kb-api/src/services/graphService.js`, роуты —
+`apps/kb-api/src/routes/graph.js`.
+
 ## История изменений
 
+- 2026-05-17: #8.1.a — фундамент графа знаний АСУ ТП. Новые
+  таблицы `graph_nodes`, `graph_edges` (идемпотентный DDL в
+  `ensureGraphSchema`). Подробности — `docs/GRAPH_SCHEMA.md`.
 - 2026-05-17: hotfix #12 — DELETE-устойчивость к недоступности
   Qdrant, корректная двух-метричная диагностика sync,
   документация лёгкого режима (`createVisualAssets=false`) и
