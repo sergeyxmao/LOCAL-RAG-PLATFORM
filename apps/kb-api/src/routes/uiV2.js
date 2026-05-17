@@ -187,26 +187,6 @@ function renderLayoutCss() {
       gap: 12px;
       overflow: hidden;
     }
-    .sidebar-context__head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      flex: 0 0 auto;
-    }
-    .sidebar-context__collapse {
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--text-muted);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-    }
-    .sidebar-context__collapse:hover { background: var(--surface-2); color: var(--text); }
     .sidebar-context__resizer {
       position: absolute;
       top: 0;
@@ -223,12 +203,9 @@ function renderLayoutCss() {
       background: var(--accent-soft);
     }
     .app-shell.is-context-collapsed .sidebar-context__resizer { display: none; }
-    .sidebar-icon__expand {
-      display: none;
-    }
-    .app-shell.is-context-collapsed .sidebar-icon__expand {
-      display: inline-flex;
-    }
+    .sidebar-icon__toggle .icon-chevron-right { display: none; }
+    .app-shell.is-context-collapsed .sidebar-icon__toggle .icon-chevron-left { display: none; }
+    .app-shell.is-context-collapsed .sidebar-icon__toggle .icon-chevron-right { display: inline-flex; }
     .sidebar-context__title {
       font-size: 11px;
       text-transform: uppercase;
@@ -413,11 +390,46 @@ function renderLayoutCss() {
       top: 0;
       z-index: 5;
     }
+    .page-header {
+      flex-wrap: wrap;
+      row-gap: 8px;
+    }
     .page-header__title {
       font-size: 16px;
       font-weight: 600;
       color: var(--text-strong);
       margin: 0;
+      flex: 0 0 auto;
+    }
+    .page-header__tabs {
+      display: flex;
+      gap: 4px;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-x: auto;
+      align-items: stretch;
+      align-self: stretch;
+      margin-bottom: -14px;
+      padding-bottom: 0;
+    }
+    .page-header__tabs .header-tab {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 0 14px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .page-header__tabs .header-tab:hover { color: var(--text); }
+    .page-header__tabs .header-tab.is-active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
     }
     .page-header__actions {
       display: flex;
@@ -552,8 +564,7 @@ function renderCommonScript() {
       var STORAGE_COLLAPSED = "localrag.sidebar.collapsed";
       var shell = document.querySelector(".app-shell");
       var resizer = document.getElementById("contextSidebarResizer");
-      var collapseBtn = document.getElementById("contextSidebarCollapse");
-      var expandBtn = document.getElementById("contextSidebarExpand");
+      var toggleBtn = document.getElementById("contextSidebarToggle");
 
       function readStoredWidth() {
         try {
@@ -614,16 +625,11 @@ function renderCommonScript() {
         });
       }
 
-      if (collapseBtn) {
-        collapseBtn.addEventListener("click", function () {
-          applyCollapsed(true);
-          writeStoredCollapsed(true);
-        });
-      }
-      if (expandBtn) {
-        expandBtn.addEventListener("click", function () {
-          applyCollapsed(false);
-          writeStoredCollapsed(false);
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", function () {
+          var nowCollapsed = !shell.classList.contains("is-context-collapsed");
+          applyCollapsed(nowCollapsed);
+          writeStoredCollapsed(nowCollapsed);
         });
       }
     })();
@@ -641,7 +647,10 @@ function renderIconSidebar({ activeNav }) {
     <aside class="sidebar-icon" aria-label="Главная навигация">
       <a class="brand-mark" href="/ui/v2/chat" title="LOCAL-RAG" aria-label="LOCAL-RAG">LR</a>
       <nav class="nav-icons" aria-label="Разделы">${linksHtml}</nav>
-      <button type="button" class="nav-icons__link sidebar-icon__expand" id="contextSidebarExpand" title="Развернуть боковую панель" aria-label="Развернуть боковую панель">${ICONS.panelLeft}</button>
+      <button type="button" class="nav-icons__link sidebar-icon__toggle" id="contextSidebarToggle" title="Свернуть/развернуть боковую панель" aria-label="Свернуть/развернуть боковую панель">
+        <span class="icon-chevron-left">${ICONS.chevronLeft}</span>
+        <span class="icon-chevron-right">${ICONS.chevronRight}</span>
+      </button>
       <div class="sidebar-icon__footer">
         <button type="button" class="theme-toggle nav-icons__link" data-action="toggle-theme" title="Переключить тему" aria-label="Переключить тему">
           <span class="icon-sun">${ICONS.sun}</span>
@@ -655,18 +664,16 @@ function renderIconSidebar({ activeNav }) {
 
 function renderContextSidebar({ activeNav, contextSidebar = "" }) {
   return `<aside class="sidebar-context" aria-label="Контекстная панель">
-    <div class="sidebar-context__head">
-      <button type="button" class="sidebar-context__collapse" id="contextSidebarCollapse" title="Свернуть боковую панель" aria-label="Свернуть боковую панель">${ICONS.chevronLeft}</button>
-    </div>
     <div class="sidebar-context__inner">${contextSidebar}</div>
     <div class="sidebar-context__resizer" id="contextSidebarResizer" role="separator" aria-orientation="vertical" aria-label="Изменить ширину боковой панели"></div>
   </aside>`;
 }
 
-function renderHeader({ pageTitle, headerExtra = "" }) {
+function renderHeader({ pageTitle, headerExtra = "", headerTabs = "" }) {
   return `
     <header class="page-header">
       <h1 class="page-header__title">${pageTitle}</h1>
+      ${headerTabs ? `<div class="page-header__tabs">${headerTabs}</div>` : ""}
       <div class="page-header__actions">
         ${headerExtra}
       </div>
@@ -688,6 +695,7 @@ export function renderLayout({
   pageDocumentTitle,
   content,
   headerExtra = "",
+  headerTabs = "",
   sidebarExtra = "",
   contextSidebar = "",
   bodyClass = "",
@@ -714,7 +722,7 @@ export function renderLayout({
     ${renderIconSidebar({ activeNav })}
     ${renderContextSidebar({ activeNav, contextSidebar: finalContextSidebar })}
     <div class="main">
-      ${renderHeader({ pageTitle, headerExtra })}
+      ${renderHeader({ pageTitle, headerExtra, headerTabs })}
       ${content}
     </div>
   </div>

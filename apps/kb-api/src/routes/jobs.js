@@ -93,7 +93,8 @@ export async function jobRoutes(app) {
       };
     }
 
-    if (["queued", "running", "cancel_requested"].includes(job.status)) {
+    const isPreUpload = job.status === "queued" && !job.document_id;
+    if (!isPreUpload && ["queued", "running", "cancel_requested"].includes(job.status)) {
       reply.code(409);
       return {
         ok: false,
@@ -114,6 +115,143 @@ export async function jobRoutes(app) {
       ok: true,
       deleted: true,
     };
+  });
+
+  app.post(
+    "/jobs/queue",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["items"],
+          properties: {
+            items: {
+              type: "array",
+              minItems: 1,
+              maxItems: 1000,
+              items: {
+                type: "object",
+                required: ["filename"],
+                properties: {
+                  filename: { type: "string", minLength: 1, maxLength: 512 },
+                  size: { type: "integer", minimum: 0 },
+                  nodeId: { type: ["string", "null"] },
+                  primaryNodeId: { type: ["string", "null"] },
+                  createVisualAssets: { type: "boolean" },
+                  categories: { type: "array", items: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const items = Array.isArray(request.body?.items) ? request.body.items : [];
+      const created = [];
+      for (const item of items) {
+        const filename = String(item.filename || "").trim();
+        if (!filename) continue;
+        const nodeIds = [];
+        if (item.nodeId && typeof item.nodeId === "string") nodeIds.push(item.nodeId);
+        const pendingOptions = {
+          size: Number(item.size) || 0,
+          createVisualAssets: item.createVisualAssets === true,
+          primaryNodeId: item.primaryNodeId || null,
+          categories: Array.isArray(item.categories) ? item.categories : [],
+        };
+        const job = await app.postgresProvider.createJob({
+          documentId: null,
+          jobType: "ingest-file",
+          status: "queued",
+          totalItems: null,
+          processedItems: 0,
+          progressMessage: "Ожидает загрузки",
+          pendingFilename: filename,
+          pendingOptions,
+        });
+        if (nodeIds.length > 0) {
+          await app.postgresProvider.replaceJobNodeLinks(job.id, nodeIds);
+        }
+        created.push({
+          id: job.id,
+          filename,
+          status: job.status,
+          createdAt: job.created_at,
+        });
+      }
+      reply.code(201);
+      return { ok: true, jobs: created };
+    }
+  );
+
+  app.put("/jobs/:id/upload", async (request, reply) => {
+    const job = await app.postgresProvider.getJobById(request.params.id);
+    if (!job) {
+      reply.code(404);
+      return { ok: false, error: "Задача не найдена" };
+    }
+    if (job.status !== "queued" || job.document_id) {
+      reply.code(409);
+      return { ok: false, error: "Задача уже запущена или завершена" };
+    }
+    let file;
+    try {
+      file = await request.file();
+    } catch (error) {
+      reply.code(400);
+      return { ok: false, error: "Не удалось прочитать файл: " + error.message };
+    }
+    if (!file) {
+      reply.code(400);
+      return { ok: false, error: "Нужно передать файл в multipart/form-data" };
+    }
+    try {
+      const fsModule = await import("node:fs/promises");
+      const pathModule = await import("node:path");
+      const originalName = String(file.filename || job.pending_filename || "document").replace(/[\\/]/g, "_");
+      const storedRelativePath = `${Date.now()}-${originalName}`;
+      const storedFullPath = pathModule.join(app.config.rawRoot, storedRelativePath);
+      const buffer = await file.toBuffer();
+      await fsModule.mkdir(app.config.rawRoot, { recursive: true });
+      await fsModule.writeFile(storedFullPath, buffer);
+
+      const opts = (job.pending_options && typeof job.pending_options === "object") ? job.pending_options : {};
+      const nodeIds = [];
+      if (opts.primaryNodeId && typeof opts.primaryNodeId === "string") nodeIds.push(opts.primaryNodeId);
+      const categories = Array.isArray(opts.categories) ? opts.categories : [];
+      const createVisualAssets = opts.createVisualAssets === true;
+
+      runDetached(async () => {
+        try {
+          await app.ingestionService.ingestFileFromRaw({
+            relativePath: storedRelativePath,
+            title: originalName,
+            categories,
+            nodeIds,
+            primaryNodeId: opts.primaryNodeId || null,
+            createVisualAssets,
+            existingJobId: job.id,
+          });
+        } catch (error) {
+          request.log.error({ err: error, jobId: job.id }, "Queued ingest failed");
+          await app.postgresProvider.updateJobStatus(job.id, "failed", error.message);
+        }
+      });
+
+      reply.code(202);
+      return {
+        ok: true,
+        queued: true,
+        jobId: job.id,
+        storedRelativePath,
+      };
+    } catch (error) {
+      request.log.error({ err: error, jobId: job.id }, "Failed to accept queued upload");
+      await app.postgresProvider.updateJobStatus(job.id, "failed", error.message);
+      reply.code(500);
+      return { ok: false, error: error.message || "Не удалось принять файл" };
+    }
   });
 
   app.post("/jobs/:id/cancel", async (request, reply) => {

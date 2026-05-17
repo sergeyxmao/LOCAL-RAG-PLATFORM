@@ -316,6 +316,7 @@ export class IngestionService {
     primaryNodeId = null,
     force = false,
     createVisualAssets = true,
+    existingJobId = null,
   }) {
     const safeRelativePath = assertSafeRelativePath(relativePath);
     const fullPath = path.join(this.config.rawRoot, safeRelativePath);
@@ -340,6 +341,15 @@ export class IngestionService {
           const nodeSync = await this.syncDocumentNodePayload(existingDocument.id);
           nodePayload = nodeSync.nodePayload;
           nodePayloadUpdatedPoints = nodeSync.updatedPoints;
+        }
+
+        if (existingJobId) {
+          await this.postgresProvider.attachDocumentToJob(existingJobId, existingDocument.id);
+          await this.postgresProvider.updateJobStatus(
+            existingJobId,
+            "completed",
+            "Документ уже проиндексирован"
+          );
         }
 
         return {
@@ -380,16 +390,30 @@ export class IngestionService {
       status: "indexing",
     });
 
-    const job = await this.postgresProvider.createJob({
-      documentId: document.id,
-      jobType: "ingest-file",
-      status: "running",
-      totalItems,
-      processedItems: 0,
-      progressMessage: "Подготовка документа",
-      startedAt: new Date(),
-    });
-    await this.postgresProvider.replaceJobNodeLinks(job.id, nodeIds);
+    let job;
+    if (existingJobId) {
+      await this.postgresProvider.attachDocumentToJob(existingJobId, document.id);
+      await this.postgresProvider.updateJobProgress(existingJobId, {
+        totalItems,
+        processedItems: 0,
+        progressMessage: "Подготовка документа",
+      });
+      await this.postgresProvider.updateJobStartedAt(existingJobId);
+      job = await this.postgresProvider.getJobById(existingJobId);
+    } else {
+      job = await this.postgresProvider.createJob({
+        documentId: document.id,
+        jobType: "ingest-file",
+        status: "running",
+        totalItems,
+        processedItems: 0,
+        progressMessage: "Подготовка документа",
+        startedAt: new Date(),
+      });
+    }
+    if (Array.isArray(nodeIds) && nodeIds.length > 0) {
+      await this.postgresProvider.replaceJobNodeLinks(job.id, nodeIds);
+    }
 
     try {
       await this.ensureJobActive(job.id);
