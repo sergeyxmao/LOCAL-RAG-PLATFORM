@@ -2,13 +2,38 @@
 
 raw -> parsed -> chunks -> embeddings -> qdrant -> metadata
 
+## Параллелизм индексации (hotfix #11)
+
+С hotfix #11 в `ingestionService` встроен серверный `Semaphore`
+(`apps/kb-api/src/utils/semaphore.js`), который ограничивает,
+сколько pipeline'ов
+`extract → OCR → chunking → embeddings → Qdrant` бегут
+одновременно. Лимит — `app_settings.indexing.concurrency` (1..4,
+default 1). Меняется через
+`PATCH /api/v2/settings/indexing` или UI «Параллелизм индексации»
+в Настройки → Сервисы. `setMax(n)` применяется мгновенно к
+ожидающим задачам.
+
+Два уровня очереди:
+- **Frontend upload concurrency** (`localrag.upload.concurrency`,
+  1..3): сколько `PUT /jobs/:id/upload` лезет на сервер
+  одновременно. Защищает сеть и фронтовый UI.
+- **Backend indexing concurrency** (`app_settings.indexing.concurrency`,
+  1..4): сколько pipeline'ов реально работает в фоне. Защищает
+  CPU, RAM и канал к Ollama.
+
 ## Фазы задачи в `ingestion_jobs` и точная последовательность статусов
+
+С hotfix #11 у каждой задачи помимо `status` есть `phase` — точное
+состояние в pipeline. UI ориентируется на `phase`, а `status`
+остаётся для совместимости и аналитики.
 
 ```
 POST /jobs/queue
-  └─→ INSERT status='queued', document_id=NULL, pending_filename='...',
+  └─→ INSERT status='queued', phase='awaiting_upload',
+       document_id=NULL, pending_filename='...',
        pending_options={size, createVisualAssets, primaryNodeId, categories}
-       (видно в /jobs как «ожидает»; удаляется без 409)
+       (видно в /jobs как «ждёт загрузки»; удаляется без 409)
 
 PUT /jobs/:id/upload (multipart, один файл в теле)
   ├─→ getJobById: проверяет status='queued' AND document_id IS NULL
@@ -16,34 +41,54 @@ PUT /jobs/:id/upload (multipart, один файл в теле)
   ├─→ читает файл, пишет в data/raw/<timestamp>-<filename>
   ├─→ reply 202 (Accepted)
   └─→ runDetached: ingestionService.ingestFileFromRaw({existingJobId})
+       │
+       │  ┌─ withIndexingSlot(jobId, fn): ─────────────────────────┐
+       │  │  1. updateJobPhase(jobId, 'awaiting_processing')        │
+       │  │     (UI бейдж: «в очереди на индексацию»)               │
+       │  │  2. await semaphore.acquire()                           │
+       │  │  3. updateJobPhase(jobId, 'processing')                 │
+       │  │     (UI бейдж: «идёт»)                                  │
+       │  │  4. fn()                                                │
+       │  │  5. release()                                           │
+       │  └────────────────────────────────────────────────────────┘
+       │
        ├─→ createDocument: документ создан
        ├─→ attachDocumentToJob(jobId, doc.id):
-       │     UPDATE ingestion_jobs SET document_id = doc.id,
-       │                                pending_filename = NULL,
-       │                                pending_options = NULL
+       │     UPDATE SET document_id = doc.id,
+       │                pending_filename = NULL,
+       │                pending_options = NULL,
+       │                phase = CASE WHEN phase = 'awaiting_upload'
+       │                             THEN 'awaiting_processing'
+       │                             ELSE phase END
        ├─→ updateJobStartedAt(jobId):
        │     UPDATE SET started_at = NOW(),
-       │                status = CASE WHEN status='queued' THEN 'running'
-       │                              ELSE status END
+       │                status = 'running',
+       │                phase = 'processing'  (если был 'queued')
        └─→ ... основной pipeline (extract, OCR, chunks, embeddings) ...
             ├─→ при успехе: updateJobStatus(jobId, 'completed')
-            ├─→ при ошибке: updateJobStatus(jobId, 'failed', error.message)
+            │   → phase = 'done'
+            ├─→ при ошибке: updateJobStatus(jobId, 'failed')
+            │   → phase = 'done'
             └─→ при отмене: updateJobStatus(jobId, 'cancelled')
+                → phase = 'done'
 ```
 
 Состояния:
 
-- **`queued` + `document_id IS NULL`** — pre-registered. Файл ещё не
-  пришёл по сети. Лежит в `pending_filename` и `pending_options`
-  (полировка #5, BB; видимость очереди — hotfix #10).
-- **`queued` + `document_id IS NOT NULL`** — переходное состояние:
-  документ создан, но `started_at` ещё не выставлен. Длится
-  миллисекунды, на практике невидимо для UI.
-- **`running`** — pipeline активен, `started_at` заполнен.
-- **`cancel_requested`** — пользователь нажал «Отменить» во время
-  `running`; рабочий поток увидит флаг между batch'ами и завершится.
-- **`completed` / `failed` / `cancelled`** — терминальные, `finished_at`
-  заполнен.
+- **`phase='awaiting_upload'`** (`status='queued'`, `document_id IS NULL`) —
+  pre-registered. Файл ещё не пришёл по сети.
+  Лежит в `pending_filename` и `pending_options` (полировка #5, BB;
+  видимость очереди — hotfix #10). Удаляется через DELETE без 409.
+- **`phase='awaiting_processing'`** (`status='queued'`) — файл на
+  диске, ждём свободный слот семафора индексации. UI показывает
+  «в очереди на индексацию».
+- **`phase='processing'`** (`status='running'`) — semaphore acquired,
+  pipeline бежит. `started_at` заполнен.
+- **`status='cancel_requested'`** — пользователь нажал «Отменить» во
+  время processing; рабочий поток увидит флаг между batch'ами и
+  завершится.
+- **`phase='done'`** (`status='completed'/'failed'/'cancelled'`) —
+  терминальное состояние. `finished_at` заполнен.
 
 ## Точки входа для импорта файла
 

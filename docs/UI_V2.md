@@ -425,6 +425,45 @@ sourcesCount, messageId)`:
 `done`) ключ в `state.expandedSources` мигрируется, чтобы блок не
 схлопнулся на ровном месте.
 
+### Двухуровневая очередь импорта: upload concurrency ≠ indexing concurrency
+
+С полировки #5 (BB) и hotfix'ов #10/#11 у нас ДВА разных параллелизма
+в pipeline загрузки документов:
+
+1. **Upload concurrency (фронт).** Сколько `PUT /jobs/:id/upload`
+   летит из браузера одновременно. Контролируется
+   `localrag.upload.concurrency` (1..3, default 1) +
+   live-значением select'а на странице БЗ.
+   Worker pool через `.shift()` (см. ниже).
+2. **Indexing concurrency (backend).** Сколько pipeline'ов
+   `extract → OCR → chunking → embeddings → Qdrant` бегут
+   одновременно в фоне. Контролируется
+   `app_settings.indexing.concurrency` (1..4, default 1) и
+   серверным `Semaphore` в `ingestionService`.
+
+Почему два уровня:
+
+- `PUT /upload` отвечает 202 СРАЗУ после `fs.writeFile` (медлительная
+  индексация не должна держать HTTP-соединение).
+- Если бы был только фронтовый параллелизм, сервер всё равно мог бы
+  запустить N pipelines в фоне через `runDetached` и перегрузить CPU.
+- Семафор разводит эти два числа: можно грузить пачкой по 3
+  файла в секунду (быстрый upload), но обрабатывать строго по 1
+  через Ollama (медленный embedding).
+
+Видимые состояния в БД и UI:
+
+| `phase`              | UI-бейдж                  | Что значит |
+|----------------------|---------------------------|-----------|
+| `awaiting_upload`    | «ждёт загрузки»           | POST /jobs/queue создал, файла ещё нет |
+| `awaiting_processing`| «в очереди на индексацию» | Файл на диске, semaphore занят |
+| `processing`         | «идёт»                    | Semaphore acquired, pipeline бежит |
+| `done`               | completed / failed / ...  | Терминальное состояние |
+
+Антипаттерн: жёстко привязывать backend параллелизм к фронту через
+URL-параметр или header. Это ломает API: один пользователь поставил
+concurrency=3 и забил серверу память на следующий час.
+
 ### Worker pool через `.shift()` из общей очереди
 
 Для bounded-concurrency загрузки (полировка #5 BB, #6A KK, hotfix #10)
@@ -1221,3 +1260,62 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
     Фикс — добавлен `FROM ingestion_jobs`. Карточка теперь
     показывает корректное число активных задач (queued + running +
     cancel_requested) и из них pre-upload.
+- 2026-05-17: hotfix #11 — двухуровневая очередь: фронтовый upload
+  concurrency теперь развязан с backend indexing concurrency.
+  - **Зачем.** Hotfix #10 закрыл параллелизм фронта (PUT /upload
+    идут строго по N за раз, default N=1). Но
+    `PUT /jobs/:id/upload` отвечает `202` сразу после записи файла на
+    диск, а реальный ingestion-pipeline бежит в фоне через
+    `runDetached(ingestionService.ingestFileFromRaw)`. На слабом
+    CPU это значит: 8 файлов = 8 параллельных pipelines конкурируют
+    за CPU/RAM/Ollama, даже когда фронт грузит файлы по одному.
+    Решение — серверный семафор индексации.
+  - **`utils/semaphore.js`.** Свой простой `Semaphore` без
+    npm-зависимостей: `acquire() → Promise<release>`, `setMax(n)`
+    меняет лимит на лету. Слот освобождается через returned
+    `release()`. Очередь ожидающих в `this.waiters`.
+    Протестирован: с max=1 три задачи идут серийно
+    (A.acquire→A.release→B.acquire→…). `setMax(3)` посреди работы
+    мгновенно разморозил трёх ожидающих.
+  - **Интеграция в `IngestionService`.** Конструктор принимает
+    `indexingSemaphore`. Публичные методы `ingestFileFromRaw` и
+    `ingestTextDocument` теперь делегируют в
+    `_ingestFileFromRawImpl`/`_ingestTextDocumentImpl` через
+    `withIndexingSlot(jobId, fn)`. Сам `withIndexingSlot`:
+    1. Если есть `jobId` — `updateJobPhase(jobId, "awaiting_processing")`
+       (пользователь видит «в очереди на индексацию»).
+    2. `await semaphore.acquire()` — ждём свободный слот.
+    3. `updateJobPhase(jobId, "processing")` (бейдж «идёт»).
+    4. Запуск `fn()`.
+    5. В `finally` — `release()` независимо от исключения.
+  - **Новая колонка `ingestion_jobs.phase TEXT`** через
+    `ALTER TABLE ... ADD COLUMN IF NOT EXISTS phase TEXT`
+    в `ensureRuntimeSchema`. Бэкфилл существующих записей:
+    `queued+document_id IS NULL → awaiting_upload`,
+    `queued+document_id IS NOT NULL → awaiting_processing`,
+    `running/cancel_requested → processing`,
+    `completed/failed/cancelled → done`.
+    Значения phase синхронизируются автоматически в
+    `attachDocumentToJob` (awaiting_upload → awaiting_processing),
+    `updateJobStartedAt` (queued → processing),
+    `updateJobStatus` (терминальные статусы → done),
+    `failStaleRunningJobs` (rerun cleanup → done).
+  - **REST API.** Новые `GET /api/v2/settings/indexing` (отдаёт
+    `{indexing: {concurrency}, semaphore: {max, current, waiting}}`)
+    и `PATCH /api/v2/settings/indexing` (принимает
+    `{concurrency: 1..4}`, валидирует, вызывает
+    `app.indexingSemaphore.setMax(n)` чтобы новый лимит применился
+    мгновенно).
+  - **UI карточка «Параллелизм индексации»** во вкладке Сервисы
+    (под OCR): input `[1..4]`, кнопка «Сохранить», справа от
+    заголовка живая статистика «сейчас: current/max (в ожидании: N)».
+  - **UI задач** теперь читает `job.phase` приоритетнее `status`:
+    `awaiting_upload → «ждёт загрузки»`,
+    `awaiting_processing → «в очереди на индексацию»`,
+    `processing → «идёт»`,
+    `done → completed/failed/cancelled label`. Старый status-based
+    лейбл остаётся fallback для записей без phase.
+  - **Контракт PUT /jobs/:id/upload не изменился** — продолжает
+    отвечать 202 быстро. Изменилась только семантика следующего
+    шага: теперь это не "сразу running", а "в очереди на
+    индексацию через семафор".

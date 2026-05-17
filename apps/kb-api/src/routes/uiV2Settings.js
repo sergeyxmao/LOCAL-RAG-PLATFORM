@@ -463,6 +463,10 @@ function renderSettingsScript(initialStateJson) {
         ocrSave: document.getElementById("cfgOcrSave"),
         ocrBanner: document.getElementById("cfgOcrBanner"),
         ocrAvailability: document.getElementById("cfgOcrAvailability"),
+        indexingConcurrency: document.getElementById("cfgIndexingConcurrency"),
+        indexingSave: document.getElementById("cfgIndexingSave"),
+        indexingBanner: document.getElementById("cfgIndexingBanner"),
+        indexingStatus: document.getElementById("cfgIndexingStatus"),
         servicesRefresh: document.getElementById("cfgServicesRefresh"),
         themeSelect: document.getElementById("cfgThemeDefault"),
         themeSave: document.getElementById("cfgThemeSave"),
@@ -848,6 +852,37 @@ function renderSettingsScript(initialStateJson) {
         }).catch(function (err) {
           dom.servicesList.innerHTML = '<div class="kb-doc-error">Не удалось проверить сервисы: ' + escapeHtml(err.message) + '</div>';
         });
+      }
+
+      function loadIndexing() {
+        if (!dom.indexingConcurrency) return;
+        return api("GET", "/api/v2/settings/indexing").then(function (data) {
+          var n = (data.indexing && Number(data.indexing.concurrency)) || 1;
+          dom.indexingConcurrency.value = String(n);
+          if (dom.indexingStatus && data.semaphore) {
+            var s = data.semaphore;
+            dom.indexingStatus.textContent =
+              "сейчас: " + s.current + "/" + s.max + " (в ожидании: " + s.waiting + ")";
+          }
+        }).catch(function (err) {
+          if (dom.indexingBanner) setBanner(dom.indexingBanner, "Ошибка загрузки: " + err.message, "error");
+        });
+      }
+
+      function saveIndexing() {
+        if (!dom.indexingConcurrency || !dom.indexingSave) return;
+        var n = Number(dom.indexingConcurrency.value);
+        if (!Number.isFinite(n) || n < 1 || n > 4) {
+          setBanner(dom.indexingBanner, "Значение должно быть от 1 до 4", "error");
+          return;
+        }
+        dom.indexingSave.disabled = true;
+        api("PATCH", "/api/v2/settings/indexing", { concurrency: n }).then(function (data) {
+          setBanner(dom.indexingBanner, "Сохранено. Применяется к новым задачам.", "success");
+          return loadIndexing();
+        }).catch(function (err) {
+          setBanner(dom.indexingBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () { dom.indexingSave.disabled = false; });
       }
 
       function loadOcr() {
@@ -1263,6 +1298,7 @@ function renderSettingsScript(initialStateJson) {
         dom.servicesRefresh.addEventListener("click", loadServices);
         if (dom.diagRun) dom.diagRun.addEventListener("click", runDiagnostics);
         if (dom.ocrSave) dom.ocrSave.addEventListener("click", saveOcr);
+        if (dom.indexingSave) dom.indexingSave.addEventListener("click", saveIndexing);
         dom.themeSave.addEventListener("click", saveTheme);
         dom.maintRebuild.addEventListener("click", triggerRebuild);
         dom.maintReset.addEventListener("click", triggerReset);
@@ -1321,6 +1357,7 @@ function renderSettingsScript(initialStateJson) {
         loadSettings();
         loadServices();
         loadOcr();
+        loadIndexing();
         loadBackups();
       }
 
@@ -1464,6 +1501,26 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <button type="button" class="btn btn--accent" id="cfgOcrSave">${ICONS.check}<span>Сохранить</span></button>
           </div>
           <p class="settings-hint">OCR работает локально через <span class="mono">tesseract</span> (rus+eng). Действует только для новых документов; для уже загруженных — кнопка «Переиндексировать» в действиях документа на странице «База знаний → Документы».</p>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-indexing">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.refresh}<span>Параллелизм индексации</span></div>
+          <span class="settings-hint" id="cfgIndexingStatus"></span>
+        </div>
+        <div class="settings-card__body">
+          <div class="settings-row">
+            <div class="settings-field">
+              <label for="cfgIndexingConcurrency">Сколько документов обрабатывать одновременно</label>
+              <input class="settings-input" id="cfgIndexingConcurrency" type="number" min="1" max="4" step="1" />
+            </div>
+            <div class="settings-field" style="justify-content:end">
+              <button type="button" class="btn btn--accent" id="cfgIndexingSave" style="align-self:end">${ICONS.check}<span>Сохранить</span></button>
+            </div>
+          </div>
+          <div class="settings-banner" id="cfgIndexingBanner"></div>
+          <p class="settings-hint">Сколько документов одновременно проходят полный pipeline индексации (text/OCR → chunking → embeddings → Qdrant). На слабом CPU держите <strong>1</strong> — параллельный pipeline конкурирует за CPU, память и канал к Ollama, что замедляет общее время. На мощной машине можно повысить до 2–3. Максимум — 4. Изменения применяются мгновенно, текущие задачи не прерываются.</p>
         </div>
       </div>
       </div>

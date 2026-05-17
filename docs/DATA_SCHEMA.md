@@ -191,3 +191,43 @@ Bag-O-Settings для произвольных настроек проекта. 
   суммарное время через `answerService`).
 - `error`: `{ code, message }` при ошибке провайдера. Коды описаны в
   `docs/CLOUD_PROVIDER.md`.
+
+## Таблица ingestion_jobs — phase (hotfix #11)
+
+Колонка `ingestion_jobs.phase TEXT` добавлена через
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (бэкфилл прописан в
+`ensureRuntimeSchema`). Значения:
+
+| `phase`               | `status`               | Описание |
+|-----------------------|------------------------|----------|
+| `awaiting_upload`     | `queued`               | Pre-registered (POST /jobs/queue), файла ещё нет. `document_id IS NULL`, `pending_filename` и `pending_options` заполнены. |
+| `awaiting_processing` | `queued`               | Файл загружен (PUT /jobs/:id/upload), ждёт свободного слота indexing-semaphore. `document_id` может быть NULL (если ещё не создан) или уже привязан. |
+| `processing`          | `running` / `cancel_requested` | Semaphore acquired, pipeline бежит. `started_at` заполнен. |
+| `done`                | `completed` / `failed` / `cancelled` | Терминальное. `finished_at` заполнен. |
+
+Phase — единый источник правды для UI. `status` остаётся для
+обратной совместимости и аналитики. Переходы синхронизируются
+автоматически в:
+
+- `createJob` — принимает `phase` параметром;
+- `attachDocumentToJob` — `awaiting_upload → awaiting_processing`;
+- `updateJobStartedAt` — `queued → processing`;
+- `updateJobStatus` — `running → processing`,
+  `{completed,failed,cancelled} → done`;
+- `failStaleRunningJobs` — при cleanup на старте сервиса
+  `running → done` (вместе с status=failed).
+
+## app_settings.indexing (hotfix #11)
+
+Ключ `indexing` в `app_settings`:
+
+```json
+{ "concurrency": 1 }
+```
+
+- `concurrency` — целое в диапазоне 1..4 (default 1). Управляет
+  серверным `Semaphore` индексации.
+- Меняется через `PATCH /api/v2/settings/indexing` или UI «Параллелизм
+  индексации» в Настройки → Сервисы. `setMax(n)` применяется мгновенно.
+- При старте `kb-api` значение читается и передаётся в конструктор
+  `IngestionService`.

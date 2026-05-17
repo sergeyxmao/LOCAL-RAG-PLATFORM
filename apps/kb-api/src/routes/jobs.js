@@ -164,6 +164,7 @@ export async function jobRoutes(app) {
           documentId: null,
           jobType: "ingest-file",
           status: "queued",
+          phase: "awaiting_upload",
           totalItems: null,
           processedItems: 0,
           progressMessage: "Ожидает загрузки",

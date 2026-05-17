@@ -65,7 +65,20 @@ export class PostgresProvider {
       ADD COLUMN IF NOT EXISTS processed_items INTEGER DEFAULT 0,
       ADD COLUMN IF NOT EXISTS progress_message TEXT,
       ADD COLUMN IF NOT EXISTS pending_filename TEXT,
-      ADD COLUMN IF NOT EXISTS pending_options JSONB
+      ADD COLUMN IF NOT EXISTS pending_options JSONB,
+      ADD COLUMN IF NOT EXISTS phase TEXT
+    `);
+
+    // Бэкфилл phase для существующих записей
+    await this.pool.query(`
+      UPDATE ingestion_jobs
+      SET phase = CASE
+        WHEN status = 'queued' AND document_id IS NULL THEN 'awaiting_upload'
+        WHEN status = 'queued' AND document_id IS NOT NULL THEN 'awaiting_processing'
+        WHEN status IN ('running', 'cancel_requested') THEN 'processing'
+        ELSE 'done'
+      END
+      WHERE phase IS NULL
     `);
 
     await this.ensureKnowledgeNodeSchema();
@@ -526,6 +539,7 @@ export class PostgresProvider {
       UPDATE ingestion_jobs
       SET
         status = 'failed',
+        phase = 'done',
         error_message = COALESCE(error_message, $1),
         finished_at = NOW()
       WHERE status = 'running'
@@ -3002,6 +3016,7 @@ export class PostgresProvider {
         j.document_id,
         j.job_type,
         j.status,
+        j.phase,
         j.error_message,
         j.total_items,
         j.processed_items,
@@ -3072,6 +3087,7 @@ export class PostgresProvider {
         j.document_id,
         j.job_type,
         j.status,
+        j.phase,
         j.error_message,
         j.total_items,
         j.processed_items,
@@ -3095,6 +3111,14 @@ export class PostgresProvider {
     );
 
     return result.rows[0] ?? null;
+  }
+
+  async updateJobPhase(jobId, phase) {
+    const result = await this.pool.query(
+      `UPDATE ingestion_jobs SET phase = $2 WHERE id = $1 RETURNING phase`,
+      [jobId, phase]
+    );
+    return result.rows[0]?.phase ?? null;
   }
 
   async requestJobCancellation(jobId) {
@@ -3886,6 +3910,7 @@ export class PostgresProvider {
         document_id,
         job_type,
         status,
+        phase,
         error_message,
         total_items,
         processed_items,
@@ -3895,13 +3920,14 @@ export class PostgresProvider {
         pending_filename,
         pending_options
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
       RETURNING *
       `,
       [
         job.documentId,
         job.jobType,
         job.status,
+        job.phase ?? null,
         job.errorMessage ?? null,
         job.totalItems ?? null,
         job.processedItems ?? 0,
@@ -3919,7 +3945,10 @@ export class PostgresProvider {
   async attachDocumentToJob(jobId, documentId) {
     const result = await this.pool.query(
       `UPDATE ingestion_jobs
-       SET document_id = $2, pending_filename = NULL, pending_options = NULL
+       SET document_id = $2,
+           pending_filename = NULL,
+           pending_options = NULL,
+           phase = CASE WHEN phase = 'awaiting_upload' THEN 'awaiting_processing' ELSE phase END
        WHERE id = $1
        RETURNING *`,
       [jobId, documentId]
@@ -3932,6 +3961,11 @@ export class PostgresProvider {
       `
       UPDATE ingestion_jobs
       SET status = $2,
+          phase = CASE
+            WHEN $2 IN ('completed', 'failed', 'cancelled') THEN 'done'
+            WHEN $2 = 'running' THEN 'processing'
+            ELSE phase
+          END,
           error_message = $3,
           processed_items = CASE
             WHEN $2 = 'completed' AND total_items IS NOT NULL THEN total_items
@@ -3974,7 +4008,8 @@ export class PostgresProvider {
     const result = await this.pool.query(
       `UPDATE ingestion_jobs
        SET started_at = COALESCE(started_at, NOW()),
-           status = CASE WHEN status = 'queued' THEN 'running' ELSE status END
+           status = CASE WHEN status = 'queued' THEN 'running' ELSE status END,
+           phase = CASE WHEN status = 'queued' THEN 'processing' ELSE phase END
        WHERE id = $1
        RETURNING *`,
       [jobId]

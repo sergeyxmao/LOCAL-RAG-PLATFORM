@@ -1018,6 +1018,7 @@ function renderKnowledgeScript(initialStateJson) {
         } else {
           listHtml = jobs.map(function (job) {
             var status = job.status || "unknown";
+            var phase = job.phase || "";
             var pct = 0;
             if (job.total_items && job.processed_items) {
               pct = Math.min(100, Math.round((Number(job.processed_items) / Math.max(1, Number(job.total_items))) * 100));
@@ -1025,14 +1026,25 @@ function renderKnowledgeScript(initialStateJson) {
               pct = 100;
             }
             var statusClass = "kb-job__status--" + status;
-            var statusLabel = {
-              queued: "ожидает",
-              running: "идёт",
-              cancel_requested: "останавливается",
-              completed: "готово",
-              failed: "ошибка",
-              cancelled: "остановлено",
-            }[status] || status;
+            // Если есть phase — он точнее статуса (различает awaiting_upload
+            // от awaiting_processing внутри status='queued').
+            var label;
+            if (phase === "awaiting_upload") label = "ждёт загрузки";
+            else if (phase === "awaiting_processing") label = "в очереди на индексацию";
+            else if (phase === "processing") label = "идёт";
+            else if (phase === "done") {
+              label = { completed: "готово", failed: "ошибка", cancelled: "остановлено" }[status] || status;
+            } else {
+              label = {
+                queued: "ожидает",
+                running: "идёт",
+                cancel_requested: "останавливается",
+                completed: "готово",
+                failed: "ошибка",
+                cancelled: "остановлено",
+              }[status] || status;
+            }
+            var statusLabel = label;
             var isPreUpload = status === "queued" && !job.document_id;
             var title = job.original_file_path || job.document_title || job.original_file_name || job.pending_filename || job.job_type || job.id;
             var canCancel = !isPreUpload && ["queued", "running", "cancel_requested"].indexOf(status) >= 0;
