@@ -676,6 +676,7 @@ function renderKnowledgeScript(initialStateJson) {
         globalTagsSearch: "",
         globalTagsSort: { by: "count", dir: "desc" },
         unsortedNodeId: null,
+        uploadInProgress: false,
       };
 
       var dom = {
@@ -1874,14 +1875,30 @@ function renderKnowledgeScript(initialStateJson) {
         });
       }
 
+      function readConcurrencyLive() {
+        // Жёсткий приоритет: live-значение из DOM (то, что видит пользователь).
+        // Это лечит расхождения между select.value и localStorage.
+        var concSelect = document.getElementById("kbUploadConcurrency");
+        if (concSelect) {
+          var live = Number(concSelect.value);
+          if (live >= 1 && live <= 3) return live;
+        }
+        return loadUploadConcurrencyFromStorage();
+      }
+
       function handleFiles(fileList) {
         var files = Array.from(fileList || []);
         if (!files.length) return;
+        if (state.uploadInProgress) {
+          showToast("Идёт другая загрузка — дождитесь её завершения", "error");
+          return;
+        }
+        state.uploadInProgress = true;
         state.jobsCollapsed = false;
         renderJobs();
 
-        var nodeId = dom.nodeSelect.value || state.activeNodeId || "";
-        var createVisualAssets = !dom.lightModeChk.checked;
+        var nodeId = (dom.nodeSelect && dom.nodeSelect.value) || state.activeNodeId || "";
+        var createVisualAssets = dom.lightModeChk ? !dom.lightModeChk.checked : false;
         var items = files.map(function (file) {
           return {
             filename: file.webkitRelativePath || file.relativePath || file.name,
@@ -1893,6 +1910,13 @@ function renderKnowledgeScript(initialStateJson) {
           };
         });
 
+        var concurrency = readConcurrencyLive();
+        var initialDelayMs = concurrency === 1 ? 500 : 250;
+        var perFileDelayMs = 200;
+
+        // eslint-disable-next-line no-console
+        console.log("[queue] handleFiles", { files: files.length, concurrency: concurrency, nodeId: nodeId });
+
         showToast("Регистрируем " + files.length + " задач(и) в очереди…");
         api("POST", "/jobs/queue", { items: items }).then(function (data) {
           var jobs = Array.isArray(data && data.jobs) ? data.jobs : [];
@@ -1900,42 +1924,22 @@ function renderKnowledgeScript(initialStateJson) {
             showToast("В очередь добавлено " + jobs.length + " из " + files.length, "error");
           }
           loadJobs();
-          showToast("В очередь: " + jobs.length + ". У вас 0.5 сек, чтобы удалить ненужные.");
+          showToast(
+            concurrency === 1
+              ? "В очередь: " + jobs.length + ". Загрузка по одному через 0.5 сек — успейте удалить ненужные."
+              : "В очередь: " + jobs.length + ". Загрузка пачкой по " + concurrency + "."
+          );
+          // eslint-disable-next-line no-console
+          console.log("[queue] registered", jobs.length, "jobs, status='queued', starting workers in", initialDelayMs, "ms");
 
-          var queue = files.map(function (file, i) {
-            return jobs[i] ? { file: file, jobId: jobs[i].id } : null;
-          }).filter(Boolean);
+          var queue = [];
+          for (var i = 0; i < files.length; i += 1) {
+            if (jobs[i]) queue.push({ file: files[i], jobId: jobs[i].id });
+          }
 
-          var concurrency = loadUploadConcurrencyFromStorage();
-          var initialDelayMs = 500;
-          var perFileDelayMs = 200;
-          var index = 0;
-          var done = 0;
           var ok = 0;
           var fail = 0;
           var aborted = 0;
-
-          function pump() {
-            if (index >= queue.length) {
-              if (done === queue.length) finalize();
-              return;
-            }
-            var task = queue[index++];
-            uploadFileToJob(task.jobId, task.file).then(function () {
-              ok += 1;
-            }).catch(function (err) {
-              if (err && (err.status === 404 || err.status === 409)) {
-                aborted += 1;
-              } else {
-                fail += 1;
-                console.warn("Upload failed", task.file.name, err);
-              }
-            }).then(function () {
-              done += 1;
-              loadJobs();
-              setTimeout(pump, perFileDelayMs);
-            });
-          }
 
           function finalize() {
             var parts = [];
@@ -1943,6 +1947,9 @@ function renderKnowledgeScript(initialStateJson) {
             if (fail) parts.push("ошибок: " + fail);
             if (aborted) parts.push("отменено: " + aborted);
             showToast(parts.join(", ") || "Готово", fail ? "error" : undefined);
+            // eslint-disable-next-line no-console
+            console.log("[queue] finalize", { ok: ok, fail: fail, aborted: aborted });
+            state.uploadInProgress = false;
             refreshNodes({ reloadDocuments: true });
             loadJobs();
           }
@@ -1951,10 +1958,49 @@ function renderKnowledgeScript(initialStateJson) {
             finalize();
             return;
           }
-          setTimeout(function () {
-            for (var i = 0; i < Math.min(concurrency, queue.length); i++) pump();
-          }, initialDelayMs);
+
+          function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+          // Worker pool: каждый воркер тянет задачи .shift() из общей очереди,
+          // пока она не опустеет. Между файлами — пауза perFileDelayMs.
+          function worker(workerIdx) {
+            return (function tick() {
+              if (queue.length === 0) return Promise.resolve();
+              var task = queue.shift();
+              if (!task) return Promise.resolve();
+              // eslint-disable-next-line no-console
+              console.log("[queue] worker", workerIdx, "→ upload", task.file.name);
+              return uploadFileToJob(task.jobId, task.file).then(function () {
+                ok += 1;
+              }).catch(function (err) {
+                if (err && (err.status === 404 || err.status === 409)) {
+                  aborted += 1;
+                } else {
+                  fail += 1;
+                  // eslint-disable-next-line no-console
+                  console.warn("[queue] upload failed", task.file.name, err);
+                }
+              }).then(function () {
+                loadJobs();
+                return sleep(perFileDelayMs).then(tick);
+              });
+            })();
+          }
+
+          sleep(initialDelayMs).then(function () {
+            var workersCount = Math.min(concurrency, queue.length);
+            // eslint-disable-next-line no-console
+            console.log("[queue] launching", workersCount, "workers for", queue.length, "tasks");
+            var workers = [];
+            for (var w = 0; w < workersCount; w += 1) workers.push(worker(w + 1));
+            return Promise.all(workers);
+          }).then(finalize, function (err) {
+            // eslint-disable-next-line no-console
+            console.error("[queue] worker pool fatal", err);
+            finalize();
+          });
         }).catch(function (err) {
+          state.uploadInProgress = false;
           showToast("Не удалось зарегистрировать очередь: " + err.message, "error");
         });
       }

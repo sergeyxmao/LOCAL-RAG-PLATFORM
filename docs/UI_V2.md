@@ -425,6 +425,40 @@ sourcesCount, messageId)`:
 `done`) ключ в `state.expandedSources` мигрируется, чтобы блок не
 схлопнулся на ровном месте.
 
+### Worker pool через `.shift()` из общей очереди
+
+Для bounded-concurrency загрузки (полировка #5 BB, #6A KK, hotfix #10)
+правильный паттерн — N независимых async-воркеров, каждый цикл
+`while (queue.length) { task = queue.shift(); await upload(task); await sleep(gap) }`.
+Все воркеры читают из ОДНОЙ общей очереди — JS однопоточный,
+`.shift()` атомарен, гонок нет.
+
+```js
+function worker() {
+  return (function tick() {
+    if (queue.length === 0) return Promise.resolve();
+    const task = queue.shift();
+    return doWork(task)
+      .catch(handleError)
+      .then(() => sleep(gap).then(tick));
+  })();
+}
+const workers = [];
+for (let i = 0; i < concurrency; i++) workers.push(worker());
+await Promise.all(workers);
+```
+
+Антипаттерн (был в KK): `for (i<concurrency) pump(); pump() → setTimeout(pump)`.
+Сложно читается, легко сломать при добавлении re-entry или
+синхронизации.
+
+Антипаттерн #2: `Promise.all(queue.map(item => upload(item)))` — это
+вообще без bounded-concurrency, все летят сразу.
+
+Антипаттерн #3: читать `concurrency` из `localStorage` вместо
+live-значения select'а — рискует state-drift'ом, когда DOM показывает
+одно значение, а storage другое.
+
 ### Sticky composer в чате через flexbox
 
 Без явного `height: 100vh` на `.main` поле ввода чата уезжает за нижний
@@ -1140,3 +1174,50 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
     кнопкой «Запустить проверки», сводкой и сеткой из карточек.
     Карточки подсвечиваются цветом (зелёный/жёлтый/красный), и
     отображают `name + details`. Автозапросов нет — только по клику.
+- 2026-05-17: hotfix #10 — две регрессии после полировки #6A.
+  - **Очередь импорта была параллельной несмотря на concurrency=1.**
+    Третья итерация бага очереди (BB → KK → #10). Корневая
+    причина: `handleFiles` читал параллелизм через
+    `loadUploadConcurrencyFromStorage()` (только из `localStorage`).
+    Если значение в `localStorage.localrag.upload.concurrency`
+    расходилось с тем, что показывает select в DOM (стейт-дрифт
+    после второй вкладки, ручной правки localStorage в DevTools,
+    или потерянный `change`-event) — фактический concurrency
+    был не тот, что видит пользователь, и PUT'ы летели пачкой.
+    Также `getJobById` не возвращал `pending_filename` и
+    `pending_options` — при PUT теряли nodeId и categories
+    pre-registered задачи.
+    Фикс — три точечных правки:
+    1. **Read live value, not localStorage.** Новая функция
+       `readConcurrencyLive()` в первую очередь читает
+       `document.getElementById("kbUploadConcurrency").value`,
+       и только если select не найден — fallback на localStorage.
+       Это лечит весь класс state-drift'ов между UI и storage.
+    2. **Worker pool через `.shift()` из общей очереди.** Старый
+       паттерн `for (i<concurrency) pump(); pump() → setTimeout(pump)`
+       заменён на N независимых async-воркеров, каждый из которых
+       цикл `while (queue.length) { task = queue.shift(); upload(); sleep }`.
+       Это каноническая реализация bounded concurrency и легче
+       читается. С concurrency=1 — буквально один воркер, один
+       файл в полёте.
+    3. **Re-entry guard.** `state.uploadInProgress = true/false`
+       вокруг всего `handleFiles`. Второй drop/change во время
+       активной загрузки получает toast «дождитесь завершения»,
+       второй pump-цикл не запускается.
+    4. **`getJobById` теперь возвращает `pending_filename` и
+       `pending_options`.** В SELECT добавлены `j.pending_filename,
+       j.pending_options`. PUT-эндпоинт теперь видит назначение в
+       раздел и categories pre-registered задачи.
+    5. **Логи `[queue]` в консоли браузера.** Каждый шаг очереди
+       логируется в DevTools: `handleFiles {files, concurrency}`,
+       `registered N jobs`, `launching N workers`, `worker K → upload`,
+       `upload failed`, `finalize {ok, fail, aborted}`. Это даёт
+       тривиальную диагностику в случае четвёртой итерации бага.
+  - **Диагностика «Активные фоновые задачи» падала с
+    `column "status" does not exist`.** В
+    `diagnosticsService._checkActiveJobs` SQL-запрос был без
+    `FROM ingestion_jobs` — Postgres не знает, в какой таблице
+    искать колонки `status`/`document_id`, ловит на этапе парсинга.
+    Фикс — добавлен `FROM ingestion_jobs`. Карточка теперь
+    показывает корректное число активных задач (queued + running +
+    cancel_requested) и из них pre-upload.

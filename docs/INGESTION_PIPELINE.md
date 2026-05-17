@@ -2,29 +2,48 @@
 
 raw -> parsed -> chunks -> embeddings -> qdrant -> metadata
 
-## Фазы задачи в `ingestion_jobs`
+## Фазы задачи в `ingestion_jobs` и точная последовательность статусов
 
 ```
-queued (pre-upload)  --PUT /jobs/:id/upload-->  running  --done-->  completed
-                                                        \--err-->   failed
-                                                        \--cancel-> cancelled
+POST /jobs/queue
+  └─→ INSERT status='queued', document_id=NULL, pending_filename='...',
+       pending_options={size, createVisualAssets, primaryNodeId, categories}
+       (видно в /jobs как «ожидает»; удаляется без 409)
+
+PUT /jobs/:id/upload (multipart, один файл в теле)
+  ├─→ getJobById: проверяет status='queued' AND document_id IS NULL
+  │   (если уже не queued — 409)
+  ├─→ читает файл, пишет в data/raw/<timestamp>-<filename>
+  ├─→ reply 202 (Accepted)
+  └─→ runDetached: ingestionService.ingestFileFromRaw({existingJobId})
+       ├─→ createDocument: документ создан
+       ├─→ attachDocumentToJob(jobId, doc.id):
+       │     UPDATE ingestion_jobs SET document_id = doc.id,
+       │                                pending_filename = NULL,
+       │                                pending_options = NULL
+       ├─→ updateJobStartedAt(jobId):
+       │     UPDATE SET started_at = NOW(),
+       │                status = CASE WHEN status='queued' THEN 'running'
+       │                              ELSE status END
+       └─→ ... основной pipeline (extract, OCR, chunks, embeddings) ...
+            ├─→ при успехе: updateJobStatus(jobId, 'completed')
+            ├─→ при ошибке: updateJobStatus(jobId, 'failed', error.message)
+            └─→ при отмене: updateJobStatus(jobId, 'cancelled')
 ```
 
-- **`queued` + `document_id IS NULL`** — pre-registered, файл ещё не
-  загружен. Запись создана через `POST /jobs/queue` со списком
-  метаданных (имя файла, размер, целевой узел, флаг превью). В этой
-  фазе `pending_filename TEXT` и `pending_options JSONB` хранят
-  параметры будущей загрузки. Задача удаляется мгновенно через
-  `DELETE /jobs/:id` без 409 (полировка #5, BB).
-- **`queued` + `document_id IS NOT NULL`** — обычное «queued» из
-  старого flow (документ создан, очередь до старта pipeline). Удаление
-  возвращает 409 — сначала надо отменить.
-- **`running`** — pipeline идёт. `started_at` заполнен. `total_items`
-  и `processed_items` отслеживают прогресс. Отмена через
-  `POST /jobs/:id/cancel` ставит `cancel_requested`.
-- **`completed` / `failed` / `cancelled`** — терминальные. `finished_at`
-  заполнен. Можно удалять через `DELETE /jobs/:id` без подтверждения
-  на стороне БД.
+Состояния:
+
+- **`queued` + `document_id IS NULL`** — pre-registered. Файл ещё не
+  пришёл по сети. Лежит в `pending_filename` и `pending_options`
+  (полировка #5, BB; видимость очереди — hotfix #10).
+- **`queued` + `document_id IS NOT NULL`** — переходное состояние:
+  документ создан, но `started_at` ещё не выставлен. Длится
+  миллисекунды, на практике невидимо для UI.
+- **`running`** — pipeline активен, `started_at` заполнен.
+- **`cancel_requested`** — пользователь нажал «Отменить» во время
+  `running`; рабочий поток увидит флаг между batch'ами и завершится.
+- **`completed` / `failed` / `cancelled`** — терминальные, `finished_at`
+  заполнен.
 
 ## Точки входа для импорта файла
 
