@@ -323,8 +323,38 @@ Phase — единый источник правды для UI. `status` ост�
 сервиса — `apps/kb-api/src/services/graphService.js`, роуты —
 `apps/kb-api/src/routes/graph.js`.
 
+## Колонка ingestion_jobs.graph_report (#8.1.b)
+
+Идемпотентно добавляется через
+`ALTER TABLE ingestion_jobs ADD COLUMN IF NOT EXISTS graph_report JSONB`
+в `ensureRuntimeSchema`. NULL — парсер графа не запускался для
+этой задачи (например, файл не XLSX). Не-NULL — отчёт парсера:
+
+```json
+{
+  "ok": true,
+  "profile_id": "metso_dna_rio",
+  "summary": {
+    "cabinet": { "created": 1, "updated": 0 },
+    "station": { "created": 1, "updated": 0 },
+    "card": { "created": 27, "updated": 0 },
+    ...
+  },
+  "edges_created": 458,
+  "warnings": [...],
+  "started_at": "...",
+  "finished_at": "..."
+}
+```
+
+Подробности — `docs/GRAPH_INGESTION.md`.
+
 ## История изменений
 
+- 2026-05-17: #8.1.b — парсер XLSX наполняет граф знаний
+  параллельно с RAG-pipeline. Новая колонка
+  `ingestion_jobs.graph_report JSONB`. Подробности —
+  `docs/GRAPH_INGESTION.md`.
 - 2026-05-17: #8.1.a — фундамент графа знаний АСУ ТП. Новые
   таблицы `graph_nodes`, `graph_edges` (идемпотентный DDL в
   `ensureGraphSchema`). Подробности — `docs/GRAPH_SCHEMA.md`.

@@ -231,8 +231,38 @@ UI v2 «База знаний → Документы» при наличии `qd
 диагностики «Qdrant совпадает с indexed PostgreSQL» помогает
 найти такие хвосты — у чанков/страниц будет несовпадение.
 
+## XLSX и граф знаний (#8.1.b)
+
+Для файлов с расширением `.xlsx`/`.xls`/`.xlsm` после успешного
+RAG-pipeline запускается дополнительный шаг — **парсер графа
+знаний**:
+
+```
+extract → OCR → chunking → embeddings → Qdrant → updateDocumentStatus("indexed")
+   └─ runGraphParserIfApplicable(documentId, filePath, jobId)
+        └─ graphIngestionService.parseAndIngest(...)
+             ├─ выбирает YAML-профиль из config/graph-parsers.yaml
+             ├─ парсит лист(ы) XLSX, нормализует signal_kind по
+             │  config/graph-aliases.yaml
+             ├─ UPSERT узлов (cabinet/station/card/channel/signal/device)
+             │  по бизнес-ключу через graphService.upsertNodeByBusinessKey
+             ├─ создаёт связи installed_in/has_channel/connected_to/measures
+             │  идемпотентно (ON CONFLICT DO NOTHING)
+             └─ пишет отчёт в ingestion_jobs.graph_report (JSONB)
+→ updateJobStatus("completed")
+```
+
+Любая ошибка графа = warning в логах + `graph_report.ok = false`.
+RAG-индекс при этом сохранён, job завершается как `completed`.
+
+Подробности — `docs/GRAPH_INGESTION.md`.
+
 ## История изменений
 
+- 2026-05-17: #8.1.b — после RAG-pipeline для XLSX/XLS/XLSM
+  файлов запускается парсер графа знаний; отчёт парсера в
+  `ingestion_jobs.graph_report` (JSONB). Подробности —
+  `docs/GRAPH_INGESTION.md`.
 - 2026-05-17: hotfix #12 — DELETE-устойчивость к недоступности
   Qdrant, корректная двух-метричная диагностика sync,
   документация лёгкого режима.
