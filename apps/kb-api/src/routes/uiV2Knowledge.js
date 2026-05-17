@@ -728,9 +728,14 @@ function renderKnowledgeScript(initialStateJson) {
         if (existing) existing.remove();
         var el = document.createElement("div");
         el.className = "toast" + (kind === "error" ? " toast--error" : "");
+        if (kind === "warning") {
+          el.style.borderColor = "#d18f00";
+          el.style.color = "#a86a00";
+        }
         el.textContent = message;
         document.body.appendChild(el);
-        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 4200);
+        var ttl = kind === "warning" || kind === "error" ? 8000 : 4200;
+        setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, ttl);
       }
 
       function api(method, path, body) {
@@ -1844,10 +1849,22 @@ function renderKnowledgeScript(initialStateJson) {
             });
           })).then(function (results) {
             var failed = results.filter(function (r) { return r && r.ok === false; });
+            var qdrantWarnings = results.filter(function (r) { return r && r.ok !== false && r.qdrantError; });
             closeModal();
             ids.forEach(function (id) { state.selectedDocIds.delete(id); });
-            if (failed.length) showToast("Удалено: " + (ids.length - failed.length) + ", ошибок: " + failed.length, "error");
-            else showToast(ids.length === 1 ? "Документ удалён" : ("Удалено: " + ids.length));
+            if (failed.length) {
+              showToast("Удалено: " + (ids.length - failed.length) + ", ошибок: " + failed.length, "error");
+            } else if (qdrantWarnings.length) {
+              var base = ids.length === 1
+                ? "Документ удалён из базы."
+                : ("Удалено из базы: " + ids.length + ".");
+              showToast(
+                base + " Qdrant был недоступен — запустите «Пересобрать Qdrant» в Настройках → Обслуживание.",
+                "warning"
+              );
+            } else {
+              showToast(ids.length === 1 ? "Документ удалён" : ("Удалено: " + ids.length));
+            }
             return refreshNodes({ reloadDocuments: true });
           });
         });

@@ -176,6 +176,21 @@ export class QdrantProvider {
     return Number(result?.count ?? 0);
   }
 
+  async countPointsByPayload({ key, value } = {}) {
+    if (!key || value === undefined || value === null) {
+      return 0;
+    }
+
+    const result = await this.client.count(this.collectionName, {
+      exact: true,
+      filter: {
+        must: [{ key, match: { value } }],
+      },
+    });
+
+    return Number(result?.count ?? 0);
+  }
+
   async setDocumentPayload(documentId, payload) {
     await this.client.setPayload(this.collectionName, {
       wait: true,

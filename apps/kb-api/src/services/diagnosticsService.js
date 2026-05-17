@@ -175,21 +175,40 @@ export class DiagnosticsService {
     const result = this._check("qdrant_pg_match", "Qdrant совпадает с indexed PostgreSQL");
     try {
       const status = await this.qdrantProvider.getCollectionStatus();
-      const points = status?.exists ? Number(status.pointsCount || 0) : 0;
+      if (!status?.exists) {
+        result.status = "warning";
+        result.details = "Коллекция в Qdrant не создана — сверка невозможна.";
+        return result;
+      }
+
+      const totalPoints = Number(status.pointsCount || 0);
+      const qdrantAssets = await this.qdrantProvider.countPointsByPayload({
+        key: "resource_type",
+        value: "asset",
+      });
+      const qdrantChunks = Math.max(0, totalPoints - qdrantAssets);
+
       const { rows } = await this.postgresProvider.pool.query(
         `SELECT
            (SELECT COUNT(*) FROM document_chunks)::int AS chunks,
-           (SELECT COUNT(*) FROM document_assets WHERE file_name IS NOT NULL)::int AS assets`
+           (SELECT COUNT(*) FROM document_assets)::int AS assets`
       );
-      const chunks = rows[0]?.chunks ?? 0;
-      const assets = rows[0]?.assets ?? 0;
-      const total = chunks + assets;
-      if (points === total) {
-        result.details = `Qdrant: ${points}, Postgres chunks+assets: ${total}`;
+      const pgChunks = rows[0]?.chunks ?? 0;
+      const pgAssets = rows[0]?.assets ?? 0;
+
+      const chunksOk = pgChunks === qdrantChunks;
+      const assetsOk = pgAssets === qdrantAssets;
+
+      const chunksLine = `Чанки: Qdrant=${qdrantChunks}, Postgres=${pgChunks} ${chunksOk ? "✓" : "✗"}`;
+      const assetsLine = `Страницы: Qdrant=${qdrantAssets}, Postgres=${pgAssets} ${assetsOk ? "✓" : "✗"}`;
+
+      if (chunksOk && assetsOk) {
+        result.details = `${chunksLine}; ${assetsLine}`;
       } else {
         result.status = "warning";
-        const direction = points > total ? "лишние точки" : "недостающие точки";
-        result.details = `Qdrant: ${points}, Postgres: ${total} (${direction}). Запустите «Пересобрать Qdrant» на вкладке Обслуживание.`;
+        result.details =
+          `${chunksLine}; ${assetsLine}. ` +
+          "Запустите «Пересобрать Qdrant» на вкладке Обслуживание.";
       }
     } catch (error) {
       result.status = "error";
