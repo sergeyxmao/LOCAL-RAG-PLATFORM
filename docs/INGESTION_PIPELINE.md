@@ -41,3 +41,55 @@ queued (pre-upload)  --PUT /jobs/:id/upload-->  running  --done-->  completed
 передан `existingJobId` — `createJob` не вызывается, вместо этого
 `attachDocumentToJob(jobId, doc.id)` пристёгивает свежесозданный
 документ, и `updateJobStartedAt` переводит `queued → running`.
+
+## Фаза OCR (полировка #6A)
+
+После text-extraction в `ingestionService.ingestFileFromRaw` вызывается
+`maybeRunOcr(extracted, {existingJobId})`:
+
+1. Только для PDF (`sourceType === "pdf"`).
+2. `extractorService.extractPdfText` возвращает массив `emptyPages` —
+   страницы, на которых после нативного извлечения текста меньше 10
+   символов (порог `PDF_EMPTY_PAGE_THRESHOLD`).
+3. Если `emptyPages.length === 0` — OCR пропускается.
+4. Если есть пустые страницы:
+   - Читаем настройки `app_settings.ocr`:
+     `{ autoOcrEmptyPages: boolean, ocrAll: boolean }`. По умолчанию
+     `autoOcrEmptyPages: true`.
+   - Если оба флага выключены — OCR пропускается.
+   - Если `ocrAll: true` — OCR применяется ко всем страницам, иначе
+     только к пустым.
+5. `ocrService.isAvailable()` запускает `tesseract --version` и
+   `pdftoppm -v` (5 сек таймаут). Если их нет в системе — OCR
+   тихо пропускается (логируется warn).
+6. Для каждой целевой страницы:
+   - `pdftoppm -r 200 -png -f N -l N <pdf> <tmpdir>/page-N` —
+     рендер в PNG (200 dpi, 60 сек таймаут).
+   - `tesseract <png> - -l rus+eng --psm 6` — распознавание
+     (30 сек таймаут на страницу).
+   - Распознанный текст складывается в `Map<pageNumber, text>`.
+   - `progress_message` существующей задачи обновляется как
+     `OCR: страница X из Y`.
+7. Результаты мерджатся: для каждой страницы выбирается оригинальный
+   текст (если ≥10 симв.) либо OCR-результат. Итог пересобирается
+   в `extracted.text` и `extracted.pageTexts`.
+8. `extractorService.finalizeExtraction` пишет итоговый текст в
+   `parsedRoot`. Дальше — обычный chunking pipeline.
+
+OCR-инструменты ставятся в Dockerfile проекта
+(`tesseract-ocr`, `tesseract-ocr-data-rus`, `tesseract-ocr-data-eng`,
+`poppler-utils`). На локальной разработке должны быть установлены
+вручную. Если их нет — OCR не блокирует основной flow, просто
+пропускает фазу.
+
+Производительность: ~1-3 секунды на страницу A4 200 dpi на типовом
+CPU. PDF на 100 страниц со сканами — 2-5 минут OCR.
+
+## Кнопка «Переиндексировать» документ
+
+`POST /documents/:id/reindex` — удаляет старые chunks/points и
+запускает свежий `ingestFileFromRaw({force: true})` для того же
+исходного файла из `data/raw`. Сохраняются `categories`,
+`nodeIds` и `primaryNodeId` (через
+`postgresProvider.getDocumentNodeIds`). Полезно после включения OCR,
+если документ был загружен раньше и остался без чанков.

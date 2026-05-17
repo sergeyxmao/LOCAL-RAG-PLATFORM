@@ -921,6 +921,46 @@ export async function documentRoutes(app) {
     }
   });
 
+  app.post("/documents/:id/reindex", async (request, reply) => {
+    const document = await app.postgresProvider.getDocumentById(request.params.id);
+    if (!document) {
+      reply.code(404);
+      return { ok: false, error: "Документ не найден" };
+    }
+    if (!document.original_file_path) {
+      reply.code(400);
+      return { ok: false, error: "У документа нет исходного пути для повторной индексации" };
+    }
+
+    const nodeLinks = await app.postgresProvider.getDocumentNodeIds(document.id).catch(() => []);
+    const nodeIds = nodeLinks.map((link) => link.nodeId).filter(Boolean);
+    const primaryNodeId = (nodeLinks.find((link) => link.isPrimary) || {}).nodeId || null;
+    const categories = Array.isArray(document.categories) ? document.categories : [];
+
+    const pointIds = await app.postgresProvider.getDocumentPointIds(document.id);
+    try { await app.qdrantProvider.deletePoints(pointIds); } catch (err) { /* qdrant may be unavailable */ }
+    await app.postgresProvider.deleteDocumentsByIds([document.id]);
+
+    runDetached(async () => {
+      await app.ingestionService.ingestFileFromRaw({
+        relativePath: document.original_file_path,
+        title: document.title,
+        categories,
+        nodeIds,
+        primaryNodeId,
+        force: true,
+        createVisualAssets: false,
+      });
+    });
+
+    reply.code(202);
+    return {
+      ok: true,
+      queued: true,
+      message: "Документ поставлен в очередь на повторную индексацию (включая OCR, если включён).",
+    };
+  });
+
   app.post("/documents/:id/reindex-payload", async (request, reply) => {
     try {
       const document = await app.postgresProvider.getDocumentById(request.params.id);

@@ -1070,3 +1070,73 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
     делает `shell.classList.toggle("is-context-collapsed")` и
     пишет результат в `localStorage`. `.sidebar-context__head`
     удалён.
+- 2026-05-17: полировка #6 Часть A — шесть улучшений: уборка дублирующих
+  подсказок, закрываемое предупреждение об облаке, авто-флип тултипов,
+  параллелизм очереди = 1, OCR для сканов и вкладка «Диагностика».
+  - **GG. Убрана строка «Режим: ответ ИИ — модель ответит...»** Дубль
+    переключателя режима. В `uiV2Chat.js` удалены `<div class="chat-mode-hint">`,
+    DOM-ссылка `modeHint`, динамическое выставление текста и CSS
+    `.chat-mode-hint`.
+  - **HH. Закрываемая плашка «Фрагменты уйдут во внешний API».** Внутри
+    `.cloud-banner` добавлены `<span class="cloud-banner__text">` и
+    `<button class="cloud-banner__close">×</button>`. Клик пишет в
+    `localStorage` ключ `localrag.chat.cloudWarnDismissed.<sessionId>::<provider>`
+    и прячет плашку. При смене провайдера или сессии флаг другой —
+    плашка появится снова. На локальном провайдере — не показывается
+    вовсе.
+  - **II. Тултип «?» не обрезается.** В `.help-tip__bubble` ширина
+    уменьшена с 280px до 240px, добавлен `max-width: calc(100vw - 24px)`.
+    Новый класс-модификатор `.help-tip--flip` переставляет тултип
+    `right: 22px` (открытие влево). JS-хелпер `adjustHelpTip(tip)` на
+    `mouseenter`/`focusin` через делегирование измеряет
+    `getBoundingClientRect()` иконки и добавляет `--flip`, если справа
+    не помещается с запасом 12px. Без любых сторонних библиотек.
+  - **KK. Параллелизм загрузки = 1 + видимость очереди.** В блоке
+    «Загрузка» появился селектор «Параллелизм: 1 / 2 / 3» (значение в
+    `localStorage.localrag.upload.concurrency`, по умолчанию 1).
+    `handleFiles` теперь делает паузу 500мс перед стартом первой
+    загрузки (чтобы пользователь успел увидеть все pre-registered
+    `queued`-задачи и удалить ненужные) и 200мс между файлами для
+    плавности UI. Если пользователь успел нажать «Удалить» на queued —
+    PUT вернёт 404/409, файл считается «отменено», в финальный toast
+    попадает счётчик `отменено: N`.
+  - **DD. OCR для сканов и схем.** Новый сервис
+    `apps/kb-api/src/services/ocrService.js` оборачивает
+    `pdftoppm` + `tesseract` через `child_process.spawn` с таймаутами
+    (30 сек на страницу tesseract, 60 сек на рендер pdftoppm).
+    Расширен `extractorService`: `extractPdfText` теперь возвращает
+    дополнительно `emptyPages` (страницы с <10 символов после
+    извлечения) и `totalPages`. `extractFromFile` больше не пишет
+    parsed-текст сразу — это делает новый `finalizeExtraction`,
+    вызываемый после OCR. В `ingestionService.ingestFileFromRaw`
+    добавлен шаг `maybeRunOcr(extracted, {existingJobId})`: если
+    включено в Настройках и есть пустые страницы — рендерит их в PNG,
+    распознаёт через `tesseract -l rus+eng --psm 6`, прогресс пишется
+    в `progress_message` существующей задачи. OCR-результаты
+    мерджатся в `pageTexts` и итоговый `text`. Новые настройки в
+    `appSettingsService`: `getOcrSettings()` / `updateOcrSettings()` —
+    JSONB-ключ `ocr = { autoOcrEmptyPages: true, ocrAll: false }`,
+    `autoOcrEmptyPages` по умолчанию `true`. Новые REST-эндпоинты
+    `GET /api/v2/settings/ocr` (отдаёт настройки + флаг
+    `available` = доступен ли `tesseract` на машине) и
+    `PATCH /api/v2/settings/ocr`. В UI: новая карточка «OCR
+    (распознавание сканов)» во вкладке «Сервисы» с двумя чекбоксами и
+    индикатором доступности `tesseract`. На странице «База знаний →
+    Документы» в действиях документа добавлена кнопка-иконка
+    «Переиндексировать» (`refresh`) → модалка подтверждения → новый
+    POST `/documents/:id/reindex`, который удаляет старые
+    chunks/points/документ и через `runDetached` запускает свежий
+    `ingestFileFromRaw({force: true})`. Сохраняются categories и
+    primary node (новый метод `postgresProvider.getDocumentNodeIds`).
+  - **EE. Вкладка «Диагностика» в Настройках.** Новый сервис
+    `apps/kb-api/src/services/diagnosticsService.js` запускает 15
+    проверок: системный раздел, дерево, closure-таблица, кэш
+    счётчиков, primary-узлы, Qdrant доступен, Qdrant↔PostgreSQL count,
+    payload-индексы Qdrant, состояние UI, активные задачи (включая
+    pre-upload очередь), ETag дерева, helper для локального открытия,
+    контроль раздела при импорте, последняя синхронизация, фоновая
+    сверка. Новый роут `POST /api/v2/diagnostics`. В UI — новая
+    вкладка «Диагностика» (между «Сервисы» и «Обслуживание») с
+    кнопкой «Запустить проверки», сводкой и сеткой из карточек.
+    Карточки подсвечиваются цветом (зелёный/жёлтый/красный), и
+    отображают `name + details`. Автозапросов нет — только по клику.

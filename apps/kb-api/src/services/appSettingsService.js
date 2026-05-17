@@ -472,6 +472,27 @@ export class AppSettingsService {
     return next;
   }
 
+  async getOcrSettings() {
+    const raw = (await this.getRawValue("ocr")) || {};
+    return {
+      autoOcrEmptyPages: raw.autoOcrEmptyPages !== false,
+      ocrAll: raw.ocrAll === true,
+    };
+  }
+
+  async updateOcrSettings(patch) {
+    const current = await this.getOcrSettings();
+    const next = {
+      autoOcrEmptyPages:
+        patch.autoOcrEmptyPages === undefined
+          ? current.autoOcrEmptyPages
+          : patch.autoOcrEmptyPages === true,
+      ocrAll: patch.ocrAll === undefined ? current.ocrAll : patch.ocrAll === true,
+    };
+    await this.setRawValue("ocr", next);
+    return next;
+  }
+
   async getAllPublic() {
     const cloudProvider = await this.getCloudProviderPublic();
     const cloudProviders = await this.getCloudProvidersPublic();

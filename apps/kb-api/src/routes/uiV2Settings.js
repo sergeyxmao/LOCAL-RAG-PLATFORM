@@ -129,8 +129,10 @@ function renderSettingsCss() {
     .help-tip__bubble {
       position: absolute;
       left: 22px;
+      right: auto;
       top: -8px;
-      width: 280px;
+      width: 240px;
+      max-width: calc(100vw - 24px);
       padding: 8px 10px;
       background: var(--surface);
       color: var(--text);
@@ -146,11 +148,64 @@ function renderSettingsCss() {
       transform: translateY(-2px);
       transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
     }
+    .help-tip--flip .help-tip__bubble {
+      left: auto;
+      right: 22px;
+    }
     .help-tip:hover .help-tip__bubble,
     .help-tip:focus .help-tip__bubble {
       opacity: 1;
       visibility: visible;
       transform: translateY(0);
+    }
+    .diag-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 720px) {
+      .diag-grid { grid-template-columns: 1fr; }
+    }
+    .diag-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: var(--surface-2);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .diag-card:hover { background: var(--surface-hover); }
+    .diag-card__head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .diag-card__dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+    .diag-card--ok .diag-card__dot { background: var(--success); }
+    .diag-card--warning .diag-card__dot { background: #F59E0B; }
+    .diag-card--error .diag-card__dot { background: var(--danger); }
+    .diag-card--ok { border-color: rgba(16, 185, 129, 0.30); }
+    .diag-card--warning { border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.06); }
+    .diag-card--error { border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.06); }
+    .diag-card__name {
+      font-weight: 600;
+      color: var(--text-strong);
+      font-size: 13px;
+      flex: 1;
+      min-width: 0;
+    }
+    .diag-card__details {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
     }
     .settings-anchors { display: flex; flex-direction: column; gap: 2px; }
     .settings-anchor {
@@ -399,6 +454,15 @@ function renderSettingsScript(initialStateJson) {
         promptWarn: document.getElementById("cfgPromptWarn"),
         promptStatus: document.getElementById("promptStatus"),
         servicesList: document.getElementById("cfgServices"),
+        diagList: document.getElementById("cfgDiagList"),
+        diagSummary: document.getElementById("cfgDiagSummary"),
+        diagBanner: document.getElementById("cfgDiagBanner"),
+        diagRun: document.getElementById("cfgDiagRun"),
+        ocrAutoEmpty: document.getElementById("cfgOcrAutoEmpty"),
+        ocrAll: document.getElementById("cfgOcrAll"),
+        ocrSave: document.getElementById("cfgOcrSave"),
+        ocrBanner: document.getElementById("cfgOcrBanner"),
+        ocrAvailability: document.getElementById("cfgOcrAvailability"),
         servicesRefresh: document.getElementById("cfgServicesRefresh"),
         themeSelect: document.getElementById("cfgThemeDefault"),
         themeSave: document.getElementById("cfgThemeSave"),
@@ -786,6 +850,66 @@ function renderSettingsScript(initialStateJson) {
         });
       }
 
+      function loadOcr() {
+        if (!dom.ocrAutoEmpty) return;
+        return api("GET", "/api/v2/settings/ocr").then(function (data) {
+          if (data.ocr) {
+            dom.ocrAutoEmpty.checked = data.ocr.autoOcrEmptyPages !== false;
+            dom.ocrAll.checked = data.ocr.ocrAll === true;
+          }
+          if (dom.ocrAvailability) {
+            dom.ocrAvailability.textContent = data.available
+              ? "tesseract доступен"
+              : "tesseract недоступен — OCR работать не будет";
+          }
+        }).catch(function (err) {
+          if (dom.ocrAvailability) dom.ocrAvailability.textContent = "не удалось получить статус";
+          if (dom.ocrBanner) setBanner(dom.ocrBanner, "Ошибка: " + err.message, "error");
+        });
+      }
+
+      function saveOcr() {
+        if (!dom.ocrAutoEmpty || !dom.ocrSave) return;
+        dom.ocrSave.disabled = true;
+        api("PATCH", "/api/v2/settings/ocr", {
+          autoOcrEmptyPages: dom.ocrAutoEmpty.checked,
+          ocrAll: dom.ocrAll.checked,
+        }).then(function () {
+          setBanner(dom.ocrBanner, "Настройки OCR сохранены.", "success");
+        }).catch(function (err) {
+          setBanner(dom.ocrBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () { dom.ocrSave.disabled = false; });
+      }
+
+      function runDiagnostics() {
+        if (!dom.diagList) return;
+        if (dom.diagRun) dom.diagRun.disabled = true;
+        dom.diagList.innerHTML = '<div class="filters-empty" style="grid-column:1/-1">Запускаем проверки…</div>';
+        setBanner(dom.diagBanner, "", null);
+        api("POST", "/api/v2/diagnostics", {}).then(function (data) {
+          var checks = Array.isArray(data.checks) ? data.checks : [];
+          var summary = data.summary || { ok: 0, warnings: 0, errors: 0, total: checks.length };
+          dom.diagSummary.innerHTML = "Готово: <strong>" + summary.ok + "</strong> OK, " +
+            "<strong>" + summary.warnings + "</strong> требуют внимания, " +
+            "<strong>" + summary.errors + "</strong> с ошибками. Всего: " + summary.total + ".";
+          dom.diagList.innerHTML = checks.map(function (c) {
+            var status = c.status === "error" || c.status === "warning" ? c.status : "ok";
+            return '<div class="diag-card diag-card--' + status + '" data-check-id="' + escapeHtml(c.id || "") + '">' +
+              '<div class="diag-card__head">' +
+                '<span class="diag-card__dot"></span>' +
+                '<span class="diag-card__name">' + escapeHtml(c.name || c.id || "") + '</span>' +
+              '</div>' +
+              '<div class="diag-card__details">' + escapeHtml(c.details || "") + '</div>' +
+              '</div>';
+          }).join("");
+        }).catch(function (err) {
+          setBanner(dom.diagBanner, "Не удалось запустить проверки: " + err.message, "error");
+          dom.diagList.innerHTML = "";
+        }).then(function () {
+          if (dom.diagRun) dom.diagRun.disabled = false;
+        });
+      }
+
       function saveUseDefault() {
         var stored = state.settings && state.settings.cloudProvider ? state.settings.cloudProvider : {};
         api("PATCH", "/api/v2/settings/cloudProvider", { useByDefault: dom.cloudUseDefault.checked }).then(function (data) {
@@ -1092,6 +1216,31 @@ function renderSettingsScript(initialStateJson) {
         });
       }
 
+      function adjustHelpTip(tip) {
+        if (!tip) return;
+        var bubble = tip.querySelector(".help-tip__bubble");
+        if (!bubble) return;
+        // Сбросить flip, замерить с нейтральной позицией
+        tip.classList.remove("help-tip--flip");
+        var rect = tip.getBoundingClientRect();
+        var bubbleWidth = bubble.offsetWidth || 240;
+        // Если справа от иконки не помещается (с запасом 12px) — флипнуть влево
+        if (rect.left + 22 + bubbleWidth + 12 > window.innerWidth) {
+          tip.classList.add("help-tip--flip");
+        }
+      }
+
+      function bindHelpTipAutoFlip() {
+        document.addEventListener("mouseenter", function (event) {
+          var tip = event.target && event.target.closest && event.target.closest(".help-tip");
+          if (tip) adjustHelpTip(tip);
+        }, true);
+        document.addEventListener("focusin", function (event) {
+          var tip = event.target && event.target.closest && event.target.closest(".help-tip");
+          if (tip) adjustHelpTip(tip);
+        });
+      }
+
       function bindEvents() {
         dom.cloudUseDefault.addEventListener("change", saveUseDefault);
         if (dom.cloudAddBtn) dom.cloudAddBtn.addEventListener("click", openAddProviderForm);
@@ -1112,6 +1261,8 @@ function renderSettingsScript(initialStateJson) {
           });
         }
         dom.servicesRefresh.addEventListener("click", loadServices);
+        if (dom.diagRun) dom.diagRun.addEventListener("click", runDiagnostics);
+        if (dom.ocrSave) dom.ocrSave.addEventListener("click", saveOcr);
         dom.themeSave.addEventListener("click", saveTheme);
         dom.maintRebuild.addEventListener("click", triggerRebuild);
         dom.maintReset.addEventListener("click", triggerReset);
@@ -1132,7 +1283,7 @@ function renderSettingsScript(initialStateJson) {
       }
 
       function setActiveSettingsTab(name) {
-        var valid = ["models", "search", "prompt", "services", "maintenance", "backups"];
+        var valid = ["models", "search", "prompt", "services", "diagnostics", "maintenance", "backups"];
         if (valid.indexOf(name) === -1) name = "models";
         document.querySelectorAll("[data-settings-tab]").forEach(function (btn) {
           btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === name);
@@ -1163,11 +1314,13 @@ function renderSettingsScript(initialStateJson) {
       function bootstrap() {
         bindEvents();
         bindSettingsTabs();
+        bindHelpTipAutoFlip();
         var stored = "models";
         try { stored = localStorage.getItem("localrag.settings.activeTab") || "models"; } catch (err) {}
         setActiveSettingsTab(stored);
         loadSettings();
         loadServices();
+        loadOcr();
         loadBackups();
       }
 
@@ -1184,6 +1337,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       <a class="settings-anchor" href="#" data-settings-tab-link="search">Поиск</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="prompt">Системный промпт</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="services">Сервисы</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="diagnostics">Диагностика</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="maintenance">Обслуживание</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="backups">Бэкапы</a>
     </nav>
@@ -1199,6 +1353,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       <button type="button" class="header-tab" data-settings-tab="search" role="tab">${ICONS.search}<span>Поиск</span></button>
       <button type="button" class="header-tab" data-settings-tab="prompt" role="tab">${ICONS.fileText}<span>Промпт</span></button>
       <button type="button" class="header-tab" data-settings-tab="services" role="tab">${ICONS.alertCircle}<span>Сервисы</span></button>
+      <button type="button" class="header-tab" data-settings-tab="diagnostics" role="tab">${ICONS.check}<span>Диагностика</span></button>
       <button type="button" class="header-tab" data-settings-tab="maintenance" role="tab">${ICONS.alertCircle}<span>Обслуживание</span></button>
       <button type="button" class="header-tab" data-settings-tab="backups" role="tab">${ICONS.database}<span>Бэкапы</span></button>
     </nav>
@@ -1287,6 +1442,42 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <div class="services-grid" id="cfgServices">
             <div class="filters-empty">Проверка сервисов…</div>
           </div>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-ocr">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.fileText}<span>OCR (распознавание сканов)</span></div>
+          <span class="settings-hint" id="cfgOcrAvailability">проверяется…</span>
+        </div>
+        <div class="settings-card__body">
+          <label class="settings-toggle">
+            <input type="checkbox" id="cfgOcrAutoEmpty" />
+            <span>Включить автоматический OCR для PDF-страниц без текста</span>
+          </label>
+          <label class="settings-toggle">
+            <input type="checkbox" id="cfgOcrAll" />
+            <span>OCR для всех страниц PDF (медленно)</span>
+          </label>
+          <div class="settings-banner" id="cfgOcrBanner"></div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="cfgOcrSave">${ICONS.check}<span>Сохранить</span></button>
+          </div>
+          <p class="settings-hint">OCR работает локально через <span class="mono">tesseract</span> (rus+eng). Действует только для новых документов; для уже загруженных — кнопка «Переиндексировать» в действиях документа на странице «База знаний → Документы».</p>
+        </div>
+      </div>
+      </div>
+
+      <div class="settings-tab-panel" data-settings-panel="diagnostics">
+      <div class="settings-card" id="section-diagnostics">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.check}<span>Готовность системы</span></div>
+          <button type="button" class="btn btn--accent" id="cfgDiagRun">${ICONS.refresh}<span>Запустить проверки</span></button>
+        </div>
+        <div class="settings-card__body">
+          <div class="settings-banner" id="cfgDiagBanner"></div>
+          <p class="settings-hint" id="cfgDiagSummary">Нажмите «Запустить проверки», чтобы пройтись по 15 пунктам готовности.</p>
+          <div class="diag-grid" id="cfgDiagList"></div>
         </div>
       </div>
       </div>

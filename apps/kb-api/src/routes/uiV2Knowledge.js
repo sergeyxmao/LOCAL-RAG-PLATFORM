@@ -640,6 +640,17 @@ function renderKnowledgeScript(initialStateJson) {
       function saveJobsPageSizeToStorage(n) {
         try { localStorage.setItem("localrag.jobsFilter.pageSize", String(n)); } catch (err) {}
       }
+      function loadUploadConcurrencyFromStorage() {
+        try {
+          var raw = localStorage.getItem("localrag.upload.concurrency");
+          var n = Number(raw);
+          if (n >= 1 && n <= 3) return n;
+        } catch (err) {}
+        return 1;
+      }
+      function saveUploadConcurrencyToStorage(n) {
+        try { localStorage.setItem("localrag.upload.concurrency", String(n)); } catch (err) {}
+      }
 
       var state = {
         nodes: [],
@@ -914,6 +925,7 @@ function renderKnowledgeScript(initialStateJson) {
             '<button type="button" class="kb-doc-action" data-action="open-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Открыть исходник">' + INITIAL_STATE.icons.externalLink + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="move-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Переместить в раздел">' + INITIAL_STATE.icons.folder + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="edit-tags" data-doc-id="' + escapeHtml(doc.id) + '" title="Редактировать теги">' + INITIAL_STATE.icons.tag + '</button>' +
+            '<button type="button" class="kb-doc-action" data-action="reindex-doc" data-doc-id="' + escapeHtml(doc.id) + '" data-doc-title="' + escapeHtml(doc.title || doc.original_file_name || "") + '" title="Переиндексировать (вкл. OCR)">' + INITIAL_STATE.icons.refresh + '</button>' +
             '<button type="button" class="kb-doc-action is-danger" data-action="delete-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Удалить">' + INITIAL_STATE.icons.trash + '</button>' +
             '</div></td>' +
             '</tr>';
@@ -1649,6 +1661,30 @@ function renderKnowledgeScript(initialStateJson) {
         setTimeout(function () { input.focus(); }, 0);
       }
 
+      function confirmReindexDocument(documentId, docTitle) {
+        openConfirmModal({
+          title: "Переиндексировать документ?",
+          bodyHtml:
+            '<p style="margin:0;">Переиндексировать «<strong>' + escapeHtml(docTitle || documentId) + '</strong>»?</p>' +
+            '<ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-muted);">' +
+            '<li>Текущие чанки и векторы документа будут удалены</li>' +
+            '<li>Документ обработается заново, включая OCR (если он включён в Настройках)</li>' +
+            '<li>Это может занять несколько минут — следите за прогрессом в задачах импорта</li>' +
+            '</ul>',
+          confirmLabel: "Переиндексировать",
+          danger: false,
+          onConfirm: function () {
+            api("POST", "/documents/" + encodeURIComponent(documentId) + "/reindex", {}).then(function () {
+              showToast("Документ поставлен в очередь на переиндексацию");
+              state.jobsCollapsed = false;
+              setActiveTab("jobs");
+              loadJobs();
+              refreshNodes({ reloadDocuments: true });
+            }).catch(function (err) { showToast("Не удалось переиндексировать: " + err.message, "error"); });
+          },
+        });
+      }
+
       function openRenameModal(documentId) {
         var doc = state.documents.find(function (d) { return d.id === documentId; });
         if (!doc) { showToast("Документ не найден в списке", "error"); return; }
@@ -1864,12 +1900,15 @@ function renderKnowledgeScript(initialStateJson) {
             showToast("В очередь добавлено " + jobs.length + " из " + files.length, "error");
           }
           loadJobs();
+          showToast("В очередь: " + jobs.length + ". У вас 0.5 сек, чтобы удалить ненужные.");
 
           var queue = files.map(function (file, i) {
             return jobs[i] ? { file: file, jobId: jobs[i].id } : null;
           }).filter(Boolean);
 
-          var concurrency = Math.min(3, queue.length);
+          var concurrency = loadUploadConcurrencyFromStorage();
+          var initialDelayMs = 500;
+          var perFileDelayMs = 200;
           var index = 0;
           var done = 0;
           var ok = 0;
@@ -1894,7 +1933,7 @@ function renderKnowledgeScript(initialStateJson) {
             }).then(function () {
               done += 1;
               loadJobs();
-              pump();
+              setTimeout(pump, perFileDelayMs);
             });
           }
 
@@ -1908,8 +1947,13 @@ function renderKnowledgeScript(initialStateJson) {
             loadJobs();
           }
 
-          if (queue.length === 0) finalize();
-          for (var i = 0; i < concurrency; i++) pump();
+          if (queue.length === 0) {
+            finalize();
+            return;
+          }
+          setTimeout(function () {
+            for (var i = 0; i < Math.min(concurrency, queue.length); i++) pump();
+          }, initialDelayMs);
         }).catch(function (err) {
           showToast("Не удалось зарегистрировать очередь: " + err.message, "error");
         });
@@ -1974,6 +2018,13 @@ function renderKnowledgeScript(initialStateJson) {
         dom.serverImportBtn.addEventListener("click", importServerPath);
         dom.serverPath.addEventListener("keydown", function (e) { if (e.key === "Enter") importServerPath(); });
         dom.nodeSelect.addEventListener("change", function () { /* used during upload */ });
+        var concSelect = document.getElementById("kbUploadConcurrency");
+        if (concSelect) {
+          concSelect.value = String(loadUploadConcurrencyFromStorage());
+          concSelect.addEventListener("change", function () {
+            saveUploadConcurrencyToStorage(Number(concSelect.value) || 1);
+          });
+        }
 
         dom.jobsToggleBtn.addEventListener("click", function () {
           state.jobsCollapsed = !state.jobsCollapsed;
@@ -2109,6 +2160,11 @@ function renderKnowledgeScript(initialStateJson) {
           if (moveBtn) { openMoveModal(moveBtn.getAttribute("data-doc-id")); return; }
           var tagsBtn = event.target.closest("[data-action='edit-tags']");
           if (tagsBtn) { openTagsModal(tagsBtn.getAttribute("data-doc-id")); return; }
+          var reindexBtn = event.target.closest("[data-action='reindex-doc']");
+          if (reindexBtn) {
+            confirmReindexDocument(reindexBtn.getAttribute("data-doc-id"), reindexBtn.getAttribute("data-doc-title") || "");
+            return;
+          }
           var delBtn = event.target.closest("[data-action='delete-doc']");
           if (delBtn) {
             var docId = delBtn.getAttribute("data-doc-id");
@@ -2273,6 +2329,14 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
             <div class="kb-upload-options">
               <label><input type="checkbox" id="kbLightMode" checked /> Лёгкий режим (без превью страниц)</label>
               <label><input type="checkbox" id="kbRecursive" checked /> Включая вложенные папки</label>
+              <label style="display:inline-flex;align-items:center;gap:6px;">
+                Параллелизм загрузки
+                <select id="kbUploadConcurrency" class="kb-select" style="width:auto;">
+                  <option value="1">1 (по очереди)</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                </select>
+              </label>
             </div>
           </div>
         </div>
@@ -2400,6 +2464,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
       tag: ICONS.tag,
       trash: ICONS.trash,
       edit: ICONS.edit,
+      refresh: ICONS.refresh,
     },
   };
 

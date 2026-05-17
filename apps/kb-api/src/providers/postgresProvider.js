@@ -2325,6 +2325,14 @@ export class PostgresProvider {
     };
   }
 
+  async getDocumentNodeIds(documentId) {
+    const result = await this.pool.query(
+      `SELECT node_id, is_primary FROM document_node_links WHERE document_id = $1`,
+      [documentId]
+    );
+    return result.rows.map((row) => ({ nodeId: row.node_id, isPrimary: row.is_primary }));
+  }
+
   async getNodeSyncStatus() {
     const result = await this.pool.query(
       `
