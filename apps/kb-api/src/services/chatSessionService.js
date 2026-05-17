@@ -5,6 +5,7 @@ const DEFAULT_TITLE = "Новый чат";
 const MAX_TITLE_LENGTH = 60;
 const SUPPORTED_MODES = new Set(["answer", "pages"]);
 const SUPPORTED_PROVIDERS = new Set(["local", "cloud"]);
+const CLOUD_PROVIDER_PREFIX = "cloud:";
 const CLOUD_HISTORY_PAIRS = 6;
 
 function buildTitleFromContent(content) {
@@ -27,8 +28,28 @@ function normalizeMode(value) {
 }
 
 function normalizeProvider(value) {
-  const text = String(value ?? "").trim().toLowerCase();
-  return SUPPORTED_PROVIDERS.has(text) ? text : "local";
+  const raw = String(value ?? "").trim();
+  if (!raw) return "local";
+  const lower = raw.toLowerCase();
+  if (SUPPORTED_PROVIDERS.has(lower)) return lower;
+  if (lower.startsWith(CLOUD_PROVIDER_PREFIX)) {
+    const id = raw.slice(CLOUD_PROVIDER_PREFIX.length).trim();
+    return id ? `${CLOUD_PROVIDER_PREFIX}${id}` : "cloud";
+  }
+  return "local";
+}
+
+function isCloudProvider(value) {
+  if (!value) return false;
+  if (value === "cloud") return true;
+  return typeof value === "string" && value.startsWith(CLOUD_PROVIDER_PREFIX);
+}
+
+function extractProviderId(value) {
+  if (typeof value !== "string") return null;
+  if (!value.startsWith(CLOUD_PROVIDER_PREFIX)) return null;
+  const id = value.slice(CLOUD_PROVIDER_PREFIX.length).trim();
+  return id || null;
 }
 
 function normalizeFilters(value) {
@@ -351,7 +372,7 @@ export class ChatSessionService {
       }
     }
 
-    if (session.provider === "cloud") {
+    if (isCloudProvider(session.provider)) {
       return this.generateCloudAnswer(session, question, { options, filters, startedAt });
     }
 
@@ -386,6 +407,41 @@ export class ChatSessionService {
     }
   }
 
+  async resolveCloudForSession(session) {
+    if (!this.appSettingsService) return { provider: null, providerKey: session.provider, fallbackUsed: false };
+    const sessionProvider = session.provider || "cloud";
+    const explicitId = extractProviderId(sessionProvider);
+    if (explicitId) {
+      const exact = await this.appSettingsService.getCloudProviderById(explicitId);
+      if (exact && exact.baseUrl && exact.apiKey && exact.model) {
+        return { provider: exact, providerKey: `${CLOUD_PROVIDER_PREFIX}${exact.id}`, fallbackUsed: false };
+      }
+      const fallback = await this.appSettingsService.getDefaultCloudProvider();
+      if (fallback && fallback.baseUrl && fallback.apiKey && fallback.model) {
+        return {
+          provider: fallback,
+          providerKey: `${CLOUD_PROVIDER_PREFIX}${fallback.id}`,
+          fallbackUsed: true,
+          missingId: explicitId,
+        };
+      }
+      return { provider: null, providerKey: sessionProvider, fallbackUsed: false, missingId: explicitId };
+    }
+    const defaultProvider = await this.appSettingsService.getDefaultCloudProvider();
+    if (defaultProvider && defaultProvider.baseUrl && defaultProvider.apiKey && defaultProvider.model) {
+      return {
+        provider: defaultProvider,
+        providerKey: `${CLOUD_PROVIDER_PREFIX}${defaultProvider.id}`,
+        fallbackUsed: false,
+      };
+    }
+    const legacy = await this.appSettingsService.getCloudProvider();
+    if (legacy && legacy.baseUrl && legacy.apiKey && legacy.model) {
+      return { provider: legacy, providerKey: "cloud", fallbackUsed: false };
+    }
+    return { provider: null, providerKey: sessionProvider, fallbackUsed: false };
+  }
+
   async generateCloudAnswer(session, question, { options, filters, startedAt }) {
     if (!this.appSettingsService || !this.cloudChatProvider) {
       return {
@@ -402,20 +458,21 @@ export class ChatSessionService {
       };
     }
 
-    const cloud = await this.appSettingsService.getCloudProvider();
-    if (!cloud.baseUrl || !cloud.apiKey || !cloud.model) {
+    const resolved = await this.resolveCloudForSession(session);
+    const cloud = resolved.provider;
+    if (!cloud || !cloud.baseUrl || !cloud.apiKey || !cloud.model) {
       return {
-        content: "Облако не настроено. Откройте «Настройки» и заполните параметры облачного провайдера.",
+        content: "Облако не настроено. Откройте «Настройки» и добавьте облачного провайдера.",
         sources: [],
         metadata: {
-          provider: "cloud",
+          provider: resolved.providerKey || "cloud",
           mode: "error",
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
           error: {
             code: "no_credentials",
-            message: "Облако не настроено. Заполните Base URL, API-ключ и модель.",
+            message: "Облако не настроено. Добавьте провайдера в разделе «Настройки».",
           },
         },
       };
@@ -452,11 +509,14 @@ export class ChatSessionService {
         apiKey: cloud.apiKey,
         maxTokens: 1024,
       });
+      const fallbackNote = resolved.fallbackUsed
+        ? "Выбранный провайдер удалён — использован провайдер по умолчанию."
+        : null;
       return {
         content: result.content,
         sources,
         metadata: {
-          provider: "cloud",
+          provider: resolved.providerKey,
           providerName: cloud.name || "Cloud",
           model: result.model || cloud.model,
           mode: "llm",
@@ -465,6 +525,7 @@ export class ChatSessionService {
           searchMode: "answer",
           tokensIn: result.usage?.promptTokens ?? 0,
           tokensOut: result.usage?.completionTokens ?? 0,
+          ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
         },
       };
     } catch (error) {
@@ -475,7 +536,7 @@ export class ChatSessionService {
           : `Сбой облачного провайдера: ${this.describeError(error)}`,
         sources,
         metadata: {
-          provider: "cloud",
+          provider: resolved.providerKey,
           providerName: cloud.name || "Cloud",
           model: cloud.model,
           mode: "error",
@@ -608,7 +669,7 @@ export class ChatSessionService {
 
     if (typeof onSources === "function") onSources(sources);
 
-    if (session.provider === "cloud") {
+    if (isCloudProvider(session.provider)) {
       return this.streamCloudAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal });
     }
     return this.streamLocalAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal });
@@ -709,14 +770,21 @@ export class ChatSessionService {
 
   async streamCloudAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal }) {
     const startedAt = Date.now();
-    const cloud = await this.appSettingsService.getCloudProvider();
-    if (!cloud.baseUrl || !cloud.apiKey || !cloud.model) {
-      const message = "Облако не настроено. Заполните Base URL, API-ключ и модель в Настройках.";
+    const resolved = await this.resolveCloudForSession(session);
+    const cloud = resolved.provider;
+    if (!cloud || !cloud.baseUrl || !cloud.apiKey || !cloud.model) {
+      const message = "Облако не настроено. Откройте «Настройки» и добавьте облачного провайдера.";
       const assistant = await this.insertMessage(session.id, {
         role: "assistant",
         content: message,
         sources,
-        metadata: { provider: "cloud", mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "no_credentials", message } },
+        metadata: {
+          provider: resolved.providerKey || "cloud",
+          mode: "error",
+          filters,
+          durationMs: Date.now() - startedAt,
+          error: { code: "no_credentials", message },
+        },
       });
       if (typeof onError === "function") onError({ code: "no_credentials", message });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -738,12 +806,15 @@ export class ChatSessionService {
         abortSignal,
       });
       const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
+      const fallbackNote = resolved.fallbackUsed
+        ? "Выбранный провайдер удалён — использован провайдер по умолчанию."
+        : null;
       const assistant = await this.insertMessage(session.id, {
         role: "assistant",
         content: finalContent,
         sources,
         metadata: {
-          provider: "cloud",
+          provider: resolved.providerKey,
           providerName: cloud.name || "Cloud",
           model: result.model || cloud.model,
           mode: result.aborted ? "aborted" : "llm",
@@ -753,6 +824,7 @@ export class ChatSessionService {
           searchMode: "answer",
           tokensIn: result.usage?.promptTokens ?? 0,
           tokensOut: result.usage?.completionTokens ?? 0,
+          ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
         },
       });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -765,7 +837,15 @@ export class ChatSessionService {
         role: "assistant",
         content: message,
         sources,
-        metadata: { provider: "cloud", providerName: cloud.name || "Cloud", model: cloud.model, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code, message } },
+        metadata: {
+          provider: resolved.providerKey,
+          providerName: cloud.name || "Cloud",
+          model: cloud.model,
+          mode: "error",
+          filters,
+          durationMs: Date.now() - startedAt,
+          error: { code, message },
+        },
       });
       if (typeof onError === "function") onError({ code, message });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });

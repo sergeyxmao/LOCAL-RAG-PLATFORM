@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { DEFAULT_SYSTEM_PROMPT } from "./systemPromptService.js";
 
 const DEFAULT_CLOUD_PROVIDER = {
@@ -6,6 +8,11 @@ const DEFAULT_CLOUD_PROVIDER = {
   apiKey: "",
   model: "",
   useByDefault: false,
+};
+
+const DEFAULT_CLOUD_PROVIDERS = {
+  providers: [],
+  defaultProviderId: null,
 };
 
 const DEFAULT_THEME = {
@@ -38,6 +45,58 @@ function sanitizeCloudProvider(raw) {
     apiKey: String(safe.apiKey || ""),
     model: String(safe.model || "").trim(),
     useByDefault: safe.useByDefault === true,
+  };
+}
+
+function sanitizeProviderEntry(raw, { fallbackId } = {}) {
+  const safe = raw && typeof raw === "object" ? raw : {};
+  const id =
+    typeof safe.id === "string" && safe.id.trim() ? safe.id.trim() : fallbackId || randomUUID();
+  return {
+    id,
+    name: String(safe.name || "").trim(),
+    baseUrl: String(safe.baseUrl || "").trim().replace(/\/+$/, ""),
+    apiKey: String(safe.apiKey || ""),
+    model: String(safe.model || "").trim(),
+  };
+}
+
+function sanitizeCloudProviders(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { providers: [], defaultProviderId: null };
+  }
+  const rawList = Array.isArray(raw.providers) ? raw.providers : [];
+  const providers = [];
+  const seenIds = new Set();
+  for (const entry of rawList) {
+    const cleaned = sanitizeProviderEntry(entry);
+    if (seenIds.has(cleaned.id)) {
+      cleaned.id = randomUUID();
+    }
+    seenIds.add(cleaned.id);
+    providers.push(cleaned);
+  }
+  let defaultProviderId =
+    typeof raw.defaultProviderId === "string" && raw.defaultProviderId.trim()
+      ? raw.defaultProviderId.trim()
+      : null;
+  if (defaultProviderId && !providers.some((p) => p.id === defaultProviderId)) {
+    defaultProviderId = null;
+  }
+  if (!defaultProviderId && providers.length > 0) {
+    defaultProviderId = providers[0].id;
+  }
+  return { providers, defaultProviderId };
+}
+
+function maskProviderPublic(provider) {
+  return {
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    model: provider.model,
+    apiKey: provider.apiKey ? maskApiKey(provider.apiKey) : "",
+    configured: Boolean(provider.baseUrl && provider.apiKey && provider.model),
   };
 }
 
@@ -125,6 +184,17 @@ export class AppSettingsService {
     return this.retrievalEffective;
   }
 
+  async getMigrationFlag(name) {
+    const all = (await this.getRawValue("migrations")) || {};
+    return all && all[name] === true;
+  }
+
+  async setMigrationFlag(name) {
+    const all = (await this.getRawValue("migrations")) || {};
+    all[name] = true;
+    await this.setRawValue("migrations", all);
+  }
+
   getRetrievalConfigSync() {
     return this.retrievalEffective || this.retrievalDefaults || {};
   }
@@ -210,7 +280,21 @@ export class AppSettingsService {
 
   async getCloudProvider() {
     const raw = (await this.getRawValue("cloudProvider")) || DEFAULT_CLOUD_PROVIDER;
-    return sanitizeCloudProvider(raw);
+    const single = sanitizeCloudProvider(raw);
+    if (single.baseUrl && single.apiKey && single.model) {
+      return single;
+    }
+    const { providers, defaultProviderId } = await this.getCloudProviders();
+    const fallback =
+      providers.find((p) => p.id === defaultProviderId) || providers[0] || null;
+    if (!fallback) return single;
+    return {
+      name: fallback.name,
+      baseUrl: fallback.baseUrl,
+      apiKey: fallback.apiKey,
+      model: fallback.model,
+      useByDefault: single.useByDefault === true,
+    };
   }
 
   async getCloudProviderPublic() {
@@ -221,13 +305,13 @@ export class AppSettingsService {
       model: full.model,
       useByDefault: full.useByDefault,
       apiKey: full.apiKey ? maskApiKey(full.apiKey) : "",
-      configured: Boolean(full.baseUrl && full.apiKey),
+      configured: Boolean(full.baseUrl && full.apiKey && full.model),
     };
   }
 
   async updateCloudProvider(patch) {
-    const current = await this.getCloudProvider();
-    const next = { ...current };
+    const legacyRaw = (await this.getRawValue("cloudProvider")) || DEFAULT_CLOUD_PROVIDER;
+    const next = sanitizeCloudProvider(legacyRaw);
 
     if (patch.name !== undefined) next.name = String(patch.name || "").trim();
     if (patch.baseUrl !== undefined) {
@@ -245,6 +329,137 @@ export class AppSettingsService {
     return this.getCloudProviderPublic();
   }
 
+  async getCloudProviders() {
+    const stored = await this.getRawValue("cloudProviders");
+    if (stored && typeof stored === "object") {
+      return sanitizeCloudProviders(stored);
+    }
+    return this.migrateLegacyCloudProvider();
+  }
+
+  async migrateLegacyCloudProvider() {
+    const legacyRaw = (await this.getRawValue("cloudProvider")) || DEFAULT_CLOUD_PROVIDER;
+    const legacy = sanitizeCloudProvider(legacyRaw);
+    if (legacy.baseUrl && legacy.apiKey && legacy.model) {
+      const provider = sanitizeProviderEntry({
+        id: randomUUID(),
+        name: legacy.name || "Облачный провайдер",
+        baseUrl: legacy.baseUrl,
+        apiKey: legacy.apiKey,
+        model: legacy.model,
+      });
+      const next = { providers: [provider], defaultProviderId: provider.id };
+      await this.setRawValue("cloudProviders", next);
+      return next;
+    }
+    const empty = { providers: [], defaultProviderId: null };
+    await this.setRawValue("cloudProviders", empty);
+    return empty;
+  }
+
+  async getCloudProvidersPublic() {
+    const { providers, defaultProviderId } = await this.getCloudProviders();
+    return {
+      providers: providers.map(maskProviderPublic),
+      defaultProviderId,
+    };
+  }
+
+  async getCloudProviderById(id) {
+    if (!id || typeof id !== "string") return null;
+    const { providers } = await this.getCloudProviders();
+    return providers.find((p) => p.id === id) || null;
+  }
+
+  async getDefaultCloudProvider() {
+    const { providers, defaultProviderId } = await this.getCloudProviders();
+    if (!providers.length) return null;
+    return providers.find((p) => p.id === defaultProviderId) || providers[0] || null;
+  }
+
+  async addCloudProvider({ name, baseUrl, apiKey, model }) {
+    if (!name || !String(name).trim()) {
+      throw Object.assign(new Error("Укажите название провайдера"), { statusCode: 400 });
+    }
+    if (!baseUrl || !String(baseUrl).trim()) {
+      throw Object.assign(new Error("Укажите Base URL провайдера"), { statusCode: 400 });
+    }
+    if (!apiKey || !String(apiKey).trim() || isMaskOrEmpty(apiKey)) {
+      throw Object.assign(new Error("Укажите API-ключ провайдера"), { statusCode: 400 });
+    }
+    if (!model || !String(model).trim()) {
+      throw Object.assign(new Error("Укажите модель провайдера"), { statusCode: 400 });
+    }
+    const current = await this.getCloudProviders();
+    const provider = sanitizeProviderEntry({
+      id: randomUUID(),
+      name,
+      baseUrl,
+      apiKey,
+      model,
+    });
+    const providers = [...current.providers, provider];
+    const defaultProviderId = current.defaultProviderId || provider.id;
+    await this.setRawValue("cloudProviders", { providers, defaultProviderId });
+    return { provider: maskProviderPublic(provider), defaultProviderId };
+  }
+
+  async updateCloudProviderById(id, patch) {
+    const current = await this.getCloudProviders();
+    const idx = current.providers.findIndex((p) => p.id === id);
+    if (idx < 0) {
+      throw Object.assign(new Error("Провайдер не найден"), { statusCode: 404 });
+    }
+    const before = current.providers[idx];
+    const next = { ...before };
+    if (patch.name !== undefined) next.name = String(patch.name || "").trim();
+    if (patch.baseUrl !== undefined) {
+      next.baseUrl = String(patch.baseUrl || "").trim().replace(/\/+$/, "");
+    }
+    if (patch.model !== undefined) next.model = String(patch.model || "").trim();
+    if (patch.apiKey !== undefined && !isMaskOrEmpty(patch.apiKey)) {
+      next.apiKey = String(patch.apiKey);
+    }
+    const cleaned = sanitizeProviderEntry({ ...next, id });
+    const providers = current.providers.slice();
+    providers[idx] = cleaned;
+    await this.setRawValue("cloudProviders", {
+      providers,
+      defaultProviderId: current.defaultProviderId || cleaned.id,
+    });
+    return maskProviderPublic(cleaned);
+  }
+
+  async deleteCloudProvider(id) {
+    const current = await this.getCloudProviders();
+    if (!current.providers.some((p) => p.id === id)) {
+      throw Object.assign(new Error("Провайдер не найден"), { statusCode: 404 });
+    }
+    if (current.defaultProviderId === id && current.providers.length > 1) {
+      throw Object.assign(
+        new Error("Сначала назначьте другого провайдера по умолчанию — этот используется как default."),
+        { statusCode: 409, code: "default_in_use" }
+      );
+    }
+    const providers = current.providers.filter((p) => p.id !== id);
+    const defaultProviderId =
+      current.defaultProviderId === id ? providers[0]?.id || null : current.defaultProviderId;
+    await this.setRawValue("cloudProviders", { providers, defaultProviderId });
+    return { providers: providers.map(maskProviderPublic), defaultProviderId };
+  }
+
+  async setDefaultCloudProvider(providerId) {
+    const current = await this.getCloudProviders();
+    if (!current.providers.some((p) => p.id === providerId)) {
+      throw Object.assign(new Error("Провайдер не найден"), { statusCode: 404 });
+    }
+    await this.setRawValue("cloudProviders", {
+      providers: current.providers,
+      defaultProviderId: providerId,
+    });
+    return { defaultProviderId: providerId };
+  }
+
   async getTheme() {
     const raw = (await this.getRawValue("theme")) || DEFAULT_THEME;
     return sanitizeTheme(raw);
@@ -259,10 +474,11 @@ export class AppSettingsService {
 
   async getAllPublic() {
     const cloudProvider = await this.getCloudProviderPublic();
+    const cloudProviders = await this.getCloudProvidersPublic();
     const theme = await this.getTheme();
     const retrieval = await this.getRetrievalPublic();
     const systemPrompt = await this.getSystemPrompt();
-    return { cloudProvider, theme, retrieval, systemPrompt };
+    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt };
   }
 }
 

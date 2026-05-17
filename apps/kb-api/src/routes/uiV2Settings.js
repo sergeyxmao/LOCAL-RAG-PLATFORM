@@ -194,6 +194,75 @@ function renderSettingsCss() {
     .danger-block__text { font-size: 13px; color: var(--text); }
     .danger-block__text strong { color: var(--danger); }
 
+    .provider-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--surface-2);
+    }
+    .provider-card__head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .provider-card__name {
+      font-weight: 600;
+      color: var(--text-strong);
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .provider-card__badge {
+      font-size: 11px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .provider-card__badge--warn {
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.10);
+    }
+    .provider-card__meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .provider-card__meta-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .provider-card__actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .provider-card__form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+    }
+    .provider-add-form {
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--surface);
+    }
+
     @media (max-width: 720px) {
       .settings-row, .settings-row--triple { grid-template-columns: 1fr; }
       .services-grid { grid-template-columns: 1fr; }
@@ -211,6 +280,7 @@ function renderSettingsScript(initialStateJson) {
         retrieval: null,
         cloudDraft: null,
         cloudDirty: false,
+        providerEditId: null,
         services: null,
         resetArmed: false,
       };
@@ -221,9 +291,12 @@ function renderSettingsScript(initialStateJson) {
         cloudApiKey: document.getElementById("cfgCloudApiKey"),
         cloudModel: document.getElementById("cfgCloudModel"),
         cloudUseDefault: document.getElementById("cfgCloudUseDefault"),
-        cloudTest: document.getElementById("cfgCloudTest"),
-        cloudSave: document.getElementById("cfgCloudSave"),
         cloudBanner: document.getElementById("cfgCloudBanner"),
+        cloudList: document.getElementById("cfgCloudList"),
+        cloudAddBtn: document.getElementById("cfgCloudAddBtn"),
+        cloudAddForm: document.getElementById("cfgCloudAddForm"),
+        cloudAddSave: document.getElementById("cfgCloudAddSave"),
+        cloudAddCancel: document.getElementById("cfgCloudAddCancel"),
         chatModel: document.getElementById("cfgChatModel"),
         embedModel: document.getElementById("cfgEmbedModel"),
         ollamaUrl: document.getElementById("cfgOllamaUrl"),
@@ -422,14 +495,81 @@ function renderSettingsScript(initialStateJson) {
 
       function renderCloud() {
         var cp = state.settings && state.settings.cloudProvider;
-        if (!cp) return;
-        if (!state.cloudDirty) {
-          dom.cloudName.value = cp.name || "";
-          dom.cloudBaseUrl.value = cp.baseUrl || "";
-          dom.cloudModel.value = cp.model || "";
-          dom.cloudApiKey.value = cp.apiKey || "";
+        if (cp) {
           dom.cloudUseDefault.checked = cp.useByDefault === true;
         }
+        renderProvidersList();
+      }
+
+      function renderProvidersList() {
+        if (!dom.cloudList) return;
+        var providers = (state.settings && state.settings.cloudProviders && state.settings.cloudProviders.providers) || [];
+        var defaultId = (state.settings && state.settings.cloudProviders && state.settings.cloudProviders.defaultProviderId) || null;
+        if (!providers.length) {
+          dom.cloudList.innerHTML = '<div class="filters-empty">Облачных провайдеров пока нет. Добавьте первого ниже.</div>';
+          return;
+        }
+        var html = providers.map(function (p) {
+          var badge = '';
+          if (defaultId === p.id) {
+            badge = '<span class="provider-card__badge">по умолчанию</span>';
+          } else if (!p.configured) {
+            badge = '<span class="provider-card__badge provider-card__badge--warn">не настроен</span>';
+          }
+          var keyDisplay = p.apiKey ? p.apiKey : '<span style="opacity:0.6">пусто</span>';
+          var editForm = state.providerEditId === p.id
+            ? renderProviderEditForm(p)
+            : '';
+          return '<div class="provider-card" data-provider-id="' + escapeHtml(p.id) + '">' +
+            '<div class="provider-card__head">' +
+              '<span aria-hidden="true">⚡</span>' +
+              '<span class="provider-card__name" title="' + escapeHtml(p.name || "") + '">' + escapeHtml(p.name || "(без названия)") + '</span>' +
+              badge +
+            '</div>' +
+            '<div class="provider-card__meta">' +
+              '<span class="provider-card__meta-row">Модель: <span class="mono">' + escapeHtml(p.model || "—") + '</span></span>' +
+              '<span class="provider-card__meta-row">Base URL: <span class="mono">' + escapeHtml(p.baseUrl || "—") + '</span></span>' +
+              '<span class="provider-card__meta-row">Ключ: <span class="mono">' + keyDisplay + '</span></span>' +
+            '</div>' +
+            '<div class="provider-card__actions">' +
+              '<button type="button" class="btn" data-action="provider-test" data-provider-id="' + escapeHtml(p.id) + '">Тест подключения</button>' +
+              '<button type="button" class="btn" data-action="provider-edit" data-provider-id="' + escapeHtml(p.id) + '">Редактировать</button>' +
+              (defaultId === p.id
+                ? ''
+                : '<button type="button" class="btn" data-action="provider-default" data-provider-id="' + escapeHtml(p.id) + '">Сделать по умолчанию</button>') +
+              '<button type="button" class="btn btn--danger" data-action="provider-delete" data-provider-id="' + escapeHtml(p.id) + '">Удалить</button>' +
+            '</div>' +
+            editForm +
+            '</div>';
+        }).join("");
+        dom.cloudList.innerHTML = html;
+      }
+
+      function renderProviderEditForm(p) {
+        return '<div class="provider-card__form" data-edit-form="' + escapeHtml(p.id) + '">' +
+          '<div class="settings-row">' +
+            '<div class="settings-field">' +
+              '<label>Название</label>' +
+              '<input class="settings-input" data-edit-field="name" type="text" value="' + escapeHtml(p.name || "") + '" />' +
+            '</div>' +
+            '<div class="settings-field">' +
+              '<label>Модель</label>' +
+              '<input class="settings-input settings-input--mono" data-edit-field="model" type="text" value="' + escapeHtml(p.model || "") + '" />' +
+            '</div>' +
+          '</div>' +
+          '<div class="settings-field">' +
+            '<label>Base URL</label>' +
+            '<input class="settings-input settings-input--mono" data-edit-field="baseUrl" type="text" value="' + escapeHtml(p.baseUrl || "") + '" />' +
+          '</div>' +
+          '<div class="settings-field">' +
+            '<label>API Key (оставьте маску, чтобы не менять)</label>' +
+            '<input class="settings-input settings-input--mono" data-edit-field="apiKey" type="password" value="' + escapeHtml(p.apiKey || "") + '" autocomplete="off" />' +
+          '</div>' +
+          '<div class="settings-actions">' +
+            '<button type="button" class="btn btn--ghost" data-action="provider-cancel">Отмена</button>' +
+            '<button type="button" class="btn btn--accent" data-action="provider-save" data-provider-id="' + escapeHtml(p.id) + '">Сохранить</button>' +
+          '</div>' +
+        '</div>';
       }
 
       function renderTheme() {
@@ -471,6 +611,9 @@ function renderSettingsScript(initialStateJson) {
           state.models = data.models;
           state.retrieval = (data.settings && data.settings.retrieval) || data.retrieval;
           state.systemPrompt = data.settings && data.settings.systemPrompt;
+          if (!state.settings.cloudProviders) {
+            state.settings.cloudProviders = { providers: [], defaultProviderId: null };
+          }
           renderModels();
           renderRetrieval();
           renderCloud();
@@ -543,48 +686,141 @@ function renderSettingsScript(initialStateJson) {
         });
       }
 
-      function saveCloud() {
-        var apiKeyValue = dom.cloudApiKey.value;
-        var stored = state.settings && state.settings.cloudProvider ? state.settings.cloudProvider.apiKey : "";
-        var apiKeyToSend = apiKeyValue;
-        if (apiKeyValue === stored || (apiKeyValue || "").indexOf("•") !== -1) {
-          apiKeyToSend = ""; // server keeps existing
-        }
+      function saveUseDefault() {
+        var stored = state.settings && state.settings.cloudProvider ? state.settings.cloudProvider : {};
+        api("PATCH", "/api/v2/settings/cloudProvider", { useByDefault: dom.cloudUseDefault.checked }).then(function (data) {
+          state.settings.cloudProvider = data.cloudProvider;
+          setBanner(dom.cloudBanner, dom.cloudUseDefault.checked
+            ? "Новые чаты будут открываться на провайдере по умолчанию."
+            : "Новые чаты будут открываться на локальной модели.", "success");
+        }).catch(function (err) {
+          setBanner(dom.cloudBanner, "Не удалось сохранить: " + err.message, "error");
+          dom.cloudUseDefault.checked = stored.useByDefault === true;
+        });
+      }
+
+      function openAddProviderForm() {
+        if (!dom.cloudAddForm) return;
+        dom.cloudName.value = "";
+        dom.cloudModel.value = "";
+        dom.cloudBaseUrl.value = "";
+        dom.cloudApiKey.value = "";
+        dom.cloudAddForm.style.display = "flex";
+        if (dom.cloudAddBtn) dom.cloudAddBtn.style.display = "none";
+        setTimeout(function () { dom.cloudName.focus(); }, 0);
+      }
+
+      function closeAddProviderForm() {
+        if (!dom.cloudAddForm) return;
+        dom.cloudAddForm.style.display = "none";
+        if (dom.cloudAddBtn) dom.cloudAddBtn.style.display = "";
+      }
+
+      function addProvider() {
         var payload = {
           name: dom.cloudName.value.trim(),
           baseUrl: dom.cloudBaseUrl.value.trim(),
           model: dom.cloudModel.value.trim(),
-          useByDefault: dom.cloudUseDefault.checked,
+          apiKey: dom.cloudApiKey.value,
         };
-        if (apiKeyToSend !== "") payload.apiKey = apiKeyToSend;
-
-        dom.cloudSave.disabled = true;
-        api("PATCH", "/api/v2/settings/cloudProvider", payload).then(function (data) {
-          state.settings.cloudProvider = data.cloudProvider;
-          state.cloudDirty = false;
-          renderCloud();
-          setBanner(dom.cloudBanner, "Настройки облака сохранены.", "success");
-          showToast("Настройки облака сохранены");
+        if (!payload.name || !payload.baseUrl || !payload.apiKey || !payload.model) {
+          setBanner(dom.cloudBanner, "Заполните все поля: название, Base URL, ключ, модель.", "error");
+          return;
+        }
+        dom.cloudAddSave.disabled = true;
+        api("POST", "/api/v2/settings/cloudProviders", payload).then(function () {
+          setBanner(dom.cloudBanner, "Провайдер «" + payload.name + "» добавлен.", "success");
+          showToast("Провайдер добавлен");
+          closeAddProviderForm();
+          return loadCloudProviders();
         }).catch(function (err) {
-          setBanner(dom.cloudBanner, "Не удалось сохранить: " + err.message, "error");
-        }).then(function () { dom.cloudSave.disabled = false; });
+          setBanner(dom.cloudBanner, "Не удалось добавить: " + err.message, "error");
+        }).then(function () { dom.cloudAddSave.disabled = false; });
       }
 
-      function testCloud() {
-        var apiKeyValue = dom.cloudApiKey.value;
-        var payload = {
-          baseUrl: dom.cloudBaseUrl.value.trim(),
-          model: dom.cloudModel.value.trim(),
-        };
-        if (apiKeyValue && apiKeyValue.indexOf("•") === -1) payload.apiKey = apiKeyValue;
+      function loadCloudProviders() {
+        return api("GET", "/api/v2/settings/cloudProviders").then(function (data) {
+          if (!state.settings) state.settings = {};
+          state.settings.cloudProviders = { providers: data.providers || [], defaultProviderId: data.defaultProviderId || null };
+          renderProvidersList();
+        });
+      }
 
-        dom.cloudTest.disabled = true;
+      function startEditProvider(id) {
+        state.providerEditId = id;
+        renderProvidersList();
+      }
+
+      function cancelEditProvider() {
+        state.providerEditId = null;
+        renderProvidersList();
+      }
+
+      function collectEditFormValues(formEl) {
+        var fields = formEl.querySelectorAll("[data-edit-field]");
+        var values = {};
+        fields.forEach(function (input) {
+          values[input.getAttribute("data-edit-field")] = input.value;
+        });
+        return values;
+      }
+
+      function saveProviderEdit(id) {
+        var formEl = dom.cloudList.querySelector('[data-edit-form="' + id + '"]');
+        if (!formEl) return;
+        var v = collectEditFormValues(formEl);
+        var payload = {
+          name: (v.name || "").trim(),
+          baseUrl: (v.baseUrl || "").trim(),
+          model: (v.model || "").trim(),
+        };
+        if (v.apiKey !== undefined && v.apiKey !== null && v.apiKey.indexOf("•") === -1 && v.apiKey.trim() !== "") {
+          payload.apiKey = v.apiKey;
+        }
+        api("PATCH", "/api/v2/settings/cloudProviders/" + encodeURIComponent(id), payload).then(function () {
+          state.providerEditId = null;
+          setBanner(dom.cloudBanner, "Провайдер обновлён.", "success");
+          showToast("Сохранено");
+          return loadCloudProviders();
+        }).catch(function (err) {
+          setBanner(dom.cloudBanner, "Не удалось сохранить: " + err.message, "error");
+        });
+      }
+
+      function deleteProvider(id) {
+        var providers = (state.settings.cloudProviders && state.settings.cloudProviders.providers) || [];
+        var target = providers.find(function (p) { return p.id === id; });
+        var name = target ? (target.name || "провайдер") : "провайдер";
+        if (!window.confirm("Удалить провайдера «" + name + "»? Действие необратимо.")) return;
+        api("DELETE", "/api/v2/settings/cloudProviders/" + encodeURIComponent(id)).then(function () {
+          setBanner(dom.cloudBanner, "Провайдер удалён.", "success");
+          return loadCloudProviders();
+        }).catch(function (err) {
+          var msg = err.message || "неизвестная ошибка";
+          if (err.status === 409) {
+            setBanner(dom.cloudBanner, msg, "error");
+          } else {
+            setBanner(dom.cloudBanner, "Не удалось удалить: " + msg, "error");
+          }
+        });
+      }
+
+      function setDefaultProvider(id) {
+        api("PATCH", "/api/v2/settings/cloudProviders/default", { providerId: id }).then(function () {
+          setBanner(dom.cloudBanner, "Провайдер по умолчанию обновлён.", "success");
+          return loadCloudProviders();
+        }).catch(function (err) {
+          setBanner(dom.cloudBanner, "Не удалось сменить дефолт: " + err.message, "error");
+        });
+      }
+
+      function testProvider(id) {
         setBanner(dom.cloudBanner, "Идёт проверка подключения…", "success");
-        api("POST", "/api/v2/settings/cloudProvider/test", payload).then(function (data) {
+        api("POST", "/api/v2/settings/cloudProviders/" + encodeURIComponent(id) + "/test", {}).then(function (data) {
           if (data.ok) {
             setBanner(
               dom.cloudBanner,
-              "Облако ответило: «" + (data.response || "") + "» · " + (data.latencyMs || 0) + " мс · модель " + (data.model || payload.model),
+              "Облако ответило: «" + (data.response || "") + "» · " + (data.latencyMs || 0) + " мс · модель " + (data.model || ""),
               "success"
             );
           } else {
@@ -592,7 +828,7 @@ function renderSettingsScript(initialStateJson) {
           }
         }).catch(function (err) {
           setBanner(dom.cloudBanner, "Сбой проверки: " + err.message, "error");
-        }).then(function () { dom.cloudTest.disabled = false; });
+        });
       }
 
       function saveTheme() {
@@ -757,13 +993,24 @@ function renderSettingsScript(initialStateJson) {
       }
 
       function bindEvents() {
-        ["input", "change"].forEach(function (ev) {
-          [dom.cloudName, dom.cloudBaseUrl, dom.cloudApiKey, dom.cloudModel, dom.cloudUseDefault].forEach(function (el) {
-            el.addEventListener(ev, function () { state.cloudDirty = true; });
+        dom.cloudUseDefault.addEventListener("change", saveUseDefault);
+        if (dom.cloudAddBtn) dom.cloudAddBtn.addEventListener("click", openAddProviderForm);
+        if (dom.cloudAddCancel) dom.cloudAddCancel.addEventListener("click", closeAddProviderForm);
+        if (dom.cloudAddSave) dom.cloudAddSave.addEventListener("click", addProvider);
+        if (dom.cloudList) {
+          dom.cloudList.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-action]");
+            if (!btn) return;
+            var action = btn.getAttribute("data-action");
+            var providerId = btn.getAttribute("data-provider-id");
+            if (action === "provider-edit") startEditProvider(providerId);
+            else if (action === "provider-cancel") cancelEditProvider();
+            else if (action === "provider-save") saveProviderEdit(providerId);
+            else if (action === "provider-delete") deleteProvider(providerId);
+            else if (action === "provider-default") setDefaultProvider(providerId);
+            else if (action === "provider-test") testProvider(providerId);
           });
-        });
-        dom.cloudSave.addEventListener("click", saveCloud);
-        dom.cloudTest.addEventListener("click", testCloud);
+        }
         dom.servicesRefresh.addEventListener("click", loadServices);
         dom.themeSave.addEventListener("click", saveTheme);
         dom.maintRebuild.addEventListener("click", triggerRebuild);
@@ -843,38 +1090,46 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
 
       <div class="settings-card" id="section-cloud">
         <div class="settings-card__head">
-          <div class="settings-card__title">${ICONS.upload}<span>Облачный ИИ</span></div>
+          <div class="settings-card__title">${ICONS.upload}<span>Облачные провайдеры</span></div>
           <span class="settings-hint">OpenAI-совместимый API · подробности — <a href="/docs/CLOUD_PROVIDER.md" style="color:var(--accent)" target="_blank">CLOUD_PROVIDER.md</a></span>
         </div>
         <div class="settings-card__body">
-          <div class="settings-row">
-            <div class="settings-field">
-              <label for="cfgCloudName">Название провайдера</label>
-              <input class="settings-input" id="cfgCloudName" type="text" placeholder="Например: DeepSeek" />
-            </div>
-            <div class="settings-field">
-              <label for="cfgCloudModel">Модель</label>
-              <input class="settings-input settings-input--mono" id="cfgCloudModel" type="text" placeholder="Например: deepseek-chat" />
-            </div>
-          </div>
-          <div class="settings-field">
-            <label for="cfgCloudBaseUrl">Base URL</label>
-            <input class="settings-input settings-input--mono" id="cfgCloudBaseUrl" type="text" placeholder="https://api.deepseek.com" />
-          </div>
-          <div class="settings-field">
-            <label for="cfgCloudApiKey">API Key</label>
-            <input class="settings-input settings-input--mono" id="cfgCloudApiKey" type="password" placeholder="sk-..." autocomplete="off" />
+          <div class="settings-banner" id="cfgCloudBanner"></div>
+          <div id="cfgCloudList" style="display:flex;flex-direction:column;gap:10px;">
+            <div class="filters-empty">Загрузка списка провайдеров…</div>
           </div>
           <label class="settings-toggle">
             <input type="checkbox" id="cfgCloudUseDefault" />
             <span>Использовать облако по умолчанию для новых чатов</span>
           </label>
-          <div class="settings-banner" id="cfgCloudBanner"></div>
           <div class="settings-actions">
-            <button type="button" class="btn" id="cfgCloudTest">${ICONS.check}<span>Проверить подключение</span></button>
-            <button type="button" class="btn btn--accent" id="cfgCloudSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--accent" id="cfgCloudAddBtn">${ICONS.plus}<span>Добавить провайдера</span></button>
           </div>
-          <p class="settings-hint">Ключ хранится в БД проекта в plaintext (см. предупреждения в <span class="mono">CLOUD_PROVIDER.md</span>). В API возвращается замаскированным, в логи не пишется. В чате выбор «Локально/Облако» — в шапке.</p>
+          <div class="provider-add-form" id="cfgCloudAddForm" style="display:none">
+            <div class="settings-row">
+              <div class="settings-field">
+                <label for="cfgCloudName">Название провайдера</label>
+                <input class="settings-input" id="cfgCloudName" type="text" placeholder="Например: DeepSeek" />
+              </div>
+              <div class="settings-field">
+                <label for="cfgCloudModel">Модель</label>
+                <input class="settings-input settings-input--mono" id="cfgCloudModel" type="text" placeholder="Например: deepseek-chat" />
+              </div>
+            </div>
+            <div class="settings-field">
+              <label for="cfgCloudBaseUrl">Base URL</label>
+              <input class="settings-input settings-input--mono" id="cfgCloudBaseUrl" type="text" placeholder="https://api.deepseek.com" />
+            </div>
+            <div class="settings-field">
+              <label for="cfgCloudApiKey">API Key</label>
+              <input class="settings-input settings-input--mono" id="cfgCloudApiKey" type="password" placeholder="sk-..." autocomplete="off" />
+            </div>
+            <div class="settings-actions">
+              <button type="button" class="btn btn--ghost" id="cfgCloudAddCancel">Отмена</button>
+              <button type="button" class="btn btn--accent" id="cfgCloudAddSave">${ICONS.check}<span>Добавить</span></button>
+            </div>
+          </div>
+          <p class="settings-hint">Ключи хранятся в БД проекта в plaintext (см. <span class="mono">CLOUD_PROVIDER.md</span>). В API возвращаются замаскированными, в логи не пишутся. В чате выбор провайдера — в шапке.</p>
         </div>
       </div>
 

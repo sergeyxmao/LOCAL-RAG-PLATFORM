@@ -1434,11 +1434,24 @@ function renderKnowledgeScript(initialStateJson) {
             suggestions.appendChild(b);
           });
         }
+        function parseTagInput(raw) {
+          return String(raw || "")
+            .split(/[,;\n]+/)
+            .map(function (s) { return s.trim().replace(/^#+/, ""); })
+            .filter(function (s) { return s.length > 0 && s.length <= 64; });
+        }
         function addTag(raw) {
-          var v = String(raw || "").trim().replace(/^#+/, "");
-          if (!v) return;
-          if (currentTags.indexOf(v) !== -1) { input.value = ""; return; }
-          currentTags.push(v);
+          var parts = parseTagInput(raw);
+          if (!parts.length) return;
+          var seen = {};
+          currentTags.forEach(function (t) { seen[String(t).toLowerCase()] = true; });
+          parts.forEach(function (p) {
+            var key = p.toLowerCase();
+            if (!seen[key]) {
+              currentTags.push(p);
+              seen[key] = true;
+            }
+          });
           input.value = "";
           renderTagsBox();
           renderSuggestions();
@@ -1490,7 +1503,7 @@ function renderKnowledgeScript(initialStateJson) {
           var payload = nodeId ? { nodeIds: [nodeId], primaryNodeId: nodeId } : { nodeIds: [] };
           api("PATCH", "/documents/" + documentId + "/nodes", payload).then(function () {
             closeModal();
-            return loadDocuments();
+            return refreshNodes({ reloadDocuments: true });
           }).catch(function (err) { showToast("Не удалось переместить: " + err.message, "error"); });
         });
         var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
@@ -1531,14 +1544,14 @@ function renderKnowledgeScript(initialStateJson) {
           api("POST", "/documents/bulk-link", { documentIds: docIds, mode: "replace", ...payload }).then(function () {
             closeModal();
             state.selectedDocIds = new Set();
-            return loadDocuments();
+            return refreshNodes({ reloadDocuments: true });
           }).catch(function (err) {
             Promise.all(docIds.map(function (id) {
               return api("PATCH", "/documents/" + id + "/nodes", payload);
             })).then(function () {
               closeModal();
               state.selectedDocIds = new Set();
-              return loadDocuments();
+              return refreshNodes({ reloadDocuments: true });
             }).catch(function (err2) { showToast("Ошибка массового перемещения: " + err2.message, "error"); });
           });
         });
@@ -1573,7 +1586,7 @@ function renderKnowledgeScript(initialStateJson) {
             ids.forEach(function (id) { state.selectedDocIds.delete(id); });
             if (failed.length) showToast("Удалено: " + (ids.length - failed.length) + ", ошибок: " + failed.length, "error");
             else showToast(ids.length === 1 ? "Документ удалён" : ("Удалено: " + ids.length));
-            return loadDocuments().then(loadNodes);
+            return refreshNodes({ reloadDocuments: true });
           });
         });
         var cancelBtn = makeButton("Отмена", "btn--ghost", closeModal);
@@ -1617,27 +1630,40 @@ function renderKnowledgeScript(initialStateJson) {
         showToast("Загрузка " + files.length + " файла(ов)…");
         state.jobsCollapsed = false;
         renderJobs();
-        var results = [];
-        var processed = 0;
-        files.forEach(function (file) {
+
+        var concurrency = Math.min(3, files.length);
+        var index = 0;
+        var done = 0;
+        var ok = 0;
+        var fail = 0;
+
+        function next() {
+          if (index >= files.length) {
+            if (done === files.length) finalize();
+            return;
+          }
+          var file = files[index++];
           var rel = file.webkitRelativePath || file.relativePath || file.name;
-          uploadFileViaMultipart(file, rel).then(function (data) {
-            results.push({ ok: true, file: file.name, data: data });
+          uploadFileViaMultipart(file, rel).then(function () {
+            ok += 1;
           }).catch(function (err) {
-            results.push({ ok: false, file: file.name, error: err.message });
+            fail += 1;
+            // eslint-disable-next-line no-console
+            console.warn("Upload failed for", file.name, err);
           }).then(function () {
-            processed++;
-            if (processed === files.length) {
-              var ok = results.filter(function (r) { return r.ok; }).length;
-              var fail = results.length - ok;
-              if (fail) showToast("Загружено: " + ok + ", ошибок: " + fail, fail ? "error" : undefined);
-              else showToast("Все файлы загружены: " + ok);
-              loadDocuments();
-              loadJobs();
-              loadNodes();
-            }
+            done += 1;
+            next();
           });
-        });
+        }
+
+        function finalize() {
+          if (fail) showToast("Загружено: " + ok + ", ошибок: " + fail, fail ? "error" : undefined);
+          else showToast("Все файлы загружены: " + ok);
+          refreshNodes({ reloadDocuments: true });
+          loadJobs();
+        }
+
+        for (var i = 0; i < concurrency; i++) next();
       }
 
       function importServerPath() {

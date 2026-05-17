@@ -103,38 +103,89 @@ function renderChatCss() {
       gap: 10px;
       flex-wrap: wrap;
     }
-    .provider-toggle {
-      display: inline-flex;
-      background: var(--surface-2);
-      border-radius: 8px;
-      padding: 4px;
-      gap: 2px;
+    .provider-picker {
+      position: relative;
     }
-    .provider-toggle__btn {
-      border: none;
-      background: transparent;
-      color: var(--text-muted);
-      padding: 6px 12px;
-      border-radius: 6px;
+    .provider-picker__trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
       font-size: 12px;
       font-weight: 500;
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
       cursor: pointer;
     }
-    .provider-toggle__btn.is-active {
+    .provider-picker__trigger:hover { background: var(--surface-hover); }
+    .provider-picker__trigger[disabled] { opacity: 0.6; cursor: not-allowed; }
+    .provider-picker__caret { font-size: 9px; opacity: 0.6; }
+    .provider-picker__menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      min-width: 240px;
       background: var(--surface);
-      color: var(--text-strong);
-      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      padding: 6px;
+      z-index: 30;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
     }
-    html[data-theme="dark"] .provider-toggle__btn.is-active {
-      background: var(--accent-soft);
+    .provider-picker.is-open .provider-picker__menu { display: flex; }
+    .provider-picker__item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text);
+      border: none;
+      background: transparent;
+      text-align: left;
+      width: 100%;
+    }
+    .provider-picker__item:hover { background: var(--surface-2); }
+    .provider-picker__item.is-active { background: var(--accent-soft); color: var(--accent); }
+    .provider-picker__item-check {
+      width: 14px;
+      display: inline-flex;
+      justify-content: center;
+      flex: 0 0 14px;
       color: var(--accent);
+      font-size: 12px;
     }
-    .provider-toggle__btn[disabled] {
-      opacity: 0.5;
-      cursor: not-allowed;
+    .provider-picker__item-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .provider-picker__item-badge {
+      font-size: 10px;
+      color: var(--text-muted);
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--surface-2);
+    }
+    .provider-picker.is-open .provider-picker__item.is-active .provider-picker__item-badge { background: var(--surface); }
+    .provider-picker__divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+    .provider-picker__empty {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 8px 10px;
     }
     .cloud-banner {
       margin: 8px 24px 0;
@@ -952,6 +1003,8 @@ function renderChatScript(initialStateJson) {
         loadingMessage: false,
         documentSearchTerm: "",
         cloudProvider: { configured: false, name: "Cloud", useByDefault: false },
+        cloudProviders: { providers: [], defaultProviderId: null },
+        providerMenuOpen: false,
         streamingController: null,
         streamRenderTimer: null,
         expandedSources: {},
@@ -962,7 +1015,10 @@ function renderChatScript(initialStateJson) {
         newChatBtn: document.getElementById("newChatBtn"),
         modeToggle: document.getElementById("modeToggle"),
         modeHint: document.getElementById("modeHint"),
-        providerToggle: document.getElementById("providerToggle"),
+        providerPicker: document.getElementById("providerPicker"),
+        providerPickerTrigger: document.getElementById("providerPickerTrigger"),
+        providerPickerLabel: document.getElementById("providerPickerLabel"),
+        providerPickerMenu: document.getElementById("providerPickerMenu"),
         cloudBanner: document.getElementById("cloudBanner"),
         filterSummary: document.getElementById("filterSummary"),
         stream: document.getElementById("chatStream"),
@@ -1200,28 +1256,66 @@ function renderChatScript(initialStateJson) {
 
       function getActiveProvider() {
         var s = getActiveSession();
-        return (s && s.provider) || (state.cloudProvider.useByDefault && state.cloudProvider.configured ? "cloud" : "local");
+        if (s && s.provider) return s.provider;
+        var defaultId = state.cloudProviders.defaultProviderId;
+        if (state.cloudProvider.useByDefault && state.cloudProvider.configured && defaultId) {
+          return "cloud:" + defaultId;
+        }
+        return "local";
       }
 
-      function renderProviderToggle() {
-        if (!dom.providerToggle) return;
-        var current = getActiveProvider();
-        var configured = state.cloudProvider.configured;
-        var name = state.cloudProvider.name || "Cloud";
-        var localBtn = dom.providerToggle.querySelector('[data-provider="local"]');
-        var cloudBtn = dom.providerToggle.querySelector('[data-provider="cloud"]');
-        if (localBtn) localBtn.classList.toggle("is-active", current === "local");
-        if (cloudBtn) {
-          cloudBtn.classList.toggle("is-active", current === "cloud");
-          cloudBtn.disabled = !configured;
-          cloudBtn.title = configured ? ("Облако: " + name) : "Настройте облако в разделе Настройки";
-          var labelSpan = cloudBtn.querySelector(".provider-toggle__name");
-          if (labelSpan) labelSpan.textContent = name;
+      function isCloudProviderValue(value) {
+        return value === "cloud" || (typeof value === "string" && value.indexOf("cloud:") === 0);
+      }
+
+      function findProviderById(id) {
+        var list = state.cloudProviders.providers || [];
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === id) return list[i];
         }
+        return null;
+      }
+
+      function resolveCloudInfo(provider) {
+        var list = state.cloudProviders.providers || [];
+        if (provider === "cloud") {
+          var def = findProviderById(state.cloudProviders.defaultProviderId) || list[0] || null;
+          return def;
+        }
+        if (typeof provider !== "string" || provider.indexOf("cloud:") !== 0) return null;
+        var id = provider.slice("cloud:".length);
+        var exact = findProviderById(id);
+        if (exact) return exact;
+        return findProviderById(state.cloudProviders.defaultProviderId) || list[0] || null;
+      }
+
+      function describeProvider(provider) {
+        if (!isCloudProviderValue(provider)) {
+          return { icon: "🔒", label: "Локально", configured: true };
+        }
+        var info = resolveCloudInfo(provider);
+        if (!info || !info.configured) {
+          return { icon: "⚡", label: "Облако (не настроено)", configured: false };
+        }
+        return { icon: "⚡", label: info.name || "Облако", configured: true };
+      }
+
+      function renderProviderPicker() {
+        if (!dom.providerPickerTrigger) return;
+        var current = getActiveProvider();
+        var info = describeProvider(current);
+        var icon = dom.providerPickerTrigger.querySelector(".provider-picker__icon");
+        if (icon) icon.textContent = info.icon;
+        if (dom.providerPickerLabel) dom.providerPickerLabel.textContent = info.label;
+        dom.providerPickerTrigger.setAttribute(
+          "title",
+          info.configured ? "Текущий провайдер: " + info.label : "Облако не настроено"
+        );
+        renderProviderMenu(current);
         if (dom.cloudBanner) {
-          if (current === "cloud" && configured) {
+          if (isCloudProviderValue(current) && info.configured) {
             dom.cloudBanner.classList.add("is-visible");
-            dom.cloudBanner.innerHTML = "Фрагменты документов уйдут во внешний API (" + escapeHtml(name) + ").";
+            dom.cloudBanner.innerHTML = "Фрагменты документов уйдут во внешний API (" + escapeHtml(info.label) + ").";
           } else {
             dom.cloudBanner.classList.remove("is-visible");
             dom.cloudBanner.innerHTML = "";
@@ -1229,38 +1323,100 @@ function renderChatScript(initialStateJson) {
         }
       }
 
+      function renderProviderMenu(currentProvider) {
+        if (!dom.providerPickerMenu) return;
+        var defaultId = state.cloudProviders.defaultProviderId;
+        var providers = state.cloudProviders.providers || [];
+        var lines = [];
+        providers.forEach(function (p) {
+          var providerKey = "cloud:" + p.id;
+          var isActive = currentProvider === providerKey ||
+            (currentProvider === "cloud" && p.id === defaultId);
+          var badge = p.id === defaultId ? '<span class="provider-picker__item-badge">по умолчанию</span>' : '';
+          var configured = p.configured === true;
+          var disabledAttr = configured ? '' : ' disabled aria-disabled="true"';
+          var titleAttr = configured ? '' : ' title="Провайдер не настроен — заполните Base URL, ключ и модель"';
+          lines.push(
+            '<button type="button" class="provider-picker__item' + (isActive ? ' is-active' : '') +
+            '" data-provider-value="' + escapeHtml(providerKey) + '"' + disabledAttr + titleAttr + '>' +
+            '<span class="provider-picker__item-check">' + (isActive ? '✓' : '') + '</span>' +
+            '<span aria-hidden="true">⚡</span>' +
+            '<span class="provider-picker__item-name" title="' + escapeHtml(p.name || "Облако") + '">' + escapeHtml(p.name || "Облако") + '</span>' +
+            badge +
+            '</button>'
+          );
+        });
+        if (providers.length === 0) {
+          lines.push('<div class="provider-picker__empty">Облачные провайдеры не настроены — добавьте их в Настройках.</div>');
+        }
+        if (providers.length > 0) {
+          lines.push('<div class="provider-picker__divider"></div>');
+        }
+        var localActive = currentProvider === "local";
+        lines.push(
+          '<button type="button" class="provider-picker__item' + (localActive ? ' is-active' : '') + '" data-provider-value="local">' +
+          '<span class="provider-picker__item-check">' + (localActive ? '✓' : '') + '</span>' +
+          '<span aria-hidden="true">🔒</span>' +
+          '<span class="provider-picker__item-name">Локально (Ollama)</span>' +
+          '</button>'
+        );
+        dom.providerPickerMenu.innerHTML = lines.join("");
+      }
+
       function loadCloudProviderInfo() {
-        return fetch("/api/v2/settings/cloudProvider").then(function (r) {
-          return r.json().then(function (data) {
-            if (data && data.ok && data.cloudProvider) {
-              state.cloudProvider = {
-                configured: data.cloudProvider.configured === true,
-                name: data.cloudProvider.name || "Cloud",
-                useByDefault: data.cloudProvider.useByDefault === true,
-              };
-            }
-          });
-        }).catch(function () {
-          state.cloudProvider = { configured: false, name: "Cloud", useByDefault: false };
+        return Promise.all([
+          fetch("/api/v2/settings/cloudProvider").then(function (r) { return r.json(); }).catch(function () { return null; }),
+          fetch("/api/v2/settings/cloudProviders").then(function (r) { return r.json(); }).catch(function () { return null; }),
+        ]).then(function (results) {
+          var legacy = results[0];
+          if (legacy && legacy.ok && legacy.cloudProvider) {
+            state.cloudProvider = {
+              configured: legacy.cloudProvider.configured === true,
+              name: legacy.cloudProvider.name || "Cloud",
+              useByDefault: legacy.cloudProvider.useByDefault === true,
+            };
+          } else {
+            state.cloudProvider = { configured: false, name: "Cloud", useByDefault: false };
+          }
+          var list = results[1];
+          if (list && list.ok) {
+            state.cloudProviders = {
+              providers: Array.isArray(list.providers) ? list.providers : [],
+              defaultProviderId: list.defaultProviderId || null,
+            };
+          } else {
+            state.cloudProviders = { providers: [], defaultProviderId: null };
+          }
         });
       }
 
+      function toggleProviderMenu(open) {
+        if (!dom.providerPicker || !dom.providerPickerTrigger) return;
+        var nowOpen = typeof open === "boolean" ? open : !state.providerMenuOpen;
+        state.providerMenuOpen = nowOpen;
+        dom.providerPicker.classList.toggle("is-open", nowOpen);
+        dom.providerPickerTrigger.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+      }
+
       function setProvider(provider) {
-        if (provider === "cloud" && !state.cloudProvider.configured) {
-          showToast("Облако не настроено. Откройте раздел Настройки.", "error");
-          return Promise.resolve();
+        if (isCloudProviderValue(provider)) {
+          var info = resolveCloudInfo(provider);
+          if (!info || !info.configured) {
+            showToast("Выбранный провайдер не настроен. Откройте «Настройки».", "error");
+            return Promise.resolve();
+          }
         }
         if (!state.activeSessionId) {
-          return createSession(getActiveMode() || "answer", provider).then(renderProviderToggle);
+          return createSession(getActiveMode() || "answer", provider).then(renderProviderPicker);
         }
         var session = getActiveSession();
         if (!session) return Promise.resolve();
         session.provider = provider;
-        renderProviderToggle();
+        renderProviderPicker();
         return api("PATCH", "/api/v2/chat/sessions/" + state.activeSessionId, { provider: provider }).then(function (data) {
           var idx = state.sessions.findIndex(function (s) { return s.id === state.activeSessionId; });
           if (idx >= 0) state.sessions[idx] = data.session;
-          renderProviderToggle();
+          renderProviderPicker();
         }).catch(function (err) {
           showToast("Не удалось сохранить выбор провайдера: " + err.message, "error");
         });
@@ -1776,7 +1932,7 @@ function renderChatScript(initialStateJson) {
           ensureSessionFromInitial();
           renderHistory();
           renderModeToggle();
-          renderProviderToggle();
+          renderProviderPicker();
           renderFilterSummary();
         });
       }
@@ -1802,7 +1958,7 @@ function renderChatScript(initialStateJson) {
           if (idx >= 0) state.sessions[idx] = session;
           renderHistory();
           renderModeToggle();
-          renderProviderToggle();
+          renderProviderPicker();
           renderFilterSummary();
           renderTagsFilter();
           loadAvailableTags();
@@ -1869,7 +2025,7 @@ function renderChatScript(initialStateJson) {
           state.selectedTags = new Set();
           renderHistory();
           renderModeToggle();
-          renderProviderToggle();
+          renderProviderPicker();
           renderFilterSummary();
           renderTagsFilter();
           renderStream();
@@ -2286,13 +2442,26 @@ function renderChatScript(initialStateJson) {
           }
         });
 
-        if (dom.providerToggle) {
-          dom.providerToggle.addEventListener("click", function (event) {
-            var btn = event.target.closest("[data-provider]");
-            if (!btn || btn.disabled) return;
-            setProvider(btn.getAttribute("data-provider"));
+        if (dom.providerPickerTrigger) {
+          dom.providerPickerTrigger.addEventListener("click", function (event) {
+            event.stopPropagation();
+            toggleProviderMenu();
           });
         }
+        if (dom.providerPickerMenu) {
+          dom.providerPickerMenu.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-provider-value]");
+            if (!btn || btn.disabled) return;
+            toggleProviderMenu(false);
+            setProvider(btn.getAttribute("data-provider-value"));
+          });
+        }
+        document.addEventListener("click", function (event) {
+          if (!state.providerMenuOpen) return;
+          if (!dom.providerPicker) return;
+          if (dom.providerPicker.contains(event.target)) return;
+          toggleProviderMenu(false);
+        });
       }
 
       function bindModal() {
@@ -2303,7 +2472,10 @@ function renderChatScript(initialStateJson) {
           });
         }
         document.addEventListener("keydown", function (e) {
-          if (e.key === "Escape") closeConfirmModal();
+          if (e.key === "Escape") {
+            closeConfirmModal();
+            if (state.providerMenuOpen) toggleProviderMenu(false);
+          }
         });
       }
 
@@ -2348,9 +2520,13 @@ export function renderChatPage({ ICONS, renderLayout }) {
               <button type="button" class="chat-mode-toggle__btn is-active" data-mode="answer">Ответ ИИ</button>
               <button type="button" class="chat-mode-toggle__btn" data-mode="pages">Найти страницы</button>
             </div>
-            <div class="provider-toggle" id="providerToggle" role="tablist" aria-label="Провайдер модели">
-              <button type="button" class="provider-toggle__btn is-active" data-provider="local" title="Локальная Ollama"><span aria-hidden="true">🔒</span><span>Локально</span></button>
-              <button type="button" class="provider-toggle__btn" data-provider="cloud" title="Облачный провайдер"><span aria-hidden="true">⚡</span><span class="provider-toggle__name">Облако</span></button>
+            <div class="provider-picker" id="providerPicker">
+              <button type="button" class="provider-picker__trigger" id="providerPickerTrigger" aria-haspopup="listbox" aria-expanded="false">
+                <span class="provider-picker__icon" aria-hidden="true">🔒</span>
+                <span class="provider-picker__label" id="providerPickerLabel">Локально</span>
+                <span class="provider-picker__caret" aria-hidden="true">▾</span>
+              </button>
+              <div class="provider-picker__menu" id="providerPickerMenu" role="listbox" aria-label="Выбор провайдера"></div>
             </div>
           </div>
           <div class="chat-mode-hint" id="modeHint">Режим: <span class="mono">ответ ИИ</span></div>
