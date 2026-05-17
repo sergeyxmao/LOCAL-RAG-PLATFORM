@@ -84,6 +84,531 @@ export class PostgresProvider {
     await this.ensureKnowledgeNodeSchema();
     await this.ensureChatSessionSchema();
     await this.ensureAppSettingsSchema();
+    await this.ensureGraphSchema();
+  }
+
+  async ensureGraphSchema() {
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS graph_nodes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+        source_document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
+        source_page_number INTEGER,
+        source_xlsx_sheet TEXT,
+        source_xlsx_row INTEGER,
+        confidence REAL NOT NULL DEFAULT 1.0
+          CHECK (confidence >= 0.0 AND confidence <= 1.0),
+        author TEXT NOT NULL DEFAULT 'user:manual',
+        is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_nodes_type
+      ON graph_nodes(type) WHERE is_archived = FALSE
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_nodes_source_document
+      ON graph_nodes(source_document_id) WHERE source_document_id IS NOT NULL
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_nodes_author
+      ON graph_nodes(author)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_nodes_name
+      ON graph_nodes(name)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_nodes_attributes
+      ON graph_nodes USING gin(attributes)
+    `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS graph_edges (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source_node_id UUID NOT NULL
+          REFERENCES graph_nodes(id) ON DELETE CASCADE,
+        target_node_id UUID NOT NULL
+          REFERENCES graph_nodes(id) ON DELETE CASCADE,
+        relation TEXT NOT NULL,
+        attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+        confidence REAL NOT NULL DEFAULT 1.0
+          CHECK (confidence >= 0.0 AND confidence <= 1.0),
+        author TEXT NOT NULL DEFAULT 'user:manual',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT graph_edges_unique_triple
+          UNIQUE (source_node_id, target_node_id, relation)
+      )
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_edges_source
+      ON graph_edges(source_node_id)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_edges_target
+      ON graph_edges(target_node_id)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_edges_relation
+      ON graph_edges(relation)
+    `);
+
+    await this.pool.query(`
+      CREATE OR REPLACE FUNCTION graph_nodes_set_updated_at()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await this.pool.query(`
+      DROP TRIGGER IF EXISTS trg_graph_nodes_set_updated_at ON graph_nodes
+    `);
+    await this.pool.query(`
+      CREATE TRIGGER trg_graph_nodes_set_updated_at
+      BEFORE UPDATE ON graph_nodes
+      FOR EACH ROW
+      EXECUTE FUNCTION graph_nodes_set_updated_at()
+    `);
+  }
+
+  async createGraphNode(node) {
+    const result = await this.pool.query(
+      `
+      INSERT INTO graph_nodes (
+        type,
+        name,
+        description,
+        attributes,
+        source_document_id,
+        source_page_number,
+        source_xlsx_sheet,
+        source_xlsx_row,
+        confidence,
+        author
+      )
+      VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10)
+      RETURNING *
+      `,
+      [
+        node.type,
+        node.name,
+        node.description ?? null,
+        JSON.stringify(node.attributes ?? {}),
+        node.sourceDocumentId ?? null,
+        node.sourcePageNumber ?? null,
+        node.sourceXlsxSheet ?? null,
+        node.sourceXlsxRow ?? null,
+        node.confidence ?? 1.0,
+        node.author ?? "user:manual",
+      ]
+    );
+    return result.rows[0];
+  }
+
+  async getGraphNodeById(nodeId) {
+    const result = await this.pool.query(
+      `SELECT * FROM graph_nodes WHERE id = $1 LIMIT 1`,
+      [nodeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listGraphNodes(options = {}) {
+    const parsedLimit = Number(options.limit);
+    const limit = Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(500, Math.trunc(parsedLimit)))
+      : 50;
+    const parsedOffset = Number(options.offset);
+    const offset = Number.isFinite(parsedOffset)
+      ? Math.max(0, Math.trunc(parsedOffset))
+      : 0;
+
+    const conditions = [];
+    const params = [];
+
+    if (typeof options.type === "string" && options.type.trim()) {
+      params.push(options.type.trim());
+      conditions.push(`type = $${params.length}`);
+    }
+    if (typeof options.author === "string" && options.author.trim()) {
+      params.push(options.author.trim());
+      conditions.push(`author = $${params.length}`);
+    }
+    if (typeof options.isArchived === "boolean") {
+      params.push(options.isArchived);
+      conditions.push(`is_archived = $${params.length}`);
+    } else {
+      conditions.push(`is_archived = FALSE`);
+    }
+    if (typeof options.sourceDocumentId === "string" && options.sourceDocumentId.trim()) {
+      params.push(options.sourceDocumentId.trim());
+      conditions.push(`source_document_id = $${params.length}`);
+    }
+    if (typeof options.nameSearch === "string" && options.nameSearch.trim()) {
+      params.push(`%${options.nameSearch.trim()}%`);
+      conditions.push(`name ILIKE $${params.length}`);
+    }
+
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    params.push(limit);
+    const limitPlaceholder = `$${params.length}`;
+    params.push(offset);
+    const offsetPlaceholder = `$${params.length}`;
+
+    const itemsResult = await this.pool.query(
+      `
+      SELECT *
+      FROM graph_nodes
+      ${whereSql}
+      ORDER BY created_at DESC
+      LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `,
+      params
+    );
+
+    const countParams = params.slice(0, params.length - 2);
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*)::int AS total FROM graph_nodes ${whereSql}`,
+      countParams
+    );
+
+    return {
+      items: itemsResult.rows,
+      total: Number(countResult.rows[0]?.total ?? 0),
+      limit,
+      offset,
+    };
+  }
+
+  async updateGraphNode(nodeId, patch) {
+    const fieldMap = {
+      type: "type",
+      name: "name",
+      description: "description",
+      sourceDocumentId: "source_document_id",
+      sourcePageNumber: "source_page_number",
+      sourceXlsxSheet: "source_xlsx_sheet",
+      sourceXlsxRow: "source_xlsx_row",
+      confidence: "confidence",
+      author: "author",
+      isArchived: "is_archived",
+    };
+
+    const assignments = [];
+    const params = [nodeId];
+
+    for (const [key, column] of Object.entries(fieldMap)) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        params.push(patch[key]);
+        assignments.push(`${column} = $${params.length}`);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(patch, "attributes")) {
+      params.push(JSON.stringify(patch.attributes ?? {}));
+      assignments.push(`attributes = $${params.length}::jsonb`);
+    }
+
+    if (assignments.length === 0) {
+      return this.getGraphNodeById(nodeId);
+    }
+
+    const result = await this.pool.query(
+      `
+      UPDATE graph_nodes
+      SET ${assignments.join(", ")}
+      WHERE id = $1
+      RETURNING *
+      `,
+      params
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async setGraphNodeArchived(nodeId, isArchived) {
+    const result = await this.pool.query(
+      `
+      UPDATE graph_nodes
+      SET is_archived = $2
+      WHERE id = $1
+      RETURNING *
+      `,
+      [nodeId, isArchived === true]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createGraphEdge(edge) {
+    const result = await this.pool.query(
+      `
+      INSERT INTO graph_edges (
+        source_node_id,
+        target_node_id,
+        relation,
+        attributes,
+        confidence,
+        author
+      )
+      VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+      ON CONFLICT (source_node_id, target_node_id, relation) DO NOTHING
+      RETURNING *
+      `,
+      [
+        edge.sourceNodeId,
+        edge.targetNodeId,
+        edge.relation,
+        JSON.stringify(edge.attributes ?? {}),
+        edge.confidence ?? 1.0,
+        edge.author ?? "user:manual",
+      ]
+    );
+
+    if (result.rows[0]) {
+      return { edge: result.rows[0], created: true };
+    }
+
+    const existing = await this.pool.query(
+      `
+      SELECT *
+      FROM graph_edges
+      WHERE source_node_id = $1 AND target_node_id = $2 AND relation = $3
+      LIMIT 1
+      `,
+      [edge.sourceNodeId, edge.targetNodeId, edge.relation]
+    );
+    return { edge: existing.rows[0] ?? null, created: false };
+  }
+
+  async getGraphEdgeById(edgeId) {
+    const result = await this.pool.query(
+      `SELECT * FROM graph_edges WHERE id = $1 LIMIT 1`,
+      [edgeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listGraphEdges(options = {}) {
+    const parsedLimit = Number(options.limit);
+    const limit = Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(500, Math.trunc(parsedLimit)))
+      : 100;
+    const parsedOffset = Number(options.offset);
+    const offset = Number.isFinite(parsedOffset)
+      ? Math.max(0, Math.trunc(parsedOffset))
+      : 0;
+
+    const conditions = [];
+    const params = [];
+
+    if (typeof options.sourceNodeId === "string" && options.sourceNodeId.trim()) {
+      params.push(options.sourceNodeId.trim());
+      conditions.push(`source_node_id = $${params.length}`);
+    }
+    if (typeof options.targetNodeId === "string" && options.targetNodeId.trim()) {
+      params.push(options.targetNodeId.trim());
+      conditions.push(`target_node_id = $${params.length}`);
+    }
+    if (typeof options.relation === "string" && options.relation.trim()) {
+      params.push(options.relation.trim());
+      conditions.push(`relation = $${params.length}`);
+    }
+
+    const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    params.push(limit);
+    const limitPlaceholder = `$${params.length}`;
+    params.push(offset);
+    const offsetPlaceholder = `$${params.length}`;
+
+    const itemsResult = await this.pool.query(
+      `
+      SELECT *
+      FROM graph_edges
+      ${whereSql}
+      ORDER BY created_at DESC
+      LIMIT ${limitPlaceholder} OFFSET ${offsetPlaceholder}
+      `,
+      params
+    );
+
+    const countParams = params.slice(0, params.length - 2);
+    const countResult = await this.pool.query(
+      `SELECT COUNT(*)::int AS total FROM graph_edges ${whereSql}`,
+      countParams
+    );
+
+    return {
+      items: itemsResult.rows,
+      total: Number(countResult.rows[0]?.total ?? 0),
+      limit,
+      offset,
+    };
+  }
+
+  async getRelatedGraphNodes(nodeId, options = {}) {
+    const direction = ["outgoing", "incoming", "both"].includes(options.direction)
+      ? options.direction
+      : "both";
+    const relation =
+      typeof options.relation === "string" && options.relation.trim()
+        ? options.relation.trim()
+        : null;
+
+    const items = [];
+
+    if (direction === "outgoing" || direction === "both") {
+      const params = [nodeId];
+      let relationSql = "";
+      if (relation) {
+        params.push(relation);
+        relationSql = ` AND e.relation = $${params.length}`;
+      }
+      const result = await this.pool.query(
+        `
+        SELECT
+          e.id AS edge_id,
+          e.source_node_id,
+          e.target_node_id,
+          e.relation,
+          e.attributes AS edge_attributes,
+          e.confidence AS edge_confidence,
+          e.author AS edge_author,
+          e.created_at AS edge_created_at,
+          n.id AS node_id,
+          n.type AS node_type,
+          n.name AS node_name,
+          n.description AS node_description,
+          n.attributes AS node_attributes,
+          n.source_document_id AS node_source_document_id,
+          n.source_page_number AS node_source_page_number,
+          n.source_xlsx_sheet AS node_source_xlsx_sheet,
+          n.source_xlsx_row AS node_source_xlsx_row,
+          n.confidence AS node_confidence,
+          n.author AS node_author,
+          n.is_archived AS node_is_archived,
+          n.created_at AS node_created_at,
+          n.updated_at AS node_updated_at,
+          'outgoing' AS direction
+        FROM graph_edges e
+        JOIN graph_nodes n ON n.id = e.target_node_id
+        WHERE e.source_node_id = $1${relationSql}
+        ORDER BY e.created_at DESC
+        `,
+        params
+      );
+      items.push(...result.rows);
+    }
+
+    if (direction === "incoming" || direction === "both") {
+      const params = [nodeId];
+      let relationSql = "";
+      if (relation) {
+        params.push(relation);
+        relationSql = ` AND e.relation = $${params.length}`;
+      }
+      const result = await this.pool.query(
+        `
+        SELECT
+          e.id AS edge_id,
+          e.source_node_id,
+          e.target_node_id,
+          e.relation,
+          e.attributes AS edge_attributes,
+          e.confidence AS edge_confidence,
+          e.author AS edge_author,
+          e.created_at AS edge_created_at,
+          n.id AS node_id,
+          n.type AS node_type,
+          n.name AS node_name,
+          n.description AS node_description,
+          n.attributes AS node_attributes,
+          n.source_document_id AS node_source_document_id,
+          n.source_page_number AS node_source_page_number,
+          n.source_xlsx_sheet AS node_source_xlsx_sheet,
+          n.source_xlsx_row AS node_source_xlsx_row,
+          n.confidence AS node_confidence,
+          n.author AS node_author,
+          n.is_archived AS node_is_archived,
+          n.created_at AS node_created_at,
+          n.updated_at AS node_updated_at,
+          'incoming' AS direction
+        FROM graph_edges e
+        JOIN graph_nodes n ON n.id = e.source_node_id
+        WHERE e.target_node_id = $1${relationSql}
+        ORDER BY e.created_at DESC
+        `,
+        params
+      );
+      items.push(...result.rows);
+    }
+
+    return items;
+  }
+
+  async deleteGraphEdge(edgeId) {
+    const result = await this.pool.query(
+      `DELETE FROM graph_edges WHERE id = $1 RETURNING id`,
+      [edgeId]
+    );
+    return result.rows.length > 0;
+  }
+
+  async getGraphStats() {
+    const [nodesByTypeRes, edgesByRelationRes, totalsRes] = await Promise.all([
+      this.pool.query(
+        `
+        SELECT type, COUNT(*)::int AS count
+        FROM graph_nodes
+        WHERE is_archived = FALSE
+        GROUP BY type
+        ORDER BY type
+        `
+      ),
+      this.pool.query(
+        `
+        SELECT relation, COUNT(*)::int AS count
+        FROM graph_edges
+        GROUP BY relation
+        ORDER BY relation
+        `
+      ),
+      this.pool.query(
+        `
+        SELECT
+          (SELECT COUNT(*)::int FROM graph_nodes WHERE is_archived = FALSE) AS total_active_nodes,
+          (SELECT COUNT(*)::int FROM graph_nodes WHERE is_archived = TRUE) AS total_archived_nodes,
+          (SELECT COUNT(*)::int FROM graph_edges) AS total_edges
+        `
+      ),
+    ]);
+
+    const nodesByType = {};
+    for (const row of nodesByTypeRes.rows) {
+      nodesByType[row.type] = Number(row.count);
+    }
+    const edgesByRelation = {};
+    for (const row of edgesByRelationRes.rows) {
+      edgesByRelation[row.relation] = Number(row.count);
+    }
+
+    const totals = totalsRes.rows[0] ?? {};
+    return {
+      nodesByType,
+      edgesByRelation,
+      totalActiveNodes: Number(totals.total_active_nodes ?? 0),
+      totalArchivedNodes: Number(totals.total_archived_nodes ?? 0),
+      totalEdges: Number(totals.total_edges ?? 0),
+    };
   }
 
   async ensureAppSettingsSchema() {
