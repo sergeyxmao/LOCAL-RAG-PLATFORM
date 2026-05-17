@@ -30,9 +30,58 @@ import { uiStateRoutes } from "./routes/uiState.js";
 import { uiRoutes } from "./routes/ui.js";
 import { uiV2Routes } from "./routes/uiV2.js";
 import { chatSessionRoutes } from "./routes/chatSessions.js";
+import { parseTagList } from "./utils/tags.js";
+
+async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger }) {
+  try {
+    const done = await appSettingsService.getMigrationFlag("tagsNormalized");
+    if (done) return;
+    const { rows } = await postgresProvider.pool.query(
+      "SELECT id, categories FROM documents WHERE jsonb_typeof(categories) = 'array'"
+    );
+    let touched = 0;
+    let qdrantSynced = 0;
+    let qdrantFailed = 0;
+    for (const row of rows) {
+      const before = Array.isArray(row.categories) ? row.categories : [];
+      if (before.length === 0) continue;
+      const after = parseTagList(before);
+      const same =
+        before.length === after.length && before.every((value, idx) => value === after[idx]);
+      if (same) continue;
+      await postgresProvider.updateDocumentCategories(row.id, after);
+      touched += 1;
+      try {
+        const pointIds = await postgresProvider.getDocumentPointIds(row.id);
+        if (pointIds.length > 0) {
+          await qdrantProvider.setPayload(pointIds, { categories: after });
+          qdrantSynced += 1;
+        }
+      } catch (qErr) {
+        qdrantFailed += 1;
+        logger.warn({ documentId: row.id, err: qErr.message }, "Qdrant payload sync skipped during tag migration");
+      }
+    }
+    await appSettingsService.setMigrationFlag("tagsNormalized");
+    if (touched > 0) {
+      logger.info({ touched, qdrantSynced, qdrantFailed }, "Tags normalized for existing documents");
+    } else {
+      logger.info("Tag normalization migration: nothing to update");
+    }
+  } catch (error) {
+    logger.error({ err: error }, "Tag normalization migration failed");
+  }
+}
 
 const app = Fastify({ logger: true });
-await app.register(multipart);
+await app.register(multipart, {
+  limits: {
+    files: 1000,
+    fileSize: 500 * 1024 * 1024,
+    fields: 20,
+    fieldSize: 1024 * 1024,
+  },
+});
 
 const postgresProvider = new PostgresProvider(appConfig.postgres);
 await postgresProvider.ensureRuntimeSchema();
@@ -74,6 +123,7 @@ const appSettingsService = new AppSettingsService({
   retrievalDefaults: appConfig.retrieval,
 });
 await appSettingsService.refreshRetrievalCache();
+await runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger: app.log });
 
 const searchService = new SearchService({
   embeddingProvider,

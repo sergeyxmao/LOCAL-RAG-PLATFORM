@@ -2,6 +2,16 @@ const TAG_ALIASES = new Map([
   ["met-o", "metso"],
 ]);
 
+const TAG_SEPARATOR_RE = /[,;\n]+/;
+const MAX_TAG_LENGTH = 64;
+
+function splitRawTagToken(value) {
+  return String(value ?? "")
+    .split(TAG_SEPARATOR_RE)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 export function normalizeTag(value) {
   const normalized = String(value ?? "")
     .trim()
@@ -24,12 +34,15 @@ export function parseTagList(value) {
     return [];
   }
 
-  const values = Array.isArray(value) ? value : String(value).split(",");
+  const flat = Array.isArray(value)
+    ? value.flatMap((item) => splitRawTagToken(item))
+    : splitRawTagToken(value);
+
   return Array.from(
     new Map(
-      values
+      flat
         .map((item) => normalizeTag(item))
-        .filter(Boolean)
+        .filter((tag) => tag && tag.length <= MAX_TAG_LENGTH)
         .map((tag) => [tag.toLowerCase(), tag])
     ).values()
   );

@@ -744,3 +744,112 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
     «Системный промпт» с textarea, предупреждениями об отсутствии
     \`{sources}\`/\`{question}\` и слишком длинном шаблоне, кнопками
     «Сохранить» и «Восстановить по умолчанию» (с window.confirm).
+- 2026-05-17: полировка #4 (backend часть) — пять связанных
+  улучшений: несколько облачных провайдеров, парсинг тегов через
+  запятую, фильтр по тегам в чате, лимиты multipart и автообновление
+  дерева разделов после перемещения документов:
+  - **I. Несколько облачных провайдеров.** Старая запись
+    \`app_settings.cloudProvider\` (одиночный провайдер с
+    \`name/baseUrl/apiKey/model/useByDefault\`) дополнена новой
+    \`app_settings.cloudProviders\` со структурой
+    \`{ providers: [{id,name,baseUrl,apiKey,model}], defaultProviderId }\`.
+    Миграция автоматическая при первом чтении: если массив пуст, но в
+    старом ключе заполнены поля — генерируется один провайдер с
+    \`randomUUID()\` и становится default'ом. Новые эндпоинты в
+    \`settingsApi.js\`:
+    \`GET /api/v2/settings/cloudProviders\` (список с маскированными
+    ключами),
+    \`POST /api/v2/settings/cloudProviders\` (добавить),
+    \`PATCH /api/v2/settings/cloudProviders/:id\` (изменить; пустой
+    ключ-маска сохраняет старое значение, как и в одиночном API),
+    \`DELETE /api/v2/settings/cloudProviders/:id\` (удалить — \`409\` если
+    провайдер сейчас default и в списке больше одного),
+    \`POST /api/v2/settings/cloudProviders/:id/test\` (тест подключения
+    конкретного провайдера, поддержка reasoning-моделей сохранена),
+    \`PATCH /api/v2/settings/cloudProviders/default\` (сменить default).
+    Поле \`chat_sessions.provider\` теперь принимает не только
+    \`local\`/\`cloud\`, но и \`cloud:<uuid>\`. \`normalizeProvider\` в
+    \`chatSessionService\` распознаёт префикс \`cloud:\`. Новый метод
+    \`resolveCloudForSession(session)\` возвращает фактический провайдер:
+    1) если в сессии указан \`cloud:<id>\` и такой провайдер есть и
+    настроен — он;
+    2) если \`<id>\` удалён — fallback на defaultProviderId с пометкой
+    \`metadata.providerFallback\` и \`fallbackUsed=true\`;
+    3) если в сессии просто \`cloud\` — defaultProviderId, иначе legacy
+    \`cloudProvider\`. В UI:
+    - \`/ui/v2/settings\` — секция «Облачные провайдеры» с карточками
+      (имя, модель, маска ключа, кнопки «Тест/Редактировать/Сделать по
+      умолчанию/Удалить»), формой добавления, бейджем «по умолчанию» у
+      активного. Чекбокс «Использовать облако по умолчанию для новых
+      чатов» сохраняется в legacy \`cloudProvider.useByDefault\` (поле
+      сейчас живёт там).
+    - \`/ui/v2/chat\` — старая двухкнопочная панель «Локально/Облако»
+      заменена на dropdown \`.provider-picker\` со списком провайдеров,
+      разделителем и пунктом «Локально (Ollama)». Активный отмечен
+      галочкой. Если провайдер не настроен (configured=false) — пункт
+      \`disabled\` с tooltip'ом. Меню закрывается по клику снаружи и Esc.
+      Cloud banner подставляет имя выбранного провайдера.
+  - **J. Парсинг тегов через запятую/точку с запятой/перевод строки.**
+    \`utils/tags.js → parseTagList(value)\` теперь сплитит вход по
+    регулярке \`/[,;\\n]+/\`, тримит, фильтрует пустое и длиннее 64
+    символов, дедуплицирует через lowercase-ключ. Принимает и строку
+    \`"foo, bar; baz\\nqux"\`, и массив строк \`["foo, bar", "baz"]\` —
+    каждая строка тоже сплитится. В \`uiV2Knowledge.js\` редактор тегов
+    документа: добавлен внутренний \`parseTagInput(raw)\`, который
+    использует ту же регулярку, и \`addTag()\` теперь добавляет все
+    распарсенные части за раз (\`tест, тест1, тест2\` → 3 плашки).
+    \`parseCategories\` в \`routes/documents.js\` уже шёл через
+    \`parseTagList\`, так что бэкенд защищён по умолчанию даже при
+    прямых API-вызовах.
+    Идемпотентная миграция \`tagsNormalized\` (флаг в
+    \`app_settings.migrations.tagsNormalized\`): при старте kb-api
+    проходит по \`documents.categories\`, прогоняет каждую строку через
+    \`parseTagList\` и сохраняет обратно через
+    \`postgresProvider.updateDocumentCategories\` (та обновляет и
+    \`document_chunks.categories\`); затем синхронизирует Qdrant payload
+    по \`document_id\` через \`qdrantProvider.setPayload\`. Если Qdrant
+    недоступен — миграция продолжает, ошибка логируется как warn, флаг
+    всё равно ставится (повторный запуск ничего не сломает — массив с
+    одним элементом \`"foo"\` уже нормализованный).
+  - **Q. Фильтр по тегам в чате реально сужает результаты.** Это в
+    основном следствие J: \`searchService.buildQdrantFilter\` уже умел
+    \`{key:"categories", match:{any:[...]}}\` (полировка #3), а лексический
+    SQL в \`postgresProvider\` использует
+    \`jsonb_array_elements_text\` + \`lower(trim(...)) = ANY($::text[])\`.
+    Раньше эти фильтры не срабатывали, потому что в БД лежала строка
+    \`"тест, тест1, тест2"\` целиком и точное совпадение не находилось.
+    После миграции \`tagsNormalized\` теги хранятся как массив отдельных
+    значений → фильтр работает: выбран тег \`foo\` → \`hybridSearch\`
+    отдаёт только документы с этим тегом и в semantic, и в lexical
+    ветке, RRF их объединяет.
+  - **L. Лимиты multipart для больших импортов.** В \`apps/kb-api/src/index.js\`
+    при регистрации \`@fastify/multipart\` теперь явно заданы
+    \`limits: { files: 1000, fileSize: 524288000, fields: 20,
+    fieldSize: 1048576 }\` (раньше — дефолт \`files: 10\`). Это убирает
+    ошибку \`reach files limit\`/\`reach fields limit\` при загрузке
+    папок с 10+ файлами. На фронте \`handleFiles(fileList)\` в
+    \`uiV2Knowledge.js\` переписан на пул из 3 параллельных аплоадов
+    (мягко для слабого ноутбука): индекс продвигается из callback'а,
+    отказ одного файла не останавливает остальные, в финале — один
+    toast «Загружено: X, ошибок: Y» и \`refreshNodes({reloadDocuments:
+    true})\` для пересчёта счётчиков. Кнопки \`<input type="file"
+    multiple>\` и \`<input type="file" webkitdirectory directory multiple>\`
+    уже стояли — проблема была серверная.
+  - **P. Автообновление дерева разделов после перемещения документов.**
+    В \`uiV2Knowledge.js\`:
+    - \`openMoveModal\` после успешного \`PATCH /documents/:id/nodes\`
+      теперь вызывает \`refreshNodes({reloadDocuments: true})\` (раньше
+      только \`loadDocuments\`, счётчики узлов не пересчитывались).
+    - \`openBulkMoveModal\` после \`POST /documents/bulk-link\` (и
+      fallback'а на per-doc \`PATCH\`) — то же самое.
+    - \`confirmDeleteDocuments\` после массового \`DELETE /documents/:id\`
+      теперь \`refreshNodes({reloadDocuments: true})\` вместо
+      \`loadDocuments().then(loadNodes)\` — единый порядок и сохранение
+      раскрытых узлов через \`state.nodeExpanded\`.
+    - \`handleFiles\` (после многократного upload) — \`refreshNodes(...)\`
+      вместо \`loadDocuments + loadJobs + loadNodes\` параллельно.
+    \`refreshNodes\` внутри: \`Promise.all([GET /nodes?format=flat, GET
+    /nodes/counts])\` → пересборка \`state.nodes/nodeCounts\` → если
+    \`activeNodeId\` исчез из дерева, обнуляется → \`renderTree\` +
+    \`renderNodeSelect\`. \`state.nodeExpanded\` (Set с id) сохраняется
+    между перерисовками — раскрытые узлы остаются раскрытыми.

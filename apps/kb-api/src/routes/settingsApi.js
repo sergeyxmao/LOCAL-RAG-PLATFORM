@@ -160,6 +160,144 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get("/api/v2/settings/cloudProviders", async (request, reply) => {
+    try {
+      const data = await app.appSettingsService.getCloudProvidersPublic();
+      return { ok: true, ...data };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить список облачных провайдеров");
+      return respondError(reply, 500, error.message || "Не удалось получить список провайдеров");
+    }
+  });
+
+  app.post("/api/v2/settings/cloudProviders", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const result = await app.appSettingsService.addCloudProvider({
+        name: body.name,
+        baseUrl: body.baseUrl,
+        apiKey: body.apiKey,
+        model: body.model,
+      });
+      reply.code(201);
+      return { ok: true, provider: result.provider, defaultProviderId: result.defaultProviderId };
+    } catch (error) {
+      const code = error.statusCode || 500;
+      if (code !== 500) {
+        return respondError(reply, code, error.message);
+      }
+      request.log.error({ err: error }, "Не удалось добавить облачного провайдера");
+      return respondError(reply, 500, error.message || "Не удалось добавить провайдера");
+    }
+  });
+
+  app.patch("/api/v2/settings/cloudProviders/default", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      if (!body.providerId || typeof body.providerId !== "string") {
+        return respondError(reply, 400, "Не передан providerId");
+      }
+      const data = await app.appSettingsService.setDefaultCloudProvider(body.providerId);
+      return { ok: true, ...data };
+    } catch (error) {
+      const code = error.statusCode || 500;
+      if (code !== 500) {
+        return respondError(reply, code, error.message);
+      }
+      request.log.error({ err: error }, "Не удалось сменить провайдера по умолчанию");
+      return respondError(reply, 500, error.message || "Не удалось сменить провайдера");
+    }
+  });
+
+  app.patch("/api/v2/settings/cloudProviders/:id", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const provider = await app.appSettingsService.updateCloudProviderById(request.params.id, {
+        name: body.name,
+        baseUrl: body.baseUrl,
+        apiKey: body.apiKey,
+        model: body.model,
+      });
+      return { ok: true, provider };
+    } catch (error) {
+      const code = error.statusCode || 500;
+      if (code !== 500) {
+        return respondError(reply, code, error.message);
+      }
+      request.log.error({ err: error, providerId: request.params.id }, "Не удалось обновить провайдера");
+      return respondError(reply, 500, error.message || "Не удалось обновить провайдера");
+    }
+  });
+
+  app.delete("/api/v2/settings/cloudProviders/:id", async (request, reply) => {
+    try {
+      const data = await app.appSettingsService.deleteCloudProvider(request.params.id);
+      return { ok: true, ...data };
+    } catch (error) {
+      const code = error.statusCode || 500;
+      if (code !== 500) {
+        const payload = { ok: false, error: error.message };
+        if (error.code) payload.code = error.code;
+        reply.code(code);
+        return payload;
+      }
+      request.log.error({ err: error, providerId: request.params.id }, "Не удалось удалить провайдера");
+      return respondError(reply, 500, error.message || "Не удалось удалить провайдера");
+    }
+  });
+
+  app.post("/api/v2/settings/cloudProviders/:id/test", async (request, reply) => {
+    try {
+      const body = request.body ?? {};
+      const stored = await app.appSettingsService.getCloudProviderById(request.params.id);
+      if (!stored) {
+        return respondError(reply, 404, "Провайдер не найден");
+      }
+      const baseUrl =
+        body.baseUrl !== undefined && String(body.baseUrl || "").trim()
+          ? String(body.baseUrl).trim()
+          : stored.baseUrl;
+      const model =
+        body.model !== undefined && String(body.model || "").trim()
+          ? String(body.model).trim()
+          : stored.model;
+      const apiKey =
+        body.apiKey !== undefined && !isMaskOrEmpty(body.apiKey)
+          ? String(body.apiKey)
+          : stored.apiKey;
+      if (!baseUrl || !apiKey || !model) {
+        reply.code(400);
+        return {
+          ok: false,
+          code: "no_credentials",
+          message: "У провайдера не заполнены Base URL, ключ или модель.",
+        };
+      }
+      const result = await app.cloudChatProvider.testConnection({ baseUrl, apiKey, model });
+      request.log.info(
+        { providerId: stored.id, model, latencyMs: result.latencyMs },
+        "Provider connectivity test succeeded"
+      );
+      return { ok: true, ...result };
+    } catch (error) {
+      const isCloudErr = error instanceof CloudProviderError;
+      request.log.warn(
+        {
+          providerId: request.params.id,
+          code: isCloudErr ? error.code : "unknown",
+          message: isCloudErr ? error.userMessage : error.message,
+        },
+        "Provider connectivity test failed"
+      );
+      reply.code(200);
+      return {
+        ok: false,
+        code: isCloudErr ? error.code : "server_error",
+        message: isCloudErr ? error.userMessage : `Сбой: ${error.message || error}`,
+      };
+    }
+  });
+
   app.patch("/api/v2/settings/theme", async (request, reply) => {
     try {
       const body = request.body ?? {};

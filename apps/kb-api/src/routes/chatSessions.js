@@ -29,7 +29,8 @@ export async function chatSessionRoutes(app) {
       if (!provider && app.appSettingsService) {
         const cloud = await app.appSettingsService.getCloudProvider();
         if (cloud.useByDefault && cloud.baseUrl && cloud.apiKey && cloud.model) {
-          provider = "cloud";
+          const defaultProvider = await app.appSettingsService.getDefaultCloudProvider();
+          provider = defaultProvider ? `cloud:${defaultProvider.id}` : "cloud";
         }
       }
       const session = await app.chatSessionService.createSession({
