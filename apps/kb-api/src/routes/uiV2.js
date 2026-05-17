@@ -51,6 +51,10 @@ export const ICONS = {
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
   alertCircle:
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>',
+  chevronLeft:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+  panelLeft:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>',
 };
 
 const NAV_ITEMS = [
@@ -126,10 +130,22 @@ function renderLayoutCss() {
     ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    :root {
+      --context-sidebar-width: 240px;
+    }
     .app-shell {
       display: grid;
-      grid-template-columns: 64px 240px 1fr;
+      grid-template-columns: 64px var(--context-sidebar-width) 1fr;
       min-height: 100vh;
+      transition: grid-template-columns 200ms ease;
+    }
+    .app-shell.is-resizing {
+      transition: none;
+      cursor: col-resize;
+      user-select: none;
+    }
+    .app-shell.is-context-collapsed {
+      grid-template-columns: 64px 0 1fr;
     }
     .sidebar-icon {
       background: var(--surface);
@@ -154,7 +170,64 @@ function renderLayoutCss() {
       position: sticky;
       top: 0;
       height: 100vh;
-      overflow-y: auto;
+      min-width: 0;
+    }
+    .app-shell.is-context-collapsed .sidebar-context {
+      padding: 0;
+      border-right: none;
+      width: 0;
+      overflow: hidden;
+      visibility: hidden;
+    }
+    .sidebar-context__inner {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .sidebar-context__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+    .sidebar-context__collapse {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .sidebar-context__collapse:hover { background: var(--surface-2); color: var(--text); }
+    .sidebar-context__resizer {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: -3px;
+      width: 6px;
+      cursor: col-resize;
+      z-index: 8;
+      background: transparent;
+      transition: background 0.12s ease;
+    }
+    .sidebar-context__resizer:hover,
+    .app-shell.is-resizing .sidebar-context__resizer {
+      background: var(--accent-soft);
+    }
+    .app-shell.is-context-collapsed .sidebar-context__resizer { display: none; }
+    .sidebar-icon__expand {
+      display: none;
+    }
+    .app-shell.is-context-collapsed .sidebar-icon__expand {
+      display: inline-flex;
     }
     .sidebar-context__title {
       font-size: 11px;
@@ -235,12 +308,12 @@ function renderLayoutCss() {
     }
 
     @media (max-width: 1100px) {
-      .app-shell { grid-template-columns: 64px 200px 1fr; }
       .sidebar-context { padding: 12px 8px; }
     }
     @media (max-width: 900px) {
-      .app-shell { grid-template-columns: 64px 1fr; }
+      .app-shell { grid-template-columns: 64px 0 1fr; }
       .sidebar-context { display: none; }
+      .sidebar-context__resizer { display: none; }
     }
     .nav__group-title {
       font-size: 11px;
@@ -470,6 +543,89 @@ function renderCommonScript() {
         if (!trigger) return;
         window.LocalRagTheme.toggle();
       });
+
+      // Context sidebar: resize + collapse
+      var MIN_WIDTH = 180;
+      var MAX_WIDTH = 480;
+      var DEFAULT_WIDTH = 240;
+      var STORAGE_WIDTH = "localrag.sidebar.width";
+      var STORAGE_COLLAPSED = "localrag.sidebar.collapsed";
+      var shell = document.querySelector(".app-shell");
+      var resizer = document.getElementById("contextSidebarResizer");
+      var collapseBtn = document.getElementById("contextSidebarCollapse");
+      var expandBtn = document.getElementById("contextSidebarExpand");
+
+      function readStoredWidth() {
+        try {
+          var raw = localStorage.getItem(STORAGE_WIDTH);
+          if (!raw) return DEFAULT_WIDTH;
+          var n = Number(raw);
+          if (!Number.isFinite(n)) return DEFAULT_WIDTH;
+          return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(n)));
+        } catch (err) { return DEFAULT_WIDTH; }
+      }
+      function writeStoredWidth(width) {
+        try { localStorage.setItem(STORAGE_WIDTH, String(width)); } catch (err) {}
+      }
+      function readStoredCollapsed() {
+        try { return localStorage.getItem(STORAGE_COLLAPSED) === "true"; } catch (err) { return false; }
+      }
+      function writeStoredCollapsed(value) {
+        try { localStorage.setItem(STORAGE_COLLAPSED, value ? "true" : "false"); } catch (err) {}
+      }
+      function applyWidth(width) {
+        document.documentElement.style.setProperty("--context-sidebar-width", width + "px");
+      }
+      function applyCollapsed(collapsed) {
+        if (!shell) return;
+        shell.classList.toggle("is-context-collapsed", collapsed === true);
+      }
+
+      applyWidth(readStoredWidth());
+      applyCollapsed(readStoredCollapsed());
+
+      if (resizer && shell) {
+        var dragStartX = 0;
+        var dragStartWidth = 0;
+        function onMouseMove(event) {
+          var delta = event.clientX - dragStartX;
+          var next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, dragStartWidth + delta));
+          applyWidth(next);
+        }
+        function onMouseUp() {
+          if (!shell.classList.contains("is-resizing")) return;
+          shell.classList.remove("is-resizing");
+          document.removeEventListener("mousemove", onMouseMove);
+          document.removeEventListener("mouseup", onMouseUp);
+          var current = getComputedStyle(document.documentElement).getPropertyValue("--context-sidebar-width");
+          var px = parseInt(current, 10);
+          if (Number.isFinite(px)) writeStoredWidth(px);
+        }
+        resizer.addEventListener("mousedown", function (event) {
+          if (shell.classList.contains("is-context-collapsed")) return;
+          event.preventDefault();
+          dragStartX = event.clientX;
+          var current = getComputedStyle(document.documentElement).getPropertyValue("--context-sidebar-width");
+          var px = parseInt(current, 10);
+          dragStartWidth = Number.isFinite(px) ? px : DEFAULT_WIDTH;
+          shell.classList.add("is-resizing");
+          document.addEventListener("mousemove", onMouseMove);
+          document.addEventListener("mouseup", onMouseUp);
+        });
+      }
+
+      if (collapseBtn) {
+        collapseBtn.addEventListener("click", function () {
+          applyCollapsed(true);
+          writeStoredCollapsed(true);
+        });
+      }
+      if (expandBtn) {
+        expandBtn.addEventListener("click", function () {
+          applyCollapsed(false);
+          writeStoredCollapsed(false);
+        });
+      }
     })();
   `;
 }
@@ -485,6 +641,7 @@ function renderIconSidebar({ activeNav }) {
     <aside class="sidebar-icon" aria-label="Главная навигация">
       <a class="brand-mark" href="/ui/v2/chat" title="LOCAL-RAG" aria-label="LOCAL-RAG">LR</a>
       <nav class="nav-icons" aria-label="Разделы">${linksHtml}</nav>
+      <button type="button" class="nav-icons__link sidebar-icon__expand" id="contextSidebarExpand" title="Развернуть боковую панель" aria-label="Развернуть боковую панель">${ICONS.panelLeft}</button>
       <div class="sidebar-icon__footer">
         <button type="button" class="theme-toggle nav-icons__link" data-action="toggle-theme" title="Переключить тему" aria-label="Переключить тему">
           <span class="icon-sun">${ICONS.sun}</span>
@@ -497,7 +654,13 @@ function renderIconSidebar({ activeNav }) {
 }
 
 function renderContextSidebar({ activeNav, contextSidebar = "" }) {
-  return `<aside class="sidebar-context" aria-label="Контекстная панель">${contextSidebar}</aside>`;
+  return `<aside class="sidebar-context" aria-label="Контекстная панель">
+    <div class="sidebar-context__head">
+      <button type="button" class="sidebar-context__collapse" id="contextSidebarCollapse" title="Свернуть боковую панель" aria-label="Свернуть боковую панель">${ICONS.chevronLeft}</button>
+    </div>
+    <div class="sidebar-context__inner">${contextSidebar}</div>
+    <div class="sidebar-context__resizer" id="contextSidebarResizer" role="separator" aria-orientation="vertical" aria-label="Изменить ширину боковой панели"></div>
+  </aside>`;
 }
 
 function renderHeader({ pageTitle, headerExtra = "" }) {

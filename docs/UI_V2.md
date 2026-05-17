@@ -853,3 +853,55 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
     \`activeNodeId\` исчез из дерева, обнуляется → \`renderTree\` +
     \`renderNodeSelect\`. \`state.nodeExpanded\` (Set с id) сохраняется
     между перерисовками — раскрытые узлы остаются раскрытыми.
+- 2026-05-17: полировка #4 (UI часть) — четыре связанных улучшения по
+  навигации страниц и эргономике сайдбара. Бэкенд не трогается.
+  - **K. Горизонтальные вкладки в БЗ и Настройках.** На
+    `/ui/v2/knowledge` секции «Загрузка / Задачи импорта / Документы»
+    обёрнуты в `.kb-tab-panel` под общей `<nav class="kb-tabs">` —
+    активная вкладка показывает только свой блок (`display: flex`),
+    остальные `display: none`. Выбор сохраняется в `localStorage`
+    под ключом `localrag.knowledge.activeTab`. На `/ui/v2/settings`
+    аналогично — семь вкладок: «Модели и облако» (объединяет section-models
+    + section-cloud), «Поиск», «Промпт», «Сервисы», «Внешний вид»,
+    «Обслуживание», «Бэкапы»; ключ `localrag.settings.activeTab`.
+    В сайдбаре настроек якорные ссылки `#section-...` заменены на
+    `data-settings-tab-link="..."` — клик переключает вкладку вместо
+    скролла по якорю. Тогда дерево/якоря и центр всегда синхронны.
+  - **M. Множественный выбор файлов в кнопке «Выбрать файлы».**
+    Атрибуты `multiple` и `webkitdirectory directory multiple` уже
+    стояли на `<input type="file">` (полировка #4 backend),
+    эта правка — проверка и фиксация в smoke-плане. Параллельно подтверждена
+    корректность пула из 3 параллельных загрузок (см. L в backend части).
+  - **N. Формат даты в истории чатов.** `formatSessionDate` в
+    `uiV2Chat.js` теперь возвращает: `ЧЧ:ММ` если сообщение сегодня,
+    `ДД.ММ` если в этом году, `ДД.ММ.ГГ` если старше. Группировка
+    («Сегодня / Вчера / 7 дней / 30 дней / Раньше») сохранена. Введён
+    локальный хелпер `pad2(n)` для двузначной паддинга.
+  - **O. Resizable + collapsible контекстный сайдбар.** В
+    `uiV2.js`:
+    - Layout `app-shell` теперь `grid-template-columns: 64px
+      var(--context-sidebar-width) 1fr;` с CSS-переменной для ширины.
+      Класс `is-context-collapsed` меняет среднюю колонку на `0`.
+    - Внутри `.sidebar-context` теперь блок `.sidebar-context__head`
+      (с кнопкой свернуть) + `.sidebar-context__inner` (контент) +
+      `.sidebar-context__resizer` (drag-handle 6px на правом краю,
+      `position: absolute; right: -3px; cursor: col-resize`).
+    - На `mousedown` начинается drag: фиксируется `dragStartX` и
+      `dragStartWidth`, на `mousemove` ширина пересчитывается в
+      пределах 180-480px, добавляется класс `.is-resizing` (отключает
+      transition + cursor col-resize + user-select: none). На `mouseup`
+      ширина пишется в `localStorage.localrag.sidebar.width`. CSS
+      `transition: grid-template-columns 200ms ease` даёт плавное
+      сворачивание/разворачивание, но не мешает drag (на время drag
+      transition выключен).
+    - Кнопка свёртывания в шапке сайдбара (chevron-left) ставит
+      `localStorage.localrag.sidebar.collapsed = "true"` и
+      добавляет `.is-context-collapsed`. В свёрнутом состоянии в
+      главном узком сайдбаре `64px` появляется
+      `.sidebar-icon__expand` (icon panelLeft) — клик возвращает
+      сайдбар к последней сохранённой ширине.
+    - Состояния (ширина + свёрнутость) восстанавливаются при загрузке
+      страницы через `applyWidth(readStoredWidth())` и
+      `applyCollapsed(readStoredCollapsed())` в общем `renderCommonScript`.
+    - `position: fixed` не используется. Прежняя media-query
+      "узкий экран → сайдбар display:none" сохранена.

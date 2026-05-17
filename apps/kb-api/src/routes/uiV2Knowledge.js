@@ -96,6 +96,36 @@ function renderKnowledgeCss() {
       overflow-y: auto;
       min-width: 0;
     }
+    .kb-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+    }
+    .kb-tab {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .kb-tab:hover { color: var(--text); }
+    .kb-tab.is-active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .kb-tab-panel { display: none; flex-direction: column; gap: 14px; }
+    .kb-tab-panel.is-active { display: flex; }
     .kb-summary {
       display: flex;
       gap: 14px;
@@ -1882,9 +1912,35 @@ function renderKnowledgeScript(initialStateJson) {
         });
       }
 
+      function setActiveTab(name) {
+        var validTabs = ["upload", "jobs", "documents"];
+        if (validTabs.indexOf(name) === -1) name = "upload";
+        document.querySelectorAll("[data-kb-tab]").forEach(function (btn) {
+          btn.classList.toggle("is-active", btn.getAttribute("data-kb-tab") === name);
+        });
+        document.querySelectorAll("[data-kb-panel]").forEach(function (panel) {
+          panel.classList.toggle("is-active", panel.getAttribute("data-kb-panel") === name);
+        });
+        try { localStorage.setItem("localrag.knowledge.activeTab", name); } catch (err) {}
+      }
+
+      function bindKnowledgeTabs() {
+        var tabs = document.getElementById("kbTabs");
+        if (!tabs) return;
+        tabs.addEventListener("click", function (event) {
+          var btn = event.target.closest("[data-kb-tab]");
+          if (!btn) return;
+          setActiveTab(btn.getAttribute("data-kb-tab"));
+        });
+      }
+
       function bootstrap() {
         renderJobs();
         bindEvents();
+        bindKnowledgeTabs();
+        var stored = "upload";
+        try { stored = localStorage.getItem("localrag.knowledge.activeTab") || "upload"; } catch (err) {}
+        setActiveTab(stored);
         loadTags();
         loadNodes().then(loadDocuments).then(loadJobs);
       }
@@ -1913,6 +1969,12 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
   const content = `
     <main class="kb-page" id="kbPage">
       <section class="kb-main">
+        <nav class="kb-tabs" id="kbTabs" role="tablist">
+          <button type="button" class="kb-tab is-active" data-kb-tab="upload" role="tab">${ICONS.upload}<span>Загрузка</span></button>
+          <button type="button" class="kb-tab" data-kb-tab="jobs" role="tab">${ICONS.refresh}<span>Задачи импорта</span></button>
+          <button type="button" class="kb-tab" data-kb-tab="documents" role="tab">${ICONS.fileText}<span>Документы</span></button>
+        </nav>
+        <div class="kb-tab-panel is-active" data-kb-panel="upload">
         <div class="kb-card" id="kbUploadCard">
           <div class="kb-card__head">
             <div class="kb-card__title">${ICONS.upload}<span>Загрузка</span></div>
@@ -1952,7 +2014,9 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
             </div>
           </div>
         </div>
+        </div>
 
+        <div class="kb-tab-panel" data-kb-panel="jobs">
         <div class="kb-card is-collapsed" id="kbJobsCard">
           <div class="kb-card__head">
             <div class="kb-card__title">${ICONS.refresh}<span>Задачи импорта</span></div>
@@ -1966,7 +2030,9 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
             <div class="kb-jobs-list" id="kbJobsList"></div>
           </div>
         </div>
+        </div>
 
+        <div class="kb-tab-panel" data-kb-panel="documents">
         <div class="kb-card">
           <div class="kb-card__head">
             <div class="kb-card__title">${ICONS.fileText}<span>Документы</span></div>
@@ -2008,6 +2074,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
               <button type="button" class="btn">Показать ещё 50</button>
             </div>
           </div>
+        </div>
         </div>
       </section>
 

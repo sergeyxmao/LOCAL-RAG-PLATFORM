@@ -64,6 +64,36 @@ function renderSettingsCss() {
       color: var(--warning, var(--accent));
       border: 1px solid var(--warning, var(--accent));
     }
+    .settings-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+    }
+    .settings-tab {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .settings-tab:hover { color: var(--text); }
+    .settings-tab.is-active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .settings-tab-panel { display: none; flex-direction: column; gap: 14px; }
+    .settings-tab-panel.is-active { display: flex; }
     .settings-anchors { display: flex; flex-direction: column; gap: 2px; }
     .settings-anchor {
       display: block;
@@ -1031,8 +1061,41 @@ function renderSettingsScript(initialStateJson) {
         if (dom.promptTemplate) dom.promptTemplate.addEventListener("input", validateSystemPromptTextarea);
       }
 
+      function setActiveSettingsTab(name) {
+        var valid = ["models", "search", "prompt", "services", "theme", "maintenance", "backups"];
+        if (valid.indexOf(name) === -1) name = "models";
+        document.querySelectorAll("[data-settings-tab]").forEach(function (btn) {
+          btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === name);
+        });
+        document.querySelectorAll("[data-settings-panel]").forEach(function (panel) {
+          panel.classList.toggle("is-active", panel.getAttribute("data-settings-panel") === name);
+        });
+        try { localStorage.setItem("localrag.settings.activeTab", name); } catch (err) {}
+      }
+
+      function bindSettingsTabs() {
+        var tabs = document.getElementById("settingsTabs");
+        if (tabs) {
+          tabs.addEventListener("click", function (event) {
+            var btn = event.target.closest("[data-settings-tab]");
+            if (!btn) return;
+            setActiveSettingsTab(btn.getAttribute("data-settings-tab"));
+          });
+        }
+        document.addEventListener("click", function (event) {
+          var link = event.target.closest("[data-settings-tab-link]");
+          if (!link) return;
+          event.preventDefault();
+          setActiveSettingsTab(link.getAttribute("data-settings-tab-link"));
+        });
+      }
+
       function bootstrap() {
         bindEvents();
+        bindSettingsTabs();
+        var stored = "models";
+        try { stored = localStorage.getItem("localrag.settings.activeTab") || "models"; } catch (err) {}
+        setActiveSettingsTab(stored);
         loadSettings();
         loadServices();
         loadBackups();
@@ -1046,15 +1109,14 @@ function renderSettingsScript(initialStateJson) {
 export function renderSettingsPage({ ICONS, renderLayout }) {
   const contextSidebar = `
     <div class="sidebar-context__title">Разделы настроек</div>
-    <nav class="settings-anchors" aria-label="Якоря настроек">
-      <a class="settings-anchor" href="#section-models">Модели</a>
-      <a class="settings-anchor" href="#section-cloud">Облачный ИИ</a>
-      <a class="settings-anchor" href="#section-services">Сервисы</a>
-      <a class="settings-anchor" href="#section-retrieval">Поиск</a>
-      <a class="settings-anchor" href="#section-theme">Внешний вид</a>
-      <a class="settings-anchor" href="#section-prompt">Системный промпт</a>
-      <a class="settings-anchor" href="#section-maintenance">Обслуживание</a>
-      <a class="settings-anchor" href="#section-backups">Бэкапы</a>
+    <nav class="settings-anchors" aria-label="Разделы настроек">
+      <a class="settings-anchor" href="#" data-settings-tab-link="models">Модели и облако</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="search">Поиск</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="prompt">Системный промпт</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="services">Сервисы</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="theme">Внешний вид</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="maintenance">Обслуживание</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="backups">Бэкапы</a>
     </nav>
     <div class="sidebar-context__footer">
       <span>LOCAL-RAG</span>
@@ -1064,6 +1126,16 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
 
   const content = `
     <main class="settings-page">
+      <nav class="settings-tabs" id="settingsTabs" role="tablist">
+        <button type="button" class="settings-tab is-active" data-settings-tab="models" role="tab">${ICONS.settings}<span>Модели и облако</span></button>
+        <button type="button" class="settings-tab" data-settings-tab="search" role="tab">${ICONS.search}<span>Поиск</span></button>
+        <button type="button" class="settings-tab" data-settings-tab="prompt" role="tab">${ICONS.fileText}<span>Промпт</span></button>
+        <button type="button" class="settings-tab" data-settings-tab="services" role="tab">${ICONS.alertCircle}<span>Сервисы</span></button>
+        <button type="button" class="settings-tab" data-settings-tab="theme" role="tab">${ICONS.moon}<span>Внешний вид</span></button>
+        <button type="button" class="settings-tab" data-settings-tab="maintenance" role="tab">${ICONS.alertCircle}<span>Обслуживание</span></button>
+        <button type="button" class="settings-tab" data-settings-tab="backups" role="tab">${ICONS.database}<span>Бэкапы</span></button>
+      </nav>
+      <div class="settings-tab-panel is-active" data-settings-panel="models">
       <div class="settings-card" id="section-models">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.settings}<span>Модели</span></div>
@@ -1132,7 +1204,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <p class="settings-hint">Ключи хранятся в БД проекта в plaintext (см. <span class="mono">CLOUD_PROVIDER.md</span>). В API возвращаются замаскированными, в логи не пишутся. В чате выбор провайдера — в шапке.</p>
         </div>
       </div>
+      </div>
 
+      <div class="settings-tab-panel" data-settings-panel="services">
       <div class="settings-card" id="section-services">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.alertCircle}<span>Сервисы</span></div>
@@ -1144,7 +1218,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           </div>
         </div>
       </div>
+      </div>
 
+      <div class="settings-tab-panel" data-settings-panel="search">
       <div class="settings-card" id="section-retrieval">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.search}<span>Поиск (retrieval)</span></div>
@@ -1160,7 +1236,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <p class="settings-hint">Значения из YAML — базовые. Изменения в UI сохраняются в БД и переопределяют файл. Применяются к следующему запросу.</p>
         </div>
       </div>
+      </div>
 
+      <div class="settings-tab-panel" data-settings-panel="theme">
       <div class="settings-card" id="section-theme">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.moon}<span>Внешний вид</span></div>
@@ -1183,7 +1261,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <p class="settings-hint">Применяется к пользователям без личного выбора темы. Личный выбор хранится в <span class="mono">localStorage.localrag.theme</span> и не перезаписывается.</p>
         </div>
       </div>
+      </div>
 
+      <div class="settings-tab-panel" data-settings-panel="prompt">
       <div class="settings-card" id="section-prompt">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.fileText}<span>Системный промпт</span></div>
@@ -1208,7 +1288,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           </ul>
         </div>
       </div>
+      </div>
 
+      <div class="settings-tab-panel" data-settings-panel="maintenance">
       <div class="settings-card" id="section-maintenance">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.alertCircle}<span>Обслуживание</span></div>
@@ -1227,7 +1309,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <div class="settings-banner" id="cfgMaintBanner"></div>
         </div>
       </div>
+      </div>
 
+      <div class="settings-tab-panel" data-settings-panel="backups">
       <div class="settings-card" id="section-backups">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.database}<span>Бэкапы</span></div>
@@ -1254,6 +1338,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </main>
   `;
