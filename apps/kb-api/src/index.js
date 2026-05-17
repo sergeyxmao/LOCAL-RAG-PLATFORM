@@ -17,6 +17,7 @@ import { AppSettingsService } from "./services/appSettingsService.js";
 import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
 import { GraphService } from "./services/graphService.js";
+import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngestionService.js";
 import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
@@ -36,6 +37,7 @@ import { uiRoutes } from "./routes/ui.js";
 import { uiV2Routes } from "./routes/uiV2.js";
 import { chatSessionRoutes } from "./routes/chatSessions.js";
 import { graphRoutes } from "./routes/graph.js";
+import { graphReparseRoutes } from "./routes/graphReparse.js";
 import { parseTagList } from "./utils/tags.js";
 
 async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger }) {
@@ -130,6 +132,28 @@ app.log.info(
   "Indexing semaphore initialised"
 );
 
+const graphService = new GraphService({
+  postgresProvider,
+  logger: app.log,
+});
+
+const graphConfigDir = process.env.CONFIG_DIR || "/app/config";
+const graphConfigs = loadGraphConfigs({ configDir: graphConfigDir, logger: app.log });
+if (Array.isArray(graphConfigs.errors) && graphConfigs.errors.length > 0) {
+  app.log.error(
+    { errors: graphConfigs.errors },
+    "Конфиги парсера графа невалидны — парсер вернёт ok=false на каждом XLSX"
+  );
+}
+
+const graphIngestionService = new GraphIngestionService({
+  graphService,
+  postgresProvider,
+  configs: graphConfigs,
+  configDir: graphConfigDir,
+  logger: app.log,
+});
+
 const ingestionService = new IngestionService({
   config: appConfig,
   postgresProvider,
@@ -140,6 +164,7 @@ const ingestionService = new IngestionService({
   ocrService,
   appSettingsService,
   indexingSemaphore,
+  graphIngestionService,
 });
 
 const diagnosticsService = new DiagnosticsService({
@@ -179,11 +204,6 @@ const chatSessionService = new ChatSessionService({
   modelsConfig: appConfig.models,
 });
 
-const graphService = new GraphService({
-  postgresProvider,
-  logger: app.log,
-});
-
 app.decorate("config", appConfig);
 app.decorate("postgresProvider", postgresProvider);
 app.decorate("qdrantProvider", qdrantProvider);
@@ -202,6 +222,7 @@ app.decorate("indexingSemaphore", indexingSemaphore);
 app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("backupService", backupService);
 app.decorate("graphService", graphService);
+app.decorate("graphIngestionService", graphIngestionService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -218,6 +239,7 @@ await app.register(chatSessionRoutes);
 await app.register(backupApiRoutes);
 await app.register(diagnosticsRoutes);
 await app.register(graphRoutes);
+await app.register(graphReparseRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 

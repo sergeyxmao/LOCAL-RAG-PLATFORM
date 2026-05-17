@@ -93,6 +93,7 @@ export class IngestionService {
     ocrService = null,
     appSettingsService = null,
     indexingSemaphore = null,
+    graphIngestionService = null,
   }) {
     this.config = config;
     this.postgresProvider = postgresProvider;
@@ -103,6 +104,35 @@ export class IngestionService {
     this.ocrService = ocrService;
     this.appSettingsService = appSettingsService;
     this.indexingSemaphore = indexingSemaphore;
+    this.graphIngestionService = graphIngestionService;
+  }
+
+  async runGraphParserIfApplicable({ documentId, filePath, jobId, logger }) {
+    if (!this.graphIngestionService) return null;
+    if (!this.graphIngestionService.isFileApplicable(filePath)) return null;
+    try {
+      const report = await this.graphIngestionService.parseAndIngest({
+        documentId,
+        filePath,
+        jobId,
+      });
+      if (logger?.info) {
+        logger.info({ documentId, jobId, profileId: report?.profile_id }, "graph parser: отчёт записан");
+      }
+      return report;
+    } catch (err) {
+      if (logger?.warn) {
+        logger.warn({ err, documentId, jobId }, "Граф-парсер упал; RAG-pipeline в порядке");
+      }
+      const report = {
+        ok: false,
+        error: err.message || "Неизвестная ошибка парсера графа",
+      };
+      if (jobId) {
+        await this.postgresProvider.updateJobGraphReport(jobId, report).catch(() => {});
+      }
+      return report;
+    }
   }
 
   async withIndexingSlot(jobId, fn) {
@@ -635,6 +665,13 @@ export class IngestionService {
           message: "Предпросмотр PDF-страниц отключён для ускорения импорта",
         };
       }
+
+      await this.runGraphParserIfApplicable({
+        documentId: document.id,
+        filePath: fullPath,
+        jobId: job.id,
+        logger: this.graphIngestionService?.logger ?? null,
+      });
 
       await this.postgresProvider.updateJobStatus(job.id, "completed");
 

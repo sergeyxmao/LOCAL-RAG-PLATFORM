@@ -32,15 +32,26 @@ RAG-слой. RAG (Qdrant + чанки) отвечает на нечёткие �
 - Сервис `GraphService` с CRUD-операциями.
 - REST API `/api/v2/graph/*`.
 
-Намеренно отсутствует в этой итерации:
+## Что добавлено в #8.1.b
 
-- Парсер XLSX (это #8.1.b).
+- Автоматическое наполнение графа из XLSX/XLS файлов при импорте.
+- Подробности — `docs/GRAPH_INGESTION.md`.
+- 2 готовых профиля парсера (`metso_dna_rio`,
+  `koyo_directlogic_pro`).
+- Alias-конфиг для нормализации `signal_kind`.
+- UPSERT по бизнес-ключу через
+  `GraphService.upsertNodeByBusinessKey()`.
+- Endpoint `/api/v2/graph/reparse/:documentId` для ручного
+  перезапуска парсера на уже загруженных документах.
+- Новая колонка `ingestion_jobs.graph_report` (JSONB) — отчёт
+  парсера сохраняется при импорте.
+
+Намеренно отсутствует в этих двух итерациях:
+
 - LLM-извлечение знаний из PDF (это #8.1.d).
-- UI (это #8.2).
+- UI «Маппинг колонок» (это #8.1.c).
+- UI «Граф знаний» (это #8.2).
 - Подключение графа к retrieval/answer (это #8.3).
-
-То есть после #8.1.a в БД есть пустые таблицы и работающие
-эндпоинты — наполнять граф пока приходится вручную через API.
 
 ## Как использовать
 
@@ -370,5 +381,9 @@ FUNCTION`, `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`).
 
 ## История изменений
 
+- 2026-05-17: #8.1.b — парсер XLSX (`docs/GRAPH_INGESTION.md`),
+  2 готовых профиля, alias-конфиг, UPSERT по бизнес-ключу,
+  endpoint `/api/v2/graph/reparse/:documentId`, колонка
+  `ingestion_jobs.graph_report`.
 - 2026-05-17: #8.1.a — создан фундамент (схема БД, сервис,
   REST API). UI и парсер XLSX появятся в #8.1.b и #8.2.

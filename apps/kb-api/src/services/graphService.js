@@ -354,4 +354,103 @@ export class GraphService {
   async getStats() {
     return this.postgresProvider.getGraphStats();
   }
+
+  async upsertNodeByBusinessKey({
+    type,
+    name,
+    businessKey,
+    parentNodeId = null,
+    parentRelation = null,
+    attributes = {},
+    description = null,
+    sourceDocumentId = null,
+    sourceXlsxSheet = null,
+    sourceXlsxRow = null,
+    confidence = 1.0,
+    author = "user:manual",
+  } = {}) {
+    const cleanType = String(type ?? "").trim();
+    if (!cleanType) throw serviceError("Не указан тип узла", 400);
+    const cleanName = String(name ?? "").trim();
+    if (!cleanName) throw serviceError("Не указано имя узла", 400);
+    const matches = Array.isArray(businessKey?.attributeMatches)
+      ? businessKey.attributeMatches.filter(
+          (m) =>
+            m &&
+            typeof m.field === "string" &&
+            m.value !== undefined &&
+            m.value !== null &&
+            String(m.value).length > 0
+        )
+      : [];
+    if (matches.length === 0 && !parentNodeId) {
+      throw serviceError("Бизнес-ключ пуст: нечего искать", 400);
+    }
+    const parentRelations = parentRelation
+      ? (Array.isArray(parentRelation) ? parentRelation : [parentRelation])
+      : [];
+    if (parentNodeId && !isUuid(parentNodeId)) {
+      throw serviceError("Некорректный parentNodeId", 400);
+    }
+
+    const existing = await this.postgresProvider.findGraphNodeByBusinessKey({
+      type: cleanType,
+      attributeMatches: matches,
+      parentNodeId,
+      parentRelations,
+    });
+
+    if (existing) {
+      const updatedRow = await this.postgresProvider.updateGraphNodeAttributesAndSource(
+        existing.id,
+        {
+          name: cleanName,
+          attributes: normalizeAttributes(attributes),
+          description: description === undefined ? null : description,
+          sourceXlsxSheet: sourceXlsxSheet ?? null,
+          sourceXlsxRow:
+            sourceXlsxRow === null || sourceXlsxRow === undefined
+              ? null
+              : Math.max(1, Math.trunc(Number(sourceXlsxRow))),
+        }
+      );
+      return { node: mapNodeRow(updatedRow), created: false, updated: true };
+    }
+
+    const row = await this.postgresProvider.createGraphNode({
+      type: cleanType,
+      name: cleanName,
+      description: description ?? null,
+      attributes: normalizeAttributes(attributes),
+      sourceDocumentId: sourceDocumentId ?? null,
+      sourcePageNumber: null,
+      sourceXlsxSheet: sourceXlsxSheet ?? null,
+      sourceXlsxRow:
+        sourceXlsxRow === null || sourceXlsxRow === undefined
+          ? null
+          : Math.max(1, Math.trunc(Number(sourceXlsxRow))),
+      confidence: clampConfidence(confidence, 1.0),
+      author: normalizeAuthor(author),
+    });
+    const created = mapNodeRow(row);
+
+    if (parentNodeId && parentRelations.length > 0) {
+      try {
+        await this.postgresProvider.createGraphEdge({
+          sourceNodeId: created.id,
+          targetNodeId: parentNodeId,
+          relation: parentRelations[0],
+          attributes: {},
+          confidence: clampConfidence(confidence, 1.0),
+          author: normalizeAuthor(author),
+        });
+      } catch (err) {
+        if (this.logger?.warn) {
+          this.logger.warn({ err }, "Не удалось создать parent-связь при upsert");
+        }
+      }
+    }
+
+    return { node: created, created: true, updated: false };
+  }
 }

@@ -66,7 +66,8 @@ export class PostgresProvider {
       ADD COLUMN IF NOT EXISTS progress_message TEXT,
       ADD COLUMN IF NOT EXISTS pending_filename TEXT,
       ADD COLUMN IF NOT EXISTS pending_options JSONB,
-      ADD COLUMN IF NOT EXISTS phase TEXT
+      ADD COLUMN IF NOT EXISTS phase TEXT,
+      ADD COLUMN IF NOT EXISTS graph_report JSONB
     `);
 
     // Бэкфилл phase для существующих записей
@@ -4526,6 +4527,89 @@ export class PostgresProvider {
       [jobId, processedItems, totalItems, progressMessage]
     );
 
+    return result.rows[0] ?? null;
+  }
+
+  async updateJobGraphReport(jobId, report) {
+    const result = await this.pool.query(
+      `
+      UPDATE ingestion_jobs
+      SET graph_report = $2::jsonb
+      WHERE id = $1
+      RETURNING id, graph_report
+      `,
+      [jobId, JSON.stringify(report ?? null)]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findGraphNodeByBusinessKey({ type, attributeMatches = [], parentNodeId = null, parentRelations = [] }) {
+    const params = [type];
+    const conditions = [
+      `type = $1`,
+      `is_archived = FALSE`,
+    ];
+    for (const match of attributeMatches) {
+      if (!match || typeof match.field !== "string") continue;
+      const value = match.value;
+      if (value === undefined || value === null || value === "") continue;
+      params.push(match.field);
+      const fieldIdx = `$${params.length}`;
+      params.push(String(value));
+      const valIdx = `$${params.length}`;
+      conditions.push(`attributes ->> ${fieldIdx} = ${valIdx}`);
+    }
+    if (parentNodeId && Array.isArray(parentRelations) && parentRelations.length > 0) {
+      params.push(parentNodeId);
+      const parentIdx = `$${params.length}`;
+      params.push(parentRelations);
+      const relIdx = `$${params.length}`;
+      conditions.push(`
+        EXISTS (
+          SELECT 1 FROM graph_edges e
+          WHERE e.source_node_id = graph_nodes.id
+            AND e.target_node_id = ${parentIdx}::uuid
+            AND e.relation = ANY(${relIdx}::text[])
+        )
+      `);
+    }
+    const result = await this.pool.query(
+      `SELECT * FROM graph_nodes WHERE ${conditions.join(" AND ")} LIMIT 1`,
+      params
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async updateGraphNodeAttributesAndSource(nodeId, { name, attributes, description, sourceXlsxSheet, sourceXlsxRow }) {
+    const assignments = [];
+    const params = [nodeId];
+    if (typeof name === "string" && name.trim()) {
+      params.push(name.trim());
+      assignments.push(`name = $${params.length}`);
+    }
+    if (attributes && typeof attributes === "object") {
+      params.push(JSON.stringify(attributes));
+      assignments.push(`attributes = attributes || $${params.length}::jsonb`);
+    }
+    if (description !== undefined) {
+      params.push(description);
+      assignments.push(`description = $${params.length}`);
+    }
+    if (sourceXlsxSheet !== undefined) {
+      params.push(sourceXlsxSheet);
+      assignments.push(`source_xlsx_sheet = $${params.length}`);
+    }
+    if (sourceXlsxRow !== undefined) {
+      params.push(sourceXlsxRow);
+      assignments.push(`source_xlsx_row = $${params.length}`);
+    }
+    if (assignments.length === 0) {
+      return this.getGraphNodeById(nodeId);
+    }
+    const result = await this.pool.query(
+      `UPDATE graph_nodes SET ${assignments.join(", ")} WHERE id = $1 RETURNING *`,
+      params
+    );
     return result.rows[0] ?? null;
   }
 

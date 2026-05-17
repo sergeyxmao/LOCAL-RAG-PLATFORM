@@ -429,9 +429,23 @@ JSONB).
   связей через `UNIQUE(source, target, relation) + ON CONFLICT DO
   NOTHING`; soft-delete узлов через `is_archived` (физическое
   удаление только через psql). Подробности — `docs/GRAPH_SCHEMA.md`.
-  Парсер XLSX, LLM-извлечение, UI и подключение к retrieval — в
-  следующих подзадачах.
-- ⬜ #8.1.b Парсер XLSX по профилям.
+- ✅ **#8.1.b Парсер XLSX (готова 2026-05-17).** Автоматическое
+  наполнение графа из таблиц сигналов АСУ ТП параллельно с
+  RAG-pipeline. YAML-профили в `config/graph-parsers.yaml`
+  (`metso_dna_rio`, `koyo_directlogic_pro`); alias-конфиг
+  `config/graph-aliases.yaml` для нормализации `signal_kind`;
+  UPSERT по бизнес-ключу через
+  `graphService.upsertNodeByBusinessKey`; иерархия `object →
+  cabinet → station → card → channel → signal → device` с
+  фиксированными связями `installed_in`/`has_channel`/
+  `connected_to`/`measures`; отчёт парсера в
+  `ingestion_jobs.graph_report` (JSONB); endpoint
+  `POST /api/v2/graph/reparse/:documentId` для ручного
+  перезапуска; тестовые фикстуры в `tests/fixtures/`. Парсер
+  изолирован от RAG: его ошибка — только warning в логах, RAG
+  работает. Подробности — `docs/GRAPH_INGESTION.md`.
+- ⬜ #8.1.c UI «Маппинг колонок» (редактирование профилей через
+  UI).
 - ⬜ #8.1.d LLM-извлечение знаний из PDF.
 - ⬜ #8.2 UI для просмотра и редактирования графа.
 - ⬜ #8.3 Подключение графа к retrieval/answer.

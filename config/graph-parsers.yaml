@@ -1,0 +1,128 @@
+schema_version: 1
+# Профили парсера XLSX/XLS для графа знаний АСУ ТП.
+#
+# Алгоритм выбора профиля:
+#   1. Парсер пробует профили в порядке, в котором они здесь объявлены.
+#   2. Для каждого профиля проверяет совпадение `match` (расширение файла,
+#      обязательные листы, обязательные заголовки, опц. имя листа).
+#   3. Первый совпавший — используется.
+#   4. Если ни один — job завершается с предупреждением, RAG-pipeline работает.
+#
+# По умолчанию создаваемые узлы получают:
+#   author = "import:xlsx:<profile_id>"
+#   confidence = 1.0
+#   source_document_id = id документа из таблицы documents
+#   source_xlsx_sheet = имя листа
+#   source_xlsx_row = номер строки данных (1-indexed)
+#
+# Уровни иерархии (object → cabinet → station → card → channel → signal → device)
+# создаются только если они перечислены в `builds`.
+
+profiles:
+  - id: metso_dna_rio
+    description: "Metso DNA / Honeywell-style RIO с iALEX-таблицами (один лист = один шкаф)"
+
+    match:
+      file_extensions: [".xlsx", ".xlsm"]
+      sheet_name_pattern: "^_?IO-\\d+"
+      required_headers:
+        - "LOOPTAG"
+        - "ADDRESS"
+        - "CARH_TYPE"
+
+    layout:
+      header_row: 1
+      data_start_row: 4
+      sheet_filter: "^_?IO-\\d+"
+
+    cabinet:
+      source: "sheet_name"
+      pattern: "^_?(IO-\\d+)"
+      name_template: "Cabinet {cabinet_code}"
+
+    columns:
+      loop_tag: "LOOPTAG"
+      device_tag: "DEVICETAG"
+      card_type: "CARH_TYPE"
+      address: "ADDRESS"
+      station_code: "STATION"
+      channel_number: "CHANEL"
+      signal_kind_raw: "Group TYPE"
+      description: "Наименование"
+      pin_on_card: "CARD PINs"
+      wire_name: "Name wire"
+
+    builds:
+      - cabinet
+      - station
+      - card
+      - channel
+      - signal
+      - device
+
+    skip_rows:
+      - condition: "loop_tag_empty"
+      - condition: "loop_tag_matches:^Резерв"
+
+  - id: koyo_directlogic_pro
+    description: "Koyo DirectLogic / Productivity — листы AI/AO/DI/DO"
+
+    match:
+      file_extensions: [".xls", ".xlsx"]
+      required_sheets: ["AI", "AO", "DI", "DO"]
+
+    layout:
+      header_row: 3
+      data_start_row: 4
+
+    station_default:
+      station_code_template: "{filename_without_ext}"
+      name_template: "ПЛК {station_code}"
+
+    per_sheet:
+      AI:
+        builds: [station, card, channel, signal]
+        signal_kind: "AI"
+        columns:
+          tag: "Tag Name"
+          position: "Позиция"
+          description: "Наименование параметра"
+          card_type: "Модуль"
+          card_slot: "Место"
+          channel_number: "Клемма"
+          signal_address: "Память"
+      DI:
+        builds: [station, card, channel, signal]
+        signal_kind: "DI"
+        columns:
+          tag: "Tag"
+          position: "Позиция"
+          description: "Наименование параметра"
+          card_type: "Модуль"
+          card_slot: "Место"
+          channel_number: "Клемма"
+          signal_address: "Память"
+      DO:
+        builds: [station, card, channel, signal]
+        signal_kind: "DO"
+        columns:
+          tag: "Tag"
+          description: "Наименование параметра"
+          card_type: "Модуль"
+          card_slot: "Место"
+          channel_number: "Клемма"
+          signal_address: "Память"
+      AO:
+        builds: [station, card, channel, signal]
+        signal_kind: "AO"
+        columns:
+          tag: "Tag"
+          description: "Наименование параметра"
+          card_type: "Модуль"
+          card_slot: "Место"
+          channel_number: "Клемма"
+          signal_address: "Память"
+
+    skip_rows:
+      - condition: "description_matches:^Резерв"
+      - condition: "tag_empty"
