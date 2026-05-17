@@ -3076,6 +3076,8 @@ export class PostgresProvider {
         j.total_items,
         j.processed_items,
         j.progress_message,
+        j.pending_filename,
+        j.pending_options,
         j.started_at,
         j.finished_at,
         j.created_at,

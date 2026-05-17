@@ -248,7 +248,8 @@ export class DiagnosticsService {
       const { rows } = await this.postgresProvider.pool.query(
         `SELECT
            COUNT(*) FILTER (WHERE status IN ('queued', 'running', 'cancel_requested'))::int AS active,
-           COUNT(*) FILTER (WHERE status = 'queued' AND document_id IS NULL)::int AS pre_upload`
+           COUNT(*) FILTER (WHERE status = 'queued' AND document_id IS NULL)::int AS pre_upload
+         FROM ingestion_jobs`
       );
       const active = rows[0]?.active ?? 0;
       const preUpload = rows[0]?.pre_upload ?? 0;
