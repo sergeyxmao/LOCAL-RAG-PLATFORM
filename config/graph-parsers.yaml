@@ -23,7 +23,7 @@ profiles:
     description: "Metso DNA / Honeywell-style RIO с iALEX-таблицами (один лист = один шкаф)"
 
     match:
-      file_extensions: [".xlsx", ".xlsm"]
+      file_extensions: [ ".xlsx", ".xlsm" ]
       sheet_name_pattern: "^_?IO-\\d+"
       required_headers:
         - "LOOPTAG"
@@ -68,8 +68,8 @@ profiles:
     description: "Koyo DirectLogic / Productivity — листы AI/AO/DI/DO"
 
     match:
-      file_extensions: [".xls", ".xlsx"]
-      required_sheets: ["AI", "AO", "DI", "DO"]
+      file_extensions: [ ".xls", ".xlsx" ]
+      required_sheets: [ "AI", "AO", "DI", "DO" ]
 
     layout:
       header_row: 3
@@ -81,7 +81,7 @@ profiles:
 
     per_sheet:
       AI:
-        builds: [station, card, channel, signal]
+        builds: [ station, card, channel, signal ]
         signal_kind: "AI"
         columns:
           tag: "Tag Name"
@@ -92,7 +92,7 @@ profiles:
           channel_number: "Клемма"
           signal_address: "Память"
       DI:
-        builds: [station, card, channel, signal]
+        builds: [ station, card, channel, signal ]
         signal_kind: "DI"
         columns:
           tag: "Tag"
@@ -103,7 +103,7 @@ profiles:
           channel_number: "Клемма"
           signal_address: "Память"
       DO:
-        builds: [station, card, channel, signal]
+        builds: [ station, card, channel, signal ]
         signal_kind: "DO"
         columns:
           tag: "Tag"
@@ -113,7 +113,7 @@ profiles:
           channel_number: "Клемма"
           signal_address: "Память"
       AO:
-        builds: [station, card, channel, signal]
+        builds: [ station, card, channel, signal ]
         signal_kind: "AO"
         columns:
           tag: "Tag"
