@@ -468,6 +468,15 @@ JSONB).
   каждого канона, создание нового канона переехало в «Расширенные
   возможности» с защитной модалкой; инлайн-подсказки `?` рядом с
   каждым полем (переиспользование `help-tip` widget'а).
+- ✅ **#8.1.c.fix-patch (готова 2026-05-18).** Три критических
+  бага wizard'а: (1) builds в universal стиле не сохранялся —
+  Apply Template затирал unchecks; введён явный buildsState с
+  dirty-flag. (2) double-escape regex при автозаполнении
+  sheet_name_pattern/sheet_filter — заменён двухпроходный escape
+  на single-pass replace. (3) koyo автодетект оставлял
+  header_row=1, что вызывало tag_empty warnings — теперь
+  выставляется header_row=3, data_start_row=4 если не правлено
+  вручную.
 - ⬜ #8.1.d LLM-извлечение знаний из PDF.
 - ⬜ #8.2 UI для просмотра и редактирования графа.
 - ⬜ #8.3 Подключение графа к retrieval/answer.
