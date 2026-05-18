@@ -477,9 +477,89 @@ JSONB).
   header_row=1, что вызывало tag_empty warnings — теперь
   выставляется header_row=3, data_start_row=4 если не правлено
   вручную.
+- ✅ **#8.1.c.fix-2 (готова 2026-05-18).** UX-доработка БЗ/OCR,
+  ByteString-баг GPT, deep clone «Применить шаблон», password в
+  form. Подробности — раздел «Behavior changes» ниже.
 - ⬜ #8.1.d LLM-извлечение знаний из PDF.
 - ⬜ #8.2 UI для просмотра и редактирования графа.
 - ⬜ #8.3 Подключение графа к retrieval/answer.
+
+## Behavior changes (#8.1.c.fix-2, 2026-05-18)
+
+### 1. БЗ → Загрузка: убраны три контрола
+
+- **Чекбокс «Лёгкий режим (без превью страниц)»** — удалён.
+  UI теперь всегда передаёт `createVisualAssets=true`. Превью
+  страниц включено всегда. API (`POST /documents/ingest-folder-async`
+  и др.) по-прежнему принимает `createVisualAssets: false` — для
+  совместимости со скриптами на curl, но из UI этой опции нет.
+- **Чекбокс «Включая вложенные папки»** — удалён. Жёстко
+  `recursive=true` и для drag-n-drop, и для серверного пути.
+- **Селектор «Параллелизм загрузки»** — удалён. Дублировал
+  «Настройки → Сервисы → Параллелизм индексации» (этот
+  единственный остался). Изменения там применяются мгновенно через
+  `indexingSemaphore`. Очередь на фронте теперь всегда
+  последовательная — реальный throughput считает бэкенд.
+
+### 2. OCR для всех страниц PDF — включён по умолчанию
+
+В `appSettingsService.getOcrSettings()` дефолт `ocrAll` переключён
+с `false` на `true`. Владелец работает в основном со сканами, без
+этой галки большинство PDF-страниц шли как «пустые» (текст внутри
+картинки — извлечь нельзя без OCR).
+
+При старте kb-api прогоняется одноразовая миграция
+`runOcrAllDefaultTrueMigration` (флаг `ocrAllDefaultTrue` в
+`app_settings.migrations`): если в БД лежит `ocrAll=false`, она
+переписывает значение на `true`. Если пользователь уже выставлял
+true вручную — миграция тихо помечается выполненной без изменений.
+Импорт замедляется в 2–5 раз — это компромисс за полное покрытие.
+
+Чтобы вернуть старое поведение, владелец может снять галку
+вручную в Настройки → Сервисы → OCR — это сохраняется в БД и
+больше не перетирается.
+
+### 3. ByteString-баг GPT/Gemini (блокер)
+
+При тесте подключения и в чате GPT/Gemini падал с
+`Cannot convert argument to a ByteString because the character at
+index N has a value of 1057 which is greater than 255`. Корень —
+кириллический символ или невидимая зерошириная вставка в API-ключе
+(HTTP-заголовки по RFC 7230 принимают только видимый US-ASCII).
+
+В `CloudChatProvider` появилась обёртка
+`prepareAuthorizationHeader(apiKey)`:
+
+- Вычищает zero-width / control / BOM / биди-маркеры (через
+  один regex с unicode-escape: ` --​-‏‪-‮﻿`).
+- Если после очистки остался не-ASCII символ — кидает понятную
+  русскую ошибку с **позицией** и кодом: «API-ключ содержит
+  недопустимый символ на позиции 21 (код U+0421). HTTP-заголовки
+  принимают только латиницу, цифры и ASCII-знаки. Скопируйте ключ
+  заново из консоли провайдера…».
+
+Тело запроса (system prompt, messages, model name) не трогается —
+оно JSON.stringify, UTF-8 там нормально.
+
+### 4. «Применить шаблон» — deep clone
+
+Кнопка теперь делает `JSON.parse(JSON.stringify(profile))` и
+вызывает выделенную функцию `applyTemplateToWizard(src)`, которая
+переносит **все** nested-структуры: `match.required_headers`,
+`match.required_sheets`, `skip_rows`, `per_sheet.<sheet>.columns`,
+`cabinet.*`, `station_default.*`. Раньше код был линейным
+последовательным fill — некоторые поля могли быть пропущены.
+
+`buildsDirty` flag из #8.1.c.fix-patch по-прежнему уважается —
+если пользователь уже трогал чекбоксы, шаблон их не затирает.
+
+### 5. Password fields в `<form>` (косметика)
+
+Вся секция «Облачные провайдеры» (`<div id="section-cloud">`)
+заменена на `<form autocomplete="off" onsubmit="return false;">`.
+Это убирает 16 одинаковых жалоб в DevTools Console:
+`[DOM] Password field is not contained in a form`. Поведение не
+меняется — onsubmit отменяет случайный submit по Enter.
 
 ## Что осталось дальше
 

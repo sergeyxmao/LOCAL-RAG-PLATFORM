@@ -79,6 +79,41 @@ function normalizeBaseUrl(rawUrl) {
   return String(rawUrl).trim().replace(/\/+$/, "");
 }
 
+// HTTP-заголовки (RFC 7230) принимают только видимые US-ASCII (0x20–0x7E).
+// `fetch`/undici проверяют это строго — кириллица или невидимые символы
+// валят запрос с «Cannot convert argument to a ByteString…».
+//
+// Чаще всего проблема — API-ключ, в который при копировании из браузера/PDF
+// попадают невидимые символы (zero-width space, BOM) или, реже, кириллица
+// (русская "С" U+0421 = 1057, что и видели в проде).
+//
+// Стратегия: тихо вычищаем «безобидный мусор» (zero-width, control), а если
+// после очистки остался не-ASCII символ — кидаем понятную ошибку с позицией.
+const STRIPPABLE_CONTROL_CHARS = /[\u0000-\u001F\u007F\u0080-\u009F\u200B-\u200F\u202A-\u202E\uFEFF]/g;
+function sanitizeHeaderValue(rawValue) {
+  return String(rawValue ?? "").replace(STRIPPABLE_CONTROL_CHARS, "").trim();
+}
+function ensureAsciiHeaderValue(value, fieldName) {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code > 0x7E) {
+      const hex = code.toString(16).toUpperCase().padStart(4, "0");
+      throw new CloudProviderError(
+        "no_credentials",
+        `${fieldName} содержит недопустимый символ на позиции ${i + 1} ` +
+          `(код U+${hex}). HTTP-заголовки принимают только латиницу, цифры и ASCII-знаки. ` +
+          `Скопируйте ключ заново из консоли провайдера — возможно, попал невидимый ` +
+          `или кириллический символ.`
+      );
+    }
+  }
+}
+function prepareAuthorizationHeader(apiKey) {
+  const cleaned = sanitizeHeaderValue(apiKey);
+  ensureAsciiHeaderValue(cleaned, "API-ключ");
+  return `Bearer ${cleaned}`;
+}
+
 function buildEndpoint(baseUrl) {
   const normalized = normalizeBaseUrl(baseUrl);
   if (/\/chat\/completions$/.test(normalized)) {
@@ -202,13 +237,21 @@ export class CloudChatProvider {
       );
     }
 
+    let authHeader;
+    try {
+      authHeader = prepareAuthorizationHeader(apiKey);
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+
     let response;
     try {
       response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${String(apiKey).trim()}`,
+          Authorization: authHeader,
         },
         body: JSON.stringify({
           model: String(model).trim(),
@@ -310,13 +353,21 @@ export class CloudChatProvider {
       }
     }
 
+    let authHeader;
+    try {
+      authHeader = prepareAuthorizationHeader(apiKey);
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+
     let response;
     try {
       response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${String(apiKey).trim()}`,
+          Authorization: authHeader,
           Accept: "text/event-stream",
         },
         body: JSON.stringify({

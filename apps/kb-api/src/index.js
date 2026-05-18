@@ -85,6 +85,34 @@ async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider,
   }
 }
 
+async function runOcrAllDefaultTrueMigration({ appSettingsService, logger }) {
+  // #8.1.c.fix-2: владелец работает со сканами, дефолт «OCR для всех страниц
+  // PDF» переключён на true. Эта миграция один раз переписывает уже
+  // сохранённое значение false → true (если оно было явно false).
+  // Запускается один раз: помечается флагом ocrAllDefaultTrue.
+  try {
+    const done = await appSettingsService.getMigrationFlag("ocrAllDefaultTrue");
+    if (done) return;
+    const current = await appSettingsService.getOcrSettings();
+    // После смены дефолта в getOcrSettings: если raw.ocrAll был true или
+    // отсутствовал — current.ocrAll уже true и обновление не нужно.
+    // Принудительно подтверждаем true, чтобы значение лежало явно в БД
+    // (полезно для diagnostics и UI), и помечаем миграцию.
+    if (current.ocrAll !== true) {
+      await appSettingsService.updateOcrSettings({
+        autoOcrEmptyPages: current.autoOcrEmptyPages,
+        ocrAll: true,
+      });
+      logger.info("OCR migration: ocrAll переключён на true (было false)");
+    } else {
+      logger.info("OCR migration: ocrAll уже true, изменений нет");
+    }
+    await appSettingsService.setMigrationFlag("ocrAllDefaultTrue");
+  } catch (error) {
+    logger.error({ err: error }, "OCR ocrAllDefaultTrue migration failed");
+  }
+}
+
 const app = Fastify({ logger: true });
 await app.register(multipart, {
   limits: {
@@ -190,6 +218,7 @@ const diagnosticsService = new DiagnosticsService({
   qdrantProvider,
 });
 await runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger: app.log });
+await runOcrAllDefaultTrueMigration({ appSettingsService, logger: app.log });
 
 const searchService = new SearchService({
   embeddingProvider,
