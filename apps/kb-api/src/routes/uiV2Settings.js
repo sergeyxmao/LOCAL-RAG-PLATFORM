@@ -599,6 +599,28 @@ function renderSettingsCss() {
       border-radius: 4px;
     }
     .graph-alias-card-actions { display:inline-flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .graph-nodetype-icon {
+      font-size: 22px;
+      line-height: 1;
+      width: 28px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .graph-nodetype-badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .graph-nodetype-badge--custom {
+      background: rgba(34, 197, 94, 0.08);
+      border-color: rgba(34, 197, 94, 0.35);
+      color: var(--text);
+    }
+    .btn.is-disabled { opacity: 0.55; cursor: not-allowed; }
     .graph-style-radios {
       display: flex;
       flex-direction: column;
@@ -1752,7 +1774,157 @@ function renderGraphTabScript() {
 "  }",
 "",
 "  // ─── State ──────────────────────────────────────────────────",
-"  var state = { loaded: false, profiles: [], aliases: {} };",
+"  var state = { loaded: false, profiles: [], aliases: {}, nodeTypes: [] };",
+"",
+"  // ─── Node types (#8.1.e) ────────────────────────────────────",
+"  function loadNodeTypes() {",
+"    var listEl = $('graphNodeTypeList');",
+"    if (listEl) listEl.innerHTML = '<div class=\"settings-hint\">Загрузка…</div>';",
+"    return api('GET', '/api/v2/graph/node-types').then(function (data) {",
+"      state.nodeTypes = (data && data.types) || [];",
+"      renderNodeTypesList();",
+"    }).catch(function (err) {",
+"      if (listEl) listEl.innerHTML = '<div class=\"graph-form__error\">Не удалось загрузить типы узлов: ' + esc(err.message) + '</div>';",
+"    });",
+"  }",
+"  function renderNodeTypesList() {",
+"    var listEl = $('graphNodeTypeList');",
+"    if (!listEl) return;",
+"    if (!state.nodeTypes || state.nodeTypes.length === 0) {",
+"      listEl.innerHTML = '<div class=\"settings-hint\">Типов узлов нет. Нажмите «Создать тип».</div>';",
+"      return;",
+"    }",
+"    listEl.innerHTML = state.nodeTypes.map(function (t) {",
+"      var systemBadge = t.is_builtin ? '<span class=\"graph-nodetype-badge\" title=\"Системный тип, удалить нельзя\">🔒 Системный</span>' : '<span class=\"graph-nodetype-badge graph-nodetype-badge--custom\">Кастомный</span>';",
+"      var iconHtml = t.icon ? '<span class=\"graph-nodetype-icon\">' + esc(t.icon) + '</span>' : '';",
+"      var deleteAttrs = t.is_builtin",
+"        ? 'disabled aria-disabled=\"true\" title=\"Системный тип удалить нельзя\"'",
+"        : 'data-graph-action=\"delete-nodetype\" data-id=\"' + esc(t.code) + '\"';",
+"      var deleteCls = t.is_builtin ? 'btn btn--ghost is-disabled' : 'btn btn--ghost';",
+"      return '<div class=\"graph-item-card\">' +",
+"        '<div class=\"graph-item-card__head\">' +",
+"          '<div style=\"display:flex;align-items:center;gap:8px;\">' + iconHtml +",
+"            '<div>' +",
+"              '<div class=\"graph-item-card__title\">' + esc(t.label_ru) + '</div>' +",
+"              '<div class=\"graph-item-card__desc\">' + esc(t.description || '') + '</div>' +",
+"            '</div>' +",
+"          '</div>' +",
+"          '<div class=\"graph-item-card__actions\">' +",
+"            '<button type=\"button\" class=\"btn btn--ghost\" data-graph-action=\"edit-nodetype\" data-id=\"' + esc(t.code) + '\">Изменить</button>' +",
+"            '<button type=\"button\" class=\"' + deleteCls + '\" ' + deleteAttrs + '>Удалить</button>' +",
+"          '</div>' +",
+"        '</div>' +",
+"        '<div class=\"graph-item-card__meta\">' +",
+"          '<span class=\"mono\">' + esc(t.code) + '</span>' +",
+"          '<span>' + systemBadge + '</span>' +",
+"          '<span>Узлов: ' + (t.usage_count || 0) + '</span>' +",
+"          '<span>Порядок: ' + (t.sort_order || 100) + '</span>' +",
+"        '</div>' +",
+"      '</div>';",
+"    }).join('');",
+"  }",
+"  function openNodeTypeEditor(existingType) {",
+"    var isEdit = !!existingType;",
+"    var data = existingType ? JSON.parse(JSON.stringify(existingType)) : {",
+"      code: '', label_ru: '', description: '', icon: '', sort_order: 100, is_builtin: false",
+"    };",
+"    var wrap = document.createElement('div');",
+"    wrap.className = 'graph-form';",
+"    var codeReadonly = isEdit ? 'readonly disabled' : '';",
+"    var codeHintText = isEdit",
+"      ? 'Код типа неизменяем после создания.'",
+"      : 'Латиницей с нижним подчёркиванием, как cabinet. Используется в YAML профилей и в БД. Не меняется после создания.';",
+"    wrap.innerHTML =",
+"      '<div class=\"graph-form__row\"><label>Код ' + hint(codeHintText) + '</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"ntCode\" maxlength=\"64\" placeholder=\"my_type\" ' + codeReadonly + ' />' +",
+"        '<span class=\"graph-form__hint\">Только латиница/цифры/_, начинается с буквы. До 64 символов.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>Название ' + hint('Русское название типа. Показывается в wizard\\'е парсера, в графе и в статистике.') + '</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"ntLabel\" maxlength=\"128\" placeholder=\"Шкаф\" />' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>Описание ' + hint('Краткое описание для подсказки рядом с чекбоксом в wizard\\'е.') + '</label><div class=\"graph-form__field\">' +",
+"        '<textarea id=\"ntDesc\" rows=\"3\" maxlength=\"2048\" placeholder=\"Шкаф автоматики, корпус с оборудованием.\"></textarea>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>Иконка ' + hint('Один emoji-символ для визуального отличия в списках. Пример: 🗄 для шкафа.') + '</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"ntIcon\" maxlength=\"16\" placeholder=\"🗄\" style=\"max-width:120px;\" />' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>Порядок ' + hint('Целое число для сортировки в списках. Меньше — выше.') + '</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"number\" id=\"ntSort\" min=\"1\" max=\"9999\" style=\"max-width:120px;\" />' +",
+"      '</div></div>' +",
+"      '<div id=\"ntErr\" class=\"graph-form__error\" style=\"display:none\"></div>';",
+"    setTimeout(function () {",
+"      var c = $('ntCode'); if (c) c.value = data.code || '';",
+"      var l = $('ntLabel'); if (l) l.value = data.label_ru || '';",
+"      var d = $('ntDesc'); if (d) d.value = data.description || '';",
+"      var ic = $('ntIcon'); if (ic) ic.value = data.icon || '';",
+"      var s = $('ntSort'); if (s) s.value = (data.sort_order || 100);",
+"      if (!isEdit) { var c2 = $('ntCode'); if (c2) c2.focus(); }",
+"    }, 0);",
+"    var saveBtn = makeBtn('Сохранить', 'btn--accent', function () {",
+"      var errEl = $('ntErr');",
+"      var code = ($('ntCode').value || '').trim();",
+"      var labelRu = ($('ntLabel').value || '').trim();",
+"      var description = ($('ntDesc').value || '').trim();",
+"      var icon = ($('ntIcon').value || '').trim();",
+"      var sortOrder = Number($('ntSort').value) || 100;",
+"      if (!isEdit) {",
+"        if (!/^[a-z][a-z0-9_]*$/.test(code)) {",
+"          errEl.style.display = 'block';",
+"          errEl.textContent = 'Код должен начинаться с буквы латиницы и содержать только латиницу, цифры и _';",
+"          return;",
+"        }",
+"      }",
+"      if (!labelRu) {",
+"        errEl.style.display = 'block';",
+"        errEl.textContent = 'Название не может быть пустым';",
+"        return;",
+"      }",
+"      var body = isEdit",
+"        ? { label_ru: labelRu, description: description, icon: icon || null, sort_order: sortOrder }",
+"        : { code: code, label_ru: labelRu, description: description, icon: icon || undefined, sort_order: sortOrder };",
+"      var p = isEdit",
+"        ? api('PUT', '/api/v2/graph/node-types/' + encodeURIComponent(data.code), body)",
+"        : api('POST', '/api/v2/graph/node-types', body);",
+"      p.then(function (res) {",
+"        toast((res && res.message) || 'Сохранено');",
+"        closeModal();",
+"        loadNodeTypes();",
+"      }).catch(function (err) {",
+"        errEl.style.display = 'block';",
+"        errEl.textContent = err.message || 'Не удалось сохранить';",
+"      });",
+"    });",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    openModal(isEdit ? ('Изменение типа узла: ' + data.code) : 'Создание типа узла', wrap, [cancelBtn, saveBtn]);",
+"  }",
+"  function confirmDeleteNodeType(code) {",
+"    var t = state.nodeTypes.find(function (x) { return x.code === code; });",
+"    if (!t) return;",
+"    if (t.is_builtin) {",
+"      toast('Системный тип \"' + code + '\" нельзя удалить.', 'error');",
+"      return;",
+"    }",
+"    var wrap = document.createElement('div');",
+"    if ((t.usage_count || 0) > 0) {",
+"      wrap.innerHTML =",
+"        '<p style=\"margin:0;\">Этот тип используется в <strong>' + t.usage_count + '</strong> узлах. Сначала измените их тип или удалите.</p>' +",
+"        '<p class=\"settings-hint\" style=\"margin-top:6px;\">Удаление возможно только если на тип не ссылается ни один активный узел графа.</p>';",
+"      var okBtn = makeBtn('Понятно', 'btn--accent', closeModal);",
+"      openModal('Нельзя удалить тип \"' + code + '\"', wrap, [okBtn]);",
+"      return;",
+"    }",
+"    wrap.innerHTML = '<p style=\"margin:0;\">Удалить тип узла <strong>' + esc(code) + '</strong>?</p>' +",
+"      '<p class=\"settings-hint\" style=\"margin-top:6px;\">Это пользовательский тип. После удаления он исчезнет из wizard\\'а профилей и из списков.</p>';",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    var del = makeBtn('Удалить', 'btn--danger', function () {",
+"      api('DELETE', '/api/v2/graph/node-types/' + encodeURIComponent(code)).then(function (res) {",
+"        toast((res && res.message) || 'Удалено');",
+"        closeModal();",
+"        loadNodeTypes();",
+"      }).catch(function (err) { toast('Не удалось удалить: ' + err.message, 'error'); });",
+"    });",
+"    openModal('Удалить тип узла?', wrap, [cancelBtn, del]);",
+"  }",
 "",
 "  // ─── Profiles list ──────────────────────────────────────────",
 "  function loadProfiles() {",
@@ -2033,6 +2205,12 @@ function renderGraphTabScript() {
 "      cabinet: { source: 'sheet_name', pattern: '', name_template: 'Cabinet {cabinet_code}' },",
 "      skip_rows: [],",
 "    };",
+"    // #8.1.e: подтягиваем актуальный список типов узлов на каждое открытие wizard'а",
+"    // — пользователь мог только что добавить новый тип в подвкладке «Типы узлов».",
+"    api('GET', '/api/v2/graph/node-types').then(function (res) {",
+"      state.nodeTypes = (res && res.types) || state.nodeTypes;",
+"      if (typeof renderBuilds === 'function') { try { renderBuilds(); } catch (_) {} }",
+"    }).catch(function () {});",
 "    var detectedStyle = (data.per_sheet && Object.keys(data.per_sheet).length) ? 'koyo' : 'metso';",
 "    var sampleSheets = [];",
 "    var wrap = document.createElement('div');",
@@ -2126,14 +2304,28 @@ function renderGraphTabScript() {
 "    }",
 "    function renderBuilds() {",
 "      var style = getStyle();",
-"      var allBuilds = (style === 'universal')",
-"        ? ['object','cabinet','station','card','channel','signal','device']",
-"        : ['cabinet','station','card','channel','signal','device'];",
 "      var box = $('wzBuilds');",
 "      if (!box) return;",
-"      box.innerHTML = allBuilds.map(function (b) {",
-"        var ck = buildsState.has(b) ? 'checked' : '';",
-"        return '<label style=\"display:inline-flex;align-items:center;gap:4px;\"><input type=\"checkbox\" data-build=\"' + b + '\" ' + ck + ' />' + b + '</label>';",
+"      // Список типов узлов — динамический, из БД через state.nodeTypes.",
+"      // Если список ещё не загружен — fallback на builtin кодировки.",
+"      var types = (Array.isArray(state.nodeTypes) && state.nodeTypes.length > 0)",
+"        ? state.nodeTypes.slice().filter(function (t) { return !t.is_archived; })",
+"        : ['object','cabinet','station','card','channel','signal','device'].map(function (c) {",
+"            return { code: c, label_ru: c, icon: '', description: '', sort_order: 100, is_archived: false };",
+"          });",
+"      types.sort(function (a, b) { return (a.sort_order || 100) - (b.sort_order || 100); });",
+"      // В metso/koyo-режиме скрываем 'object' (он только для универсального стиля).",
+"      // В универсальном — показываем все.",
+"      if (style !== 'universal') {",
+"        types = types.filter(function (t) { return t.code !== 'object'; });",
+"      }",
+"      box.innerHTML = types.map(function (t) {",
+"        var ck = buildsState.has(t.code) ? 'checked' : '';",
+"        var iconPart = t.icon ? (esc(t.icon) + ' ') : '';",
+"        var tip = t.description ? hint(t.description) : '';",
+"        return '<label style=\"display:inline-flex;align-items:center;gap:4px;\">' +",
+"               '<input type=\"checkbox\" data-build=\"' + esc(t.code) + '\" ' + ck + ' />' +",
+"               iconPart + esc(t.label_ru || t.code) + tip + '</label>';",
 "      }).join('');",
 "      box.querySelectorAll('input[type=checkbox]').forEach(function (cb) {",
 "        cb.addEventListener('change', function () {",
@@ -2491,6 +2683,11 @@ function renderGraphTabScript() {
 "          openAliasEditor(id);",
 "        } else if (name === 'delete-alias') {",
 "          confirmDeleteAlias(id);",
+"        } else if (name === 'edit-nodetype') {",
+"          var nt = state.nodeTypes.find(function (x) { return x.code === id; });",
+"          if (nt) openNodeTypeEditor(nt);",
+"        } else if (name === 'delete-nodetype') {",
+"          confirmDeleteNodeType(id);",
 "        }",
 "        return;",
 "      }",
@@ -2501,6 +2698,8 @@ function renderGraphTabScript() {
 "    var aBtn = $('graphAliasCreateBtn'); if (aBtn) aBtn.addEventListener('click', openCreateCanonicalConfirm);",
 "    var arBtn = $('graphAliasRawBtn'); if (arBtn) arBtn.addEventListener('click', function () { openRawEditor('aliases'); });",
 "    var aRef = $('graphAliasRefresh'); if (aRef) aRef.addEventListener('click', loadAliases);",
+"    var ntCreate = $('graphNodeTypeCreateBtn'); if (ntCreate) ntCreate.addEventListener('click', function () { openNodeTypeEditor(null); });",
+"    var ntRef = $('graphNodeTypeRefresh'); if (ntRef) ntRef.addEventListener('click', loadNodeTypes);",
 "  }",
 "",
 "  window.__graphTabActivate = function () {",
@@ -2508,7 +2707,7 @@ function renderGraphTabScript() {
 "    state.loaded = true;",
 "    ensureModal();",
 "    bindEvents();",
-"    Promise.all([loadProfiles(), loadAliases()]);",
+"    Promise.all([loadProfiles(), loadAliases(), loadNodeTypes()]);",
 "  };",
 "})();",
 ""
@@ -2709,6 +2908,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <div class="graph-subtabs" role="tablist" aria-label="Подвкладки графа">
               <button type="button" class="graph-subtab is-active" data-graph-subtab="profiles" role="tab">Профили парсера</button>
               <button type="button" class="graph-subtab" data-graph-subtab="aliases" role="tab">Алиасы signal_kind</button>
+              <button type="button" class="graph-subtab" data-graph-subtab="nodetypes" role="tab">Типы узлов</button>
             </div>
             <p class="settings-hint">
               Профили решают, как читать XLSX с таблицами сигналов. Алиасы — как нормализовать значения signal_kind
@@ -2757,6 +2957,26 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
                   </div>
                 </div>
               </details>
+            </div>
+
+            <div class="graph-subtab-panel" data-graph-subpanel="nodetypes">
+              <div class="settings-actions" style="margin-bottom:8px;">
+                <button type="button" class="btn btn--accent" id="graphNodeTypeCreateBtn">${ICONS.plus}<span>Создать тип</span></button>
+                <button type="button" class="btn btn--ghost btn--icon" id="graphNodeTypeRefresh" aria-label="Обновить">${ICONS.refresh}</button>
+              </div>
+              <p class="settings-hint" style="margin:0;">
+                Типы узлов используются в графе знаний (поле <span class="mono">graph_nodes.type</span>)
+                и в чекбоксах <strong>builds</strong> wizard'а профилей парсера. Системные типы
+                (<span class="mono">object</span>, <span class="mono">cabinet</span>, <span class="mono">station</span>,
+                <span class="mono">card</span>, <span class="mono">channel</span>, <span class="mono">signal</span>,
+                <span class="mono">device</span>) встроены и удалить их нельзя; кастомные —
+                добавляйте под свою предметную область. Парсер XLSX пока учитывает только семь
+                системных кодов; неизвестные коды попадают в <span class="mono">graph_report.warnings</span>
+                под кодом <span class="mono">unknown_node_type</span>.
+              </p>
+              <div id="graphNodeTypeList" style="display:flex;flex-direction:column;gap:8px;">
+                <div class="settings-hint">Загрузка…</div>
+              </div>
             </div>
           </div>
         </div>

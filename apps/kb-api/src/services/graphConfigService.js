@@ -8,7 +8,10 @@ const CANONICAL_REGEX = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const PROFILE_DESCRIPTION_MAX = 512;
 const ALIAS_DESCRIPTION_MAX = 256;
 const BACKUP_KEEP = 10;
-const ALLOWED_BUILDS = new Set(["object", "cabinet", "station", "card", "channel", "signal", "device"]);
+// #8.1.e: builds — открытый список строк (не enum). Конкретный набор поддержанных
+// кодов хранится в БД (`graph_node_types`) + хардкоженная логика в xlsxParser.
+// Неизвестные коды парсер просто игнорирует с warning "unknown_node_type".
+const BUILD_CODE_REGEX = /^[a-z][a-z0-9_]*$/;
 
 function timestampForBackup() {
   const d = new Date();
@@ -94,8 +97,8 @@ function validateProfilePayload(profile, { existingIds = new Set(), isCreate = t
   }
   if (Array.isArray(profile.builds)) {
     for (const b of profile.builds) {
-      if (typeof b !== "string" || !ALLOWED_BUILDS.has(b)) {
-        errors.push(`builds содержит недопустимое значение "${b}". Допустимо: ${Array.from(ALLOWED_BUILDS).join(", ")}`);
+      if (typeof b !== "string" || !BUILD_CODE_REGEX.test(b)) {
+        errors.push(`builds содержит недопустимое значение "${b}". Код должен начинаться с буквы латиницы и содержать только латиницу, цифры и _`);
       }
     }
   } else if (profile.builds !== undefined && profile.builds !== null) {

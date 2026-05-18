@@ -323,6 +323,57 @@ Phase — единый источник правды для UI. `status` ост�
 сервиса — `apps/kb-api/src/services/graphService.js`, роуты —
 `apps/kb-api/src/routes/graph.js`.
 
+## Таблица graph_node_types (#8.1.e)
+
+Справочник типов узлов графа. Создаётся идемпотентно в
+`PostgresProvider.ensureGraphSchema()` вместе с `graph_nodes` и
+`graph_edges`. Полная картина — `docs/GRAPH_NODE_TYPES.md`.
+
+`graph_node_types`:
+
+- `code VARCHAR(64) PRIMARY KEY` — техническое имя типа,
+  snake_case латиницей (паттерн `^[a-z][a-z0-9_]*$`).
+  Совпадает с `graph_nodes.type` (без FK для гибкости);
+- `label_ru VARCHAR(128) NOT NULL` — русское название
+  («Шкаф», «ПЛК», …) для UI и подсказок;
+- `description TEXT` — описание для подсказки `?` в wizard'е
+  профилей парсера;
+- `icon VARCHAR(16)` — один emoji-символ для визуального
+  отличия в списках;
+- `sort_order INTEGER NOT NULL DEFAULT 100` — порядок
+  сортировки в списках и в чекбоксах builds;
+- `is_builtin BOOLEAN NOT NULL DEFAULT FALSE` — встроенный тип,
+  загружается bootstrap'ом при старте `kb-api`. `code`
+  неизменяем, удалить нельзя. 7 встроенных кодов: `object`,
+  `cabinet`, `station`, `card`, `channel`, `signal`, `device`;
+- `is_archived BOOLEAN NOT NULL DEFAULT FALSE` — мягкое
+  скрытие из wizard'а;
+- `created_at`, `updated_at TIMESTAMPTZ` — `updated_at`
+  обновляется триггером `trg_graph_node_types_set_updated_at`.
+
+Индекс: `idx_graph_node_types_archived` (по `is_archived`).
+
+Bootstrap: `graphNodeTypeService.ensureBuiltinTypes()` при
+старте `kb-api` делает `INSERT ... ON CONFLICT (code) DO
+UPDATE SET is_builtin = TRUE` — обновляется только флаг, чтобы
+не перетирать пользовательские правки `label_ru`/`description`/
+`icon`/`sort_order`.
+
+CRUD через REST API `/api/v2/graph/node-types`:
+
+- `GET /api/v2/graph/node-types` — список с
+  `usage_count` (LEFT JOIN на `graph_nodes` по `type`,
+  только `is_archived = FALSE`).
+- `GET /api/v2/graph/node-types/:code` — один тип.
+- `POST /api/v2/graph/node-types` — создание кастомного
+  (`is_builtin: false`). 409 если код существует.
+- `PUT /api/v2/graph/node-types/:code` — обновление. `code`
+  неизменяем. Системные нельзя переименовать (403).
+- `DELETE /api/v2/graph/node-types/:code` — только кастомные.
+  403 для встроенных, 409 если `usage_count > 0`.
+
+Подробности — `docs/GRAPH_NODE_TYPES.md`.
+
 ## Колонка ingestion_jobs.graph_report (#8.1.b)
 
 Идемпотентно добавляется через
@@ -351,6 +402,11 @@ Phase — единый источник правды для UI. `status` ост�
 
 ## История изменений
 
+- 2026-05-18: #8.1.e — новая таблица `graph_node_types` для
+  справочника типов узлов графа (CRUD через UI/API,
+  bootstrap встроенных типов, `usage_count` через LEFT JOIN на
+  `graph_nodes`). `graph_nodes.type` оставлен TEXT без FK для
+  гибкости парсера. Подробности — `docs/GRAPH_NODE_TYPES.md`.
 - 2026-05-17: #8.1.b — парсер XLSX наполняет граф знаний
   параллельно с RAG-pipeline. Новая колонка
   `ingestion_jobs.graph_report JSONB`. Подробности —

@@ -563,6 +563,17 @@ export async function graphRoutes(app) {
               totalActiveNodes: { type: "integer" },
               totalArchivedNodes: { type: "integer" },
               totalEdges: { type: "integer" },
+              nodeTypeLabels: {
+                type: "object",
+                additionalProperties: {
+                  type: "object",
+                  properties: {
+                    label_ru: { type: "string" },
+                    icon: { type: "string", nullable: true },
+                  },
+                  additionalProperties: true,
+                },
+              },
             },
           },
           500: ERROR_RESPONSE_SCHEMA,
