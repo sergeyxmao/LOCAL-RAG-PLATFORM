@@ -1,3 +1,5 @@
+import { HIERARCHY_RULES } from "./graphTreeService.js";
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -349,6 +351,95 @@ export class GraphService {
       throw serviceError("Некорректный идентификатор связи", 400);
     }
     return this.postgresProvider.deleteGraphEdge(id);
+  }
+
+  // Жёсткое удаление узла с опциональным каскадом по иерархии дерева.
+  // - cascade=false: удаляется только узел; его потомки по дереву
+  //   остаются (становятся "сиротами" в дереве).
+  // - cascade=true:  удаляются узел и все его потомки по дереву
+  //   (HIERARCHY_RULES, идентично подсчёту descendantsCount).
+  // Связи к удаляемым узлам уходят автоматически через
+  // ON DELETE CASCADE на graph_edges.
+  async hardDeleteNode(id, { cascade = false, treeService = null } = {}) {
+    if (!isUuid(id)) {
+      throw serviceError("Некорректный идентификатор узла", 400);
+    }
+    const existing = await this.postgresProvider.getGraphNodeById(id);
+    if (!existing) {
+      return { deleted: false, deletedCount: 0 };
+    }
+    if (cascade !== true) {
+      const removed = await this.postgresProvider.hardDeleteGraphNode(id);
+      return { deleted: removed > 0, deletedCount: removed };
+    }
+    if (!treeService || typeof treeService._countDescendants !== "function") {
+      throw serviceError(
+        "Каскадное удаление требует доступ к treeService — обратитесь к разработчику",
+        500
+      );
+    }
+    // Собираем полный список ID узлов к удалению: сам узел + все его
+    // потомки по HIERARCHY_RULES. Метод аналогичен _countDescendants,
+    // но возвращает сами id.
+    const allIds = await this._collectDescendantIds(id, treeService);
+    const removed = await this.postgresProvider.hardDeleteGraphNodes(allIds);
+    return { deleted: removed > 0, deletedCount: removed };
+  }
+
+  async _collectDescendantIds(rootId, _treeService) {
+    // Собирает все id потомков по дереву HIERARCHY_RULES (включая root).
+    // treeService передаётся для API-совместимости, но не используется
+    // напрямую — HIERARCHY_RULES импортируется статически выше.
+    const pool = this.postgresProvider.pool;
+    const visited = new Set([rootId]);
+    const collected = [rootId];
+    let frontier = [rootId];
+    let safety = 0;
+    while (frontier.length > 0 && safety < 100) {
+      safety += 1;
+      const typeRes = await pool.query(
+        `SELECT id, type FROM graph_nodes WHERE id = ANY($1)`,
+        [frontier]
+      );
+      const byType = new Map();
+      for (const row of typeRes.rows) {
+        if (!byType.has(row.type)) byType.set(row.type, []);
+        byType.get(row.type).push(row.id);
+      }
+      const newFrontier = [];
+      for (const [parentType, ids] of byType.entries()) {
+        const parentRules = HIERARCHY_RULES.filter((r) => r.parent === parentType);
+        for (const rule of parentRules) {
+          const sql = rule.direction === "forward"
+            ? `
+              SELECT DISTINCT n.id
+              FROM graph_nodes n
+              JOIN graph_edges e ON e.source_node_id = n.id
+              WHERE e.target_node_id = ANY($1)
+                AND e.relation = $2
+                AND n.type = $3
+              `
+            : `
+              SELECT DISTINCT n.id
+              FROM graph_nodes n
+              JOIN graph_edges e ON e.target_node_id = n.id
+              WHERE e.source_node_id = ANY($1)
+                AND e.relation = $2
+                AND n.type = $3
+              `;
+          const res = await pool.query(sql, [ids, rule.relation, rule.child]);
+          for (const row of res.rows) {
+            if (!visited.has(row.id)) {
+              visited.add(row.id);
+              collected.push(row.id);
+              newFrontier.push(row.id);
+            }
+          }
+        }
+      }
+      frontier = newFrontier;
+    }
+    return collected;
   }
 
   async getStats() {

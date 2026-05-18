@@ -389,11 +389,56 @@ FUNCTION`, `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`).
   (граф ещё не подключён к retrieval).
 - Поле `attributes` — JSONB без жёсткой схемы. Это намеренный
   выбор для скорости разработки: профили XLSX (#8.1.b) могут
-  складывать туда любые поля; UI (#8.2) будет рисовать карточку
+  складывать туда любые поля; UI (#8.2) рисует карточку
   по `type` без жёсткой проверки.
+
+## Иерархия в дереве UI (HIERARCHY_RULES, #8.2)
+
+UI «Граф знаний» (`/ui/v2/graph`, см. `docs/GRAPH_UI.md`) строит
+дерево на основе фиксированной карты из 6 правил, описывающей
+иерархию встроенных типов АСУ ТП:
+
+```javascript
+const HIERARCHY_RULES = [
+  { parent: 'object',  child: 'cabinet', relation: 'installed_in', direction: 'forward' },
+  { parent: 'cabinet', child: 'station', relation: 'installed_in', direction: 'forward' },
+  { parent: 'station', child: 'card',    relation: 'installed_in', direction: 'forward' },
+  { parent: 'card',    child: 'channel', relation: 'has_channel',  direction: 'backward' },
+  { parent: 'channel', child: 'signal',  relation: 'connected_to', direction: 'forward' },
+  { parent: 'signal',  child: 'device',  relation: 'measures',     direction: 'backward' },
+];
+```
+
+- `direction = 'forward'`  — связь `child → parent`
+  (`source_node_id = child`, `target_node_id = parent`).
+- `direction = 'backward'` — связь `parent → child`.
+
+Эти правила определяют:
+
+1. **Структуру дерева** в UI (что является ребёнком чего);
+2. **Каскадное удаление**: при `cascade=true` сервис
+   `hardDeleteNode` рекурсивно собирает потомков по этим
+   правилам (не по всем связям подряд);
+3. **Подсчёт потомков** (`descendantsCount`) для модалки
+   удаления.
+
+Правила определены в `apps/kb-api/src/services/graphTreeService.js`
+и экспортируются как `HIERARCHY_RULES` для повторного использования
+в `graphService.js` и зеркалятся в `apps/kb-api/src/routes/uiV2Graph.js`
+как `CLIENT_HIERARCHY_RULES` для построения родительской связи
+при создании узла из модалки.
+
+**Кастомные типы узлов** (созданные через `#8.1.e`) не
+участвуют в HIERARCHY_RULES: они показываются в дереве **только
+как корневые группы**. Чтобы кастомный тип попал в дерево как
+ребёнок другого типа, нужно явно расширить `HIERARCHY_RULES`
+(в коде, в обоих местах). Вынос правил в БД — отложенная
+улучшалка.
 
 ## История изменений
 
+- 2026-05-18: #8.2 — добавлен раздел про HIERARCHY_RULES (см.
+  `docs/GRAPH_UI.md`).
 - 2026-05-18: #8.1.e — таблица `graph_node_types`, CRUD-API
   `/api/v2/graph/node-types`, UI-подвкладка «Типы узлов»,
   динамические `builds` в wizard'е профилей с русскими лейблами и

@@ -21,6 +21,8 @@ import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngesti
 import { GraphConfigService } from "./services/graphConfigService.js";
 import { GraphPreviewService } from "./services/graphPreviewService.js";
 import { GraphNodeTypeService } from "./services/graphNodeTypeService.js";
+import { GraphTreeService } from "./services/graphTreeService.js";
+import { GraphSearchService } from "./services/graphSearchService.js";
 import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
@@ -44,6 +46,8 @@ import { graphReparseRoutes } from "./routes/graphReparse.js";
 import { graphProfilesRoutes } from "./routes/graphProfiles.js";
 import { graphAliasesRoutes } from "./routes/graphAliases.js";
 import { graphNodeTypeRoutes } from "./routes/graphNodeTypes.js";
+import { graphTreeRoutes } from "./routes/graphTree.js";
+import { graphSearchRoutes } from "./routes/graphSearch.js";
 import { parseTagList } from "./utils/tags.js";
 
 async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger }) {
@@ -183,6 +187,17 @@ try {
 
 graphService.nodeTypeService = graphNodeTypeService;
 
+const graphTreeService = new GraphTreeService({
+  postgresProvider,
+  graphNodeTypeService,
+  logger: app.log,
+});
+
+const graphSearchService = new GraphSearchService({
+  postgresProvider,
+  logger: app.log,
+});
+
 const graphConfigDir = process.env.CONFIG_DIR || "/app/config";
 const graphConfigs = loadGraphConfigs({ configDir: graphConfigDir, logger: app.log });
 if (Array.isArray(graphConfigs.errors) && graphConfigs.errors.length > 0) {
@@ -287,6 +302,8 @@ app.decorate("graphIngestionService", graphIngestionService);
 app.decorate("graphConfigService", graphConfigService);
 app.decorate("graphPreviewService", graphPreviewService);
 app.decorate("graphNodeTypeService", graphNodeTypeService);
+app.decorate("graphTreeService", graphTreeService);
+app.decorate("graphSearchService", graphSearchService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -307,6 +324,8 @@ await app.register(graphReparseRoutes);
 await app.register(graphProfilesRoutes);
 await app.register(graphAliasesRoutes);
 await app.register(graphNodeTypeRoutes);
+await app.register(graphTreeRoutes);
+await app.register(graphSearchRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 

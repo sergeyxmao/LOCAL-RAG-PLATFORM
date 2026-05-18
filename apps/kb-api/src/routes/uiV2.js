@@ -1,6 +1,7 @@
 import { renderChatPage } from "./uiV2Chat.js";
 import { renderKnowledgePage } from "./uiV2Knowledge.js";
 import { renderSettingsPage } from "./uiV2Settings.js";
+import { renderGraphPage } from "./uiV2Graph.js";
 
 export const ICONS = {
   messageCircle:
@@ -55,6 +56,8 @@ export const ICONS = {
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
   panelLeft:
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>',
+  share2:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
 };
 
 const NAV_ITEMS = [
@@ -65,6 +68,7 @@ const NAV_ITEMS = [
     label: "База знаний",
     icon: ICONS.database,
   },
+  { key: "graph", href: "/ui/v2/graph", label: "Граф знаний", icon: ICONS.share2 },
   { key: "settings", href: "/ui/v2/settings", label: "Настройки", icon: ICONS.settings },
 ];
 
@@ -784,6 +788,22 @@ export async function uiV2Routes(app) {
     return renderSettingsPage({
       ICONS,
       renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
+    });
+  });
+
+  app.get("/ui/v2/graph", async (request, reply) => {
+    reply.type("text/html; charset=utf-8");
+    const themeDefault = await resolveThemeDefault(app, request);
+    let stats = { totalActiveNodes: 0, totalEdges: 0 };
+    try {
+      stats = await app.graphService.getStats();
+    } catch (err) {
+      request.log.warn({ err }, "Не удалось получить stats для /ui/v2/graph");
+    }
+    return renderGraphPage({
+      ICONS,
+      renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
+      stats,
     });
   });
 }

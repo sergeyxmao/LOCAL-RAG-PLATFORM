@@ -600,6 +600,28 @@ export class PostgresProvider {
     return result.rows.length > 0;
   }
 
+  // Жёсткое удаление одного узла без потомков. Связи к узлу
+  // удаляются автоматически через ON DELETE CASCADE.
+  // Возвращает количество удалённых узлов (0 или 1).
+  async hardDeleteGraphNode(nodeId) {
+    const result = await this.pool.query(
+      `DELETE FROM graph_nodes WHERE id = $1 RETURNING id`,
+      [nodeId]
+    );
+    return result.rows.length;
+  }
+
+  // Жёсткое удаление набора узлов (для каскадного удаления).
+  // Связи удалятся автоматически через ON DELETE CASCADE.
+  async hardDeleteGraphNodes(nodeIds) {
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) return 0;
+    const result = await this.pool.query(
+      `DELETE FROM graph_nodes WHERE id = ANY($1) RETURNING id`,
+      [nodeIds]
+    );
+    return result.rows.length;
+  }
+
   async getGraphStats() {
     const [nodesByTypeRes, edgesByRelationRes, totalsRes] = await Promise.all([
       this.pool.query(

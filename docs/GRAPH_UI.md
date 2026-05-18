@@ -1,0 +1,373 @@
+# UI «Граф знаний» (#8.2)
+
+## Что делает
+
+Отдельная страница `/ui/v2/graph` — основной интерфейс работы с
+графом знаний АСУ ТП. До этой итерации граф наполнялся автоматически
+из XLSX (`#8.1.b`) и через REST API, но **посмотреть на него глазами**
+можно было только через `/api/v2/graph/stats` и `psql`. Кнопка
+«Перепарсить» в БЗ есть, а самого графа в UI нет.
+
+Эта страница даёт:
+
+- **Иерархическое дерево** узлов слева — типовые группы (Объекты,
+  Шкафы, ПЛК, Платы, Каналы, Сигналы, Приборы) с раскрытием по
+  HIERARCHY_RULES;
+- **Карточку узла** справа — 4 таба: Атрибуты, Связи, Источник,
+  Граф вокруг (vis-network);
+- **Поиск** по имени, типу и атрибутам (debounce 300ms);
+- **Полный CRUD** узлов и связей через UI-модалки;
+- **Каскадное удаление** с предварительным подсчётом потомков по
+  дереву (через рекурсивный обход HIERARCHY_RULES, не по всем связям).
+
+## Расположение в коде
+
+### Новые файлы
+
+- `apps/kb-api/src/services/graphTreeService.js` — иерархическое
+  дерево (HIERARCHY_RULES), карточка узла, соседи для vis-network,
+  подсчёт потомков по дереву.
+- `apps/kb-api/src/services/graphSearchService.js` — поиск по
+  `name`, `type`, значениям `attributes`, точному `id`.
+- `apps/kb-api/src/routes/graphTree.js` — API дерева, карточки,
+  соседей, hard-delete с каскадом.
+- `apps/kb-api/src/routes/graphSearch.js` — API поиска.
+- `apps/kb-api/src/routes/uiV2Graph.js` — рендер страницы
+  `/ui/v2/graph` (HTML + CSS + JS).
+- `docs/GRAPH_UI.md` — этот документ.
+
+### Модифицированные файлы
+
+- `apps/kb-api/src/index.js` — регистрация сервисов и роутов.
+- `apps/kb-api/src/routes/uiV2.js` — добавлен пункт меню «Граф
+  знаний» в `NAV_ITEMS` + иконка `share2` + ройт `/ui/v2/graph`.
+- `apps/kb-api/src/services/graphService.js` — добавлены методы
+  `hardDeleteNode` и `_collectDescendantIds` для каскадного
+  удаления по HIERARCHY_RULES.
+- `apps/kb-api/src/providers/postgresProvider.js` — добавлены
+  методы `hardDeleteGraphNode` и `hardDeleteGraphNodes` (связи к
+  удаляемым узлам уходят автоматически через `ON DELETE CASCADE`
+  на `graph_edges`).
+- `docs/GRAPH_SCHEMA.md` — раздел про HIERARCHY_RULES.
+- `docs/ROADMAP.md` — закрыт пункт `#8.2`.
+
+## Архитектурные решения
+
+### 1. Отдельная страница, не вкладка в БЗ
+
+Граф — самостоятельный слой (`#8.1.b`/`#8.1.e`), не подмножество
+документов. Размещение его в БЗ создавало бы путаницу между
+«документ» и «узел графа». Поэтому он живёт по адресу `/ui/v2/graph`
+рядом с «Чат», «БЗ», «Настройки».
+
+### 2. HIERARCHY_RULES — фиксированная карта 6 правил
+
+```javascript
+const HIERARCHY_RULES = [
+  { parent: 'object',  child: 'cabinet', relation: 'installed_in', direction: 'forward' },
+  { parent: 'cabinet', child: 'station', relation: 'installed_in', direction: 'forward' },
+  { parent: 'station', child: 'card',    relation: 'installed_in', direction: 'forward' },
+  { parent: 'card',    child: 'channel', relation: 'has_channel',  direction: 'backward' },
+  { parent: 'channel', child: 'signal',  relation: 'connected_to', direction: 'forward' },
+  { parent: 'signal',  child: 'device',  relation: 'measures',     direction: 'backward' },
+];
+```
+
+- `direction = 'forward'`  — связь идёт **child → parent**
+  (`source_node_id = child`, `target_node_id = parent`).
+- `direction = 'backward'` — связь идёт **parent → child**.
+
+Это отражает реальную семантику парсера: например, «плата
+**installed_in** ПЛК» (плата → ПЛК, forward), но «канал
+**has_channel** платы» в реальности парсится как «плата →
+has_channel → канал» (parent → child, backward).
+
+Правила определены в `graphTreeService.js`, экспортируются как
+`HIERARCHY_RULES` для повторного использования из `graphService.js`
+(каскадное удаление) и UI-модалок (создание узла с родителем).
+
+**Ограничение:** кастомные типы узлов (созданные в `#8.1.e`)
+показываются только как корневые группы — для них HIERARCHY_RULES
+не определены, и автоматическая иерархия дерева их не учитывает.
+Чтобы кастомные типы попали в дерево, нужно явно расширить
+`HIERARCHY_RULES`.
+
+### 3. Каскадное удаление по дереву, не по всем связям
+
+Когда пользователь удаляет узел и ставит галку «удалить также N
+потомков», `hardDeleteNode({ cascade: true })` собирает список ID
+**по правилам дерева** (HIERARCHY_RULES, рекурсивно), а не по всем
+связям. Это важно: у сигнала может быть связь `described_in →
+документ`, но документ — это RAG-сущность, не часть графа АСУ ТП.
+Удалять документ при удалении сигнала — неправильно.
+
+### 4. Soft archive vs hard delete
+
+В графе **сохраняются оба механизма**:
+
+- `DELETE /api/v2/graph/nodes/:id` (старый, без изменений) —
+  soft-archive через `is_archived = TRUE`. Для откатываемого
+  скрытия узла из выдач.
+- `POST /api/v2/graph/nodes/:id/hard-delete?cascade=true|false`
+  (новый, для UI) — реальный `DELETE FROM graph_nodes`, без
+  возможности восстановления.
+
+UI использует только новый endpoint. Старый API остаётся для
+обратной совместимости и для случаев «скрыть, но сохранить».
+
+### 5. Виртуализация — упрощённая (50 + «Показать ещё»)
+
+При раскрытии группы или большого узла дерева подгружаются первые
+50 элементов. Если есть ещё — показывается кнопка «Показать ещё 100».
+Полная windowing-виртуализация не реализована — оправдается только
+при графах с тысячами узлов одного типа.
+
+### 6. Поиск с приоритетом матча
+
+`graphSearchService.search()` использует CTE: сначала ищет по `name`
+(приоритет 1), затем по `type` (2), затем по значениям атрибутов
+(3). DISTINCT ON по `id` оставляет лучший матч. Поддерживается:
+
+- ILIKE с `%q%`
+- escape spec.chars (`%`, `_`, `\`) для безопасности
+- точное совпадение по UUID
+
+### 7. vis-network через CDN
+
+Библиотека `vis-network@9.1.6` (~150KB) подгружается с
+`https://unpkg.com/` динамически при открытии таба «Граф вокруг».
+Если CDN недоступен — таб показывает заглушку «Не удалось загрузить
+vis-network».
+
+## REST API
+
+Префикс: `http://localhost:8787`.
+
+### Дерево
+
+```bash
+# Корневые группы (типы узлов)
+GET /api/v2/graph/tree/roots
+  → { ok, roots: [{ code, label_ru, icon, sort_order, count, ... }] }
+
+# Узлы конкретного типа (страница)
+GET /api/v2/graph/tree/by-type/:type?limit=50&offset=0
+  → { ok, items: [{...node, hasChildren}], total, hasMore, ... }
+
+# Дети узла по HIERARCHY_RULES
+GET /api/v2/graph/tree/children/:nodeId
+  → { ok, items: [{...node, hasChildren}] }
+```
+
+### Карточка узла
+
+```bash
+# Полная карточка: узел + входящие + исходящие + источник + descendantsCount
+GET /api/v2/graph/nodes/:id/full
+  → { ok, node, incoming: [...], outgoing: [...], source, descendantsCount }
+
+# Соседи для vis-network
+GET /api/v2/graph/nodes/:id/neighbors?depth=1
+  → { ok, nodes: [{id, type, name}], edges: [{id, source, target, relation}] }
+```
+
+### Поиск
+
+```bash
+GET /api/v2/graph/search?q=KS_T2&type=signal&limit=50
+  → { ok, query, results: [{node, matchedField, matchedValue}] }
+```
+
+### Жёсткое удаление
+
+```bash
+POST /api/v2/graph/nodes/:id/hard-delete?cascade=true
+  → { ok, deleted: true, deletedCount: 15, cascade: true }
+
+POST /api/v2/graph/nodes/:id/hard-delete?cascade=false
+  → { ok, deleted: true, deletedCount: 1, cascade: false }
+```
+
+### Существующие endpoint'ы (без изменений)
+
+CRUD узлов и связей (`POST /api/v2/graph/nodes`, `PATCH`,
+`DELETE` для soft-archive, `POST /api/v2/graph/edges`, `DELETE`,
+`GET /api/v2/graph/stats` и т.д.) — описаны в
+`docs/GRAPH_SCHEMA.md`.
+
+## Как использовать
+
+### 1. Открыть страницу
+
+В главной боковой панели — иконка «Граф знаний» (две связанные точки).
+Или прямо `http://localhost:8787/ui/v2/graph`.
+
+### 2. Просмотреть дерево
+
+Корневые группы показывают **все** типы узлов из `graph_node_types`
+с количеством активных узлов в каждом. Клик на группу — раскрывает
+её. Клик на узел — открывает карточку справа. Клик на ▶ возле узла —
+раскрывает его потомков по HIERARCHY_RULES.
+
+### 3. Поиск
+
+В шапке страницы — поле «🔍 Поиск…». Ввод (debounce 300ms) запускает
+поиск, дерево скрывается, в левой панели — flat-список результатов.
+Кнопка «× Очистить поиск» возвращает дерево.
+
+### 4. Создать узел вручную
+
+Кнопка «+ Создать узел» внизу дерева → модалка:
+
+- **Тип** — dropdown из `graph_node_types` (включая кастомные);
+- **Имя** — обязательно;
+- **Атрибуты** — JSON (валидируется);
+- **Родитель** — autocomplete по узлам. Если выбран и пара
+  `(child_type, parent_type)` есть в HIERARCHY_RULES — автоматически
+  создаётся иерархическая связь.
+
+### 5. Изменить узел
+
+Кнопка «Изменить» в шапке карточки → модалка с теми же полями
+кроме типа (тип неизменяем — это требует более инвазивных операций
+для целостности парсера и иерархии).
+
+### 6. Удалить узел с каскадом
+
+Кнопка «Удалить» → модалка показывает количество потомков по дереву.
+Чекбокс «Удалить также N потомков (каскадно)» — без галочки удаляется
+только сам узел и его связи; потомки остаются «сиротами» в дереве
+(но физически продолжают существовать).
+
+### 7. Добавить/удалить связь
+
+В табе «Связи» карточки — кнопка «+ Добавить связь». Модалка:
+
+- **К** — autocomplete по узлам;
+- **Тип связи** — input с datalist (`installed_in`, `has_channel`,
+  `connected_to`, `measures`, `described_in`) + произвольный;
+- **Confidence** — 0.0—1.0, default 1.0.
+
+Удаление связи — кнопка «×» при hover на строке связи.
+
+### 8. Граф вокруг
+
+Таб «Граф вокруг» в карточке узла — vis-network отрисовывает узел
++ соседей в 1 хопе. Force-directed layout. Drag&drop, zoom, pan
+доступны. Клик на любого соседа — карточка справа обновляется на
+него.
+
+## Технические детали
+
+### Иерархическая загрузка с пагинацией
+
+При раскрытии группы дерева:
+
+```javascript
+GET /api/v2/graph/tree/by-type/cabinet?limit=50&offset=0
+```
+
+Если `hasMore = true` — кнопка «Показать ещё 100 →» в конце,
+сдвигает offset.
+
+При раскрытии узла:
+
+```javascript
+GET /api/v2/graph/tree/children/<uuid>
+```
+
+Возвращает все потомки за один вызов (по правилам дерева — обычно
+немного, до сотен).
+
+### Подсчёт hasChildren — батчем
+
+`_computeChildCountsForNodes()` за один SQL-запрос на каждое
+применимое правило HIERARCHY_RULES возвращает количество детей
+для всех узлов в пачке. Это позволяет показывать «▶» только у тех
+узлов, у которых реально есть дети.
+
+### Каскадное удаление
+
+`_collectDescendantIds()` использует тот же BFS-обход правил
+HIERARCHY_RULES, что и `_countDescendants()`, но собирает ID
+вместо счётчика. Затем все ID удаляются одним
+`DELETE FROM graph_nodes WHERE id = ANY(...)`. Связи уходят
+автоматически через `ON DELETE CASCADE`.
+
+Защита от бесконечной рекурсии — `safety < 100` (фактически глубина
+дерева АСУ ТП — 6 уровней, запас огромный).
+
+### Поиск
+
+Поиск использует CTE с тремя ветками:
+
+```sql
+WITH name_match AS ( ... name ILIKE $1 ... ),
+     type_match AS ( ... type ILIKE $1 ... ),
+     attr_match AS (
+       SELECT DISTINCT ON (n.id) ...
+       FROM graph_nodes n
+       CROSS JOIN LATERAL jsonb_each_text(n.attributes) AS pairs(key, attr_value)
+       WHERE pairs.attr_value ILIKE $1
+       ORDER BY n.id, pairs.key
+     ),
+     combined AS ( name_match UNION ALL type_match UNION ALL attr_match ),
+     ranked AS ( SELECT DISTINCT ON (id) * FROM combined ORDER BY id, priority ASC )
+SELECT * FROM ranked ORDER BY priority ASC, name ASC LIMIT $N
+```
+
+Это даёт:
+
+- DISTINCT по `id` — один результат на узел;
+- Приоритет матча — name > type > attributes;
+- Безопасный ESCAPE `\` для wildcard-символов.
+
+### vis-network
+
+Подгружается лениво через `<script>` при первом открытии таба
+«Граф вокруг». Если интернет недоступен или CDN заблокирован —
+таб показывает заглушку. Цвета узлов выбираются по типу
+(`object` — фиолетовый, `cabinet` — синий, и т.д.); центральный
+узел подсвечен accent-цветом.
+
+## Ограничения и риски
+
+- **Кастомные типы (#8.1.e) — корневые группы без иерархии.**
+  HIERARCHY_RULES жёстко закодирован для 7 встроенных типов. Чтобы
+  кастомный тип попал в дерево как ребёнок другого типа, нужно
+  расширить `HIERARCHY_RULES` в `graphTreeService.js` (и зеркало
+  `CLIENT_HIERARCHY_RULES` в `uiV2Graph.js`). Будущая итерация
+  может вынести правила в БД.
+
+- **vis-network требует интернет.** Если CDN `unpkg.com` недоступен,
+  таб «Граф вокруг» показывает заглушку. Альтернатива — скачать
+  бандл в `apps/kb-api/public/vendor/` и менять `script.src` на
+  локальный путь.
+
+- **Тяжёлые типы тормозят.** При `>5000` узлов одного типа простой
+  рендер списка из 50 элементов + lazy expand работает, но скролл
+  и поиск могут становиться медленнее. Реальные размеры графов АСУ
+  ТП — сотни/тысячи сигналов, это укладывается.
+
+- **Soft-delete остаётся для API.** Старый `DELETE /api/v2/graph/nodes/:id`
+  сохранён как soft-archive. Новый UI использует только hard-delete.
+  Не путать в скриптах: для UI нужен `POST .../hard-delete`.
+
+- **Каскадное удаление в коде, не в БД.** Каскад реализован через
+  явное `hardDeleteGraphNodes(ids)` после BFS-сбора ID по
+  HIERARCHY_RULES. Постгрес-триггеры намеренно не использованы —
+  каскад должен следовать правилам дерева, а не всем связям.
+
+- **Поиск чувствителен к регистру алиасов.** ILIKE регистронезависим,
+  но для точного совпадения по `id` — UUID должен быть полностью.
+
+- **Audit log изменений узлов отсутствует.** `updated_at` пока
+  достаточно. История изменений (старые версии, кто менял) — отдельная
+  отложенная тема.
+
+## История изменений
+
+- **2026-05-18 (#8.2).** Первая версия: read-only дерево + карточка
+  + поиск + CRUD + vis-network. Создание/редактирование/удаление
+  узлов и связей через UI-модалки. Каскадное удаление по
+  HIERARCHY_RULES.
