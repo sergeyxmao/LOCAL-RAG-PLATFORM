@@ -491,6 +491,200 @@ function renderGraphPageCss() {
       border-color: var(--success);
       color: var(--success);
     }
+
+    /* Подсказка "?" в форме */
+    .hint {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      margin-left: 6px;
+      border-radius: 50%;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1;
+      border: 1px solid var(--border);
+      cursor: help;
+      vertical-align: middle;
+      position: relative;
+    }
+    .hint:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+    .hint::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 20px;
+      top: -6px;
+      width: 260px;
+      max-width: calc(100vw - 24px);
+      padding: 8px 10px;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.4;
+      white-space: normal;
+      text-align: left;
+      z-index: 1200;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.12s ease, visibility 0.12s ease;
+      pointer-events: none;
+    }
+    .hint:hover::after { opacity: 1; visibility: visible; }
+
+    /* Визуальный редактор атрибутов (модалки) */
+    .kv-mode-toggle {
+      display: inline-flex;
+      margin-bottom: 8px;
+      gap: 4px;
+      background: var(--surface-2);
+      border-radius: 6px;
+      padding: 2px;
+    }
+    .kv-mode-btn {
+      padding: 4px 12px;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    .kv-mode-btn:hover { color: var(--text); }
+    .kv-mode-btn.active { background: var(--accent); color: #fff; }
+    .kv-visual { display: block; }
+    .kv-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .kv-row {
+      display: grid;
+      grid-template-columns: 1fr 1.5fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .kv-key, .kv-value {
+      padding: 6px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .kv-key:focus, .kv-value:focus { outline: 2px solid var(--accent); }
+    .kv-remove {
+      padding: 4px 10px;
+      cursor: pointer;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      font-size: 16px;
+      line-height: 1;
+      font-family: inherit;
+    }
+    .kv-remove:hover { color: var(--danger); border-color: var(--danger); }
+    .kv-add-btn {
+      margin-top: 8px;
+      padding: 6px 14px;
+      background: var(--surface-2);
+      border: 1px dashed var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+    }
+    .kv-add-btn:hover { background: var(--surface-hover); border-style: solid; }
+    .kv-empty {
+      padding: 8px 10px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    /* Табличный вид атрибутов в карточке */
+    .attrs-mode-toggle {
+      display: inline-flex;
+      margin-bottom: 12px;
+      gap: 4px;
+      background: var(--surface-2);
+      border-radius: 6px;
+      padding: 2px;
+    }
+    .attrs-mode-btn {
+      padding: 4px 12px;
+      cursor: pointer;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    .attrs-mode-btn:hover { color: var(--text); }
+    .attrs-mode-btn.active { background: var(--accent); color: #fff; }
+    .attrs-table table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface-2);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .attrs-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .attrs-table tr:last-child td { border-bottom: none; }
+    .attr-key {
+      font-family: var(--font-mono, "JetBrains Mono", monospace);
+      color: var(--text-muted);
+      width: 40%;
+      font-size: 12px;
+    }
+    .attr-val {
+      font-family: var(--font-mono, "JetBrains Mono", monospace);
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    /* Confidence-предупреждение в строке связи */
+    .conf-warn {
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(251, 191, 36, 0.15);
+      color: #fbbf24;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    /* Расширенные настройки (details) */
+    .graph-modal__advanced {
+      margin-top: 12px;
+      border-top: 1px dashed var(--border);
+      padding-top: 12px;
+    }
+    .graph-modal__advanced > summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 4px 0;
+      user-select: none;
+    }
+    .graph-modal__advanced > summary:hover { color: var(--text); }
+    .graph-modal__advanced[open] > summary { color: var(--text); margin-bottom: 8px; }
   `;
 }
 
@@ -603,11 +797,16 @@ function renderGraphPageScript() {
     });
   }
   function apiPost(url, body) {
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    }).then(function(r) { return r.json(); }).then(function(d) {
+    // Если тела нет — НЕ выставляем Content-Type, иначе Fastify
+    // реджектит запрос ошибкой "Body cannot be empty when content-type
+    // is set to 'application/json'". Это касается POST /hard-delete и
+    // других endpoint'ов без тела.
+    var init = { method: "POST" };
+    if (body !== undefined && body !== null) {
+      init.headers = { "Content-Type": "application/json" };
+      init.body = JSON.stringify(body);
+    }
+    return fetch(url, init).then(function(r) { return r.json(); }).then(function(d) {
       if (!d.ok) throw new Error(d.error || ("Ошибка запроса: " + url));
       return d;
     });
@@ -642,6 +841,211 @@ function renderGraphPageScript() {
     var t = state.typeLabels[code];
     if (t) return { icon: t.icon || "•", label: t.label_ru || code };
     return { icon: "•", label: code };
+  }
+
+  // ================== UI-словарь типов связей ==================
+  // EDGE_TYPE_LABELS — это словарь только для UI. В БД остаются
+  // английские коды (installed_in, has_channel, ...). Кастомные
+  // коды отображаются как есть.
+  var EDGE_TYPE_LABELS = {
+    "installed_in":  { label_ru: "Установлен в",    icon: "📥" },
+    "has_channel":   { label_ru: "Содержит канал",  icon: "🔗" },
+    "connected_to":  { label_ru: "Подключён к",     icon: "🔌" },
+    "measures":      { label_ru: "Измеряет",        icon: "🌡" },
+    "described_in":  { label_ru: "Описан в",        icon: "📄" }
+  };
+
+  function relationLabel(code) {
+    var meta = EDGE_TYPE_LABELS[code];
+    if (!meta) return code;
+    return meta.icon + " " + meta.label_ru;
+  }
+
+  function relationLabelFull(code) {
+    var meta = EDGE_TYPE_LABELS[code];
+    if (!meta) return code;
+    return meta.icon + " " + meta.label_ru + " (" + code + ")";
+  }
+
+  // ================== Confidence ==================
+  function formatEdgeConfidence(confidence) {
+    if (confidence === null || confidence === undefined || confidence >= 0.95) return "";
+    if (confidence >= 0.5) return '<span class="conf-warn">⚠️ Возможно</span>';
+    return '<span class="conf-warn">⚠️ Сомнительно</span>';
+  }
+
+  // ================== Визуальный редактор атрибутов ==================
+  function formatValueForInput(v) {
+    if (v === null) return "null";
+    if (typeof v === "boolean") return v ? "true" : "false";
+    return String(v);
+  }
+
+  function parseValueForJson(s) {
+    if (s === "true") return true;
+    if (s === "false") return false;
+    if (s === "null") return null;
+    if (/^-?\\d+$/.test(s)) return parseInt(s, 10);
+    if (/^-?\\d+\\.\\d+$/.test(s)) return parseFloat(s);
+    return s;
+  }
+
+  function addAttrRow(listEl, key, value) {
+    var row = document.createElement("div");
+    row.className = "kv-row";
+    row.innerHTML =
+      '<input class="kv-key" placeholder="Ключ" value="' + escAttr(key || "") + '"/>' +
+      '<input class="kv-value" placeholder="Значение" value="' + escAttr(value || "") + '"/>' +
+      '<button type="button" class="kv-remove" title="Удалить параметр">×</button>';
+    row.querySelector(".kv-remove").onclick = function() {
+      row.remove();
+      updateAttrEmptyHint(listEl);
+    };
+    listEl.appendChild(row);
+    updateAttrEmptyHint(listEl);
+  }
+
+  function updateAttrEmptyHint(listEl) {
+    var empty = listEl.querySelector(".kv-empty");
+    var hasRows = listEl.querySelectorAll(".kv-row").length > 0;
+    if (!hasRows && !empty) {
+      var e = document.createElement("div");
+      e.className = "kv-empty";
+      e.textContent = "Параметров пока нет. Нажмите «+ Добавить параметр».";
+      listEl.appendChild(e);
+    } else if (hasRows && empty) {
+      empty.remove();
+    }
+  }
+
+  function fillAttrsVisual(listEl, attrs) {
+    listEl.innerHTML = "";
+    var entries = Object.entries(attrs || {});
+    if (entries.length === 0) {
+      updateAttrEmptyHint(listEl);
+      return;
+    }
+    for (var i = 0; i < entries.length; i++) {
+      addAttrRow(listEl, entries[i][0], formatValueForInput(entries[i][1]));
+    }
+  }
+
+  function collectAttrsFromVisual(listEl) {
+    var rows = listEl.querySelectorAll(".kv-row");
+    var result = {};
+    for (var i = 0; i < rows.length; i++) {
+      var k = rows[i].querySelector(".kv-key").value.trim();
+      var v = rows[i].querySelector(".kv-value").value;
+      if (!k) continue;
+      result[k] = parseValueForJson(v);
+    }
+    return result;
+  }
+
+  // Переключение режима визуального редактора атрибутов в модалке.
+  // prefix — уникальный префикс id'ов ("modalNode" или "modalEdit").
+  // Возвращает true при успехе, false при ошибке валидации JSON.
+  function switchAttrsMode(prefix, mode) {
+    var visual = document.getElementById(prefix + "AttrsVisual");
+    var json = document.getElementById(prefix + "AttrsJson");
+    var error = document.getElementById(prefix + "AttrsError");
+    var list = document.getElementById(prefix + "AttrsList");
+    error.style.display = "none";
+
+    if (mode === "json") {
+      var obj = collectAttrsFromVisual(list);
+      json.value = JSON.stringify(obj, null, 2);
+      visual.style.display = "none";
+      json.style.display = "block";
+    } else {
+      var parsed;
+      try {
+        parsed = JSON.parse((json.value || "{}").trim() || "{}");
+        if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
+          throw new Error("JSON должен быть объектом, не массивом");
+        }
+      } catch (e) {
+        error.textContent = "Некорректный JSON: " + e.message;
+        error.style.display = "block";
+        return false;
+      }
+      fillAttrsVisual(list, parsed);
+      json.style.display = "none";
+      visual.style.display = "block";
+    }
+
+    var toggleWrap = document.getElementById(prefix + "AttrsModeToggle");
+    if (toggleWrap) {
+      var btns = toggleWrap.querySelectorAll(".kv-mode-btn");
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].classList.toggle("active", btns[i].dataset.mode === mode);
+      }
+    }
+    return true;
+  }
+
+  // Считать атрибуты из активного режима (визуального или JSON).
+  // При ошибке JSON показывает её в errEl и возвращает null.
+  function collectAttrsFromActiveMode(prefix, errEl) {
+    var visual = document.getElementById(prefix + "AttrsVisual");
+    var json = document.getElementById(prefix + "AttrsJson");
+    var visualOpen = visual && visual.style.display !== "none";
+    if (visualOpen) {
+      return collectAttrsFromVisual(document.getElementById(prefix + "AttrsList"));
+    }
+    try {
+      var raw = (json.value || "").trim();
+      var obj = raw ? JSON.parse(raw) : {};
+      if (typeof obj !== "object" || Array.isArray(obj) || obj === null) {
+        if (errEl) showModalError(errEl, "Атрибуты должны быть JSON-объектом");
+        return null;
+      }
+      return obj;
+    } catch (e) {
+      if (errEl) showModalError(errEl, "Некорректный JSON: " + e.message);
+      return null;
+    }
+  }
+
+  // Привязка обработчиков к табам режимов и кнопке "+ Добавить параметр".
+  // Возвращает функцию для повторной инициализации списка.
+  function setupAttrsEditor(prefix, initialAttrs) {
+    var listEl = document.getElementById(prefix + "AttrsList");
+    var addBtn = document.getElementById(prefix + "AttrsAddBtn");
+    var toggleWrap = document.getElementById(prefix + "AttrsModeToggle");
+    fillAttrsVisual(listEl, initialAttrs || {});
+    addBtn.addEventListener("click", function() { addAttrRow(listEl, "", ""); });
+    var btns = toggleWrap.querySelectorAll(".kv-mode-btn");
+    for (var i = 0; i < btns.length; i++) {
+      (function(btn) {
+        btn.addEventListener("click", function() {
+          if (btn.classList.contains("active")) return;
+          switchAttrsMode(prefix, btn.dataset.mode);
+        });
+      })(btns[i]);
+    }
+  }
+
+  // HTML визуального редактора атрибутов (для модалок Создать/Редактировать).
+  // prefix — уникальный префикс id'ов.
+  function renderAttrsEditorHtml(prefix, tipText) {
+    return '<div class="graph-modal__row">' +
+      '<label class="graph-modal__label">Атрибуты' +
+        '<span class="hint" data-tip="' + escAttr(tipText) + '">?</span>' +
+      '</label>' +
+      '<div class="kv-mode-toggle" id="' + prefix + 'AttrsModeToggle">' +
+        '<button type="button" class="kv-mode-btn active" data-mode="visual">Визуально</button>' +
+        '<button type="button" class="kv-mode-btn" data-mode="json">Как JSON</button>' +
+      '</div>' +
+      '<div class="kv-visual" id="' + prefix + 'AttrsVisual">' +
+        '<div class="kv-list" id="' + prefix + 'AttrsList"></div>' +
+        '<button type="button" class="kv-add-btn" id="' + prefix + 'AttrsAddBtn">+ Добавить параметр</button>' +
+      '</div>' +
+      '<textarea class="graph-modal__textarea" id="' + prefix + 'AttrsJson" ' +
+        'style="display:none;" ' +
+        'placeholder="{&quot;cabinet_code&quot;: &quot;KS-3&quot;}">{}</textarea>' +
+      '<div class="graph-modal__error" id="' + prefix + 'AttrsError" style="display:none;"></div>' +
+    '</div>';
   }
 
   // ================== Дерево ==================
@@ -895,12 +1299,44 @@ function renderGraphPageScript() {
 
   function renderAttrsTab(container, node) {
     var attrs = node.attributes || {};
-    if (Object.keys(attrs).length === 0) {
+    var hasAttrs = Object.keys(attrs).length > 0;
+
+    if (hasAttrs) {
+      // Переключатель режима (Таблица / JSON)
+      var toggleWrap = el("div", { className: "attrs-mode-toggle" });
+      var btnTable = el("button", { className: "attrs-mode-btn active", dataset: { mode: "table" } }, "Таблица");
+      var btnJson = el("button", { className: "attrs-mode-btn", dataset: { mode: "json" } }, "JSON");
+      toggleWrap.appendChild(btnTable);
+      toggleWrap.appendChild(btnJson);
+      container.appendChild(toggleWrap);
+
+      var tableWrap = el("div", { className: "attrs-table", id: "cardAttrsTable" });
+      var rowsHtml = Object.entries(attrs).map(function(e) {
+        return '<tr><td class="attr-key">' + escHtml(e[0]) +
+          '</td><td class="attr-val">' + escHtml(formatValueForInput(e[1])) + '</td></tr>';
+      }).join("");
+      tableWrap.innerHTML = "<table>" + rowsHtml + "</table>";
+      container.appendChild(tableWrap);
+
+      var jsonWrap = el("pre", { className: "attrs-pre", id: "cardAttrsJson", style: "display:none;", innerHTML: prettyJson(attrs) });
+      container.appendChild(jsonWrap);
+
+      btnTable.addEventListener("click", function() {
+        tableWrap.style.display = "";
+        jsonWrap.style.display = "none";
+        btnTable.classList.add("active");
+        btnJson.classList.remove("active");
+      });
+      btnJson.addEventListener("click", function() {
+        tableWrap.style.display = "none";
+        jsonWrap.style.display = "block";
+        btnJson.classList.add("active");
+        btnTable.classList.remove("active");
+      });
+    } else {
       container.appendChild(el("div", { className: "card-welcome" }, "У узла нет атрибутов."));
-      return;
     }
-    var pre = el("pre", { className: "attrs-pre", innerHTML: prettyJson(attrs) });
-    container.appendChild(pre);
+
     if (node.description) {
       container.appendChild(el("h4", { style: "margin: 16px 0 6px 0; color: var(--text-muted); text-transform: uppercase; font-size: 12px;" }, "Описание"));
       container.appendChild(el("div", { style: "font-size: 13px; color: var(--text); line-height: 1.5;" }, node.description));
@@ -953,30 +1389,38 @@ function renderGraphPageScript() {
     var row = el("div", { className: "edge-row" });
     var otherTypeInfo = getTypeLabel(edge.otherNode.type);
     var currentTypeInfo = getTypeLabel(currentNode.type);
+    var relLabel = relationLabel(edge.relation);
     if (direction === "incoming") {
       // other --[relation]--> current
       row.appendChild(el("span", { className: "edge-row__icon" }, otherTypeInfo.icon));
       var lnk1 = el("span", { className: "edge-row__link", title: edge.otherNode.name }, edge.otherNode.name);
       lnk1.addEventListener("click", function() { selectNode(edge.otherNode.id); });
       row.appendChild(lnk1);
-      row.appendChild(el("span", { className: "edge-row__chip" }, "—" + edge.relation + "→"));
+      row.appendChild(el("span", { className: "edge-row__chip", title: edge.relation }, "—[" + relLabel + "]→"));
       row.appendChild(el("span", { className: "edge-row__icon" }, currentTypeInfo.icon));
       row.appendChild(el("span", null, currentNode.name));
     } else {
       // current --[relation]--> other
       row.appendChild(el("span", { className: "edge-row__icon" }, currentTypeInfo.icon));
       row.appendChild(el("span", null, currentNode.name));
-      row.appendChild(el("span", { className: "edge-row__chip" }, "—" + edge.relation + "→"));
+      row.appendChild(el("span", { className: "edge-row__chip", title: edge.relation }, "—[" + relLabel + "]→"));
       row.appendChild(el("span", { className: "edge-row__icon" }, otherTypeInfo.icon));
       var lnk2 = el("span", { className: "edge-row__link", title: edge.otherNode.name }, edge.otherNode.name);
       lnk2.addEventListener("click", function() { selectNode(edge.otherNode.id); });
       row.appendChild(lnk2);
     }
+    // Индикатор уверенности (только если confidence < 0.95)
+    var confHtml = formatEdgeConfidence(edge.confidence);
+    if (confHtml) {
+      var confWrap = document.createElement("span");
+      confWrap.innerHTML = confHtml;
+      while (confWrap.firstChild) row.appendChild(confWrap.firstChild);
+    }
     var actions = el("div", { className: "edge-row__actions" });
     var btn = el("button", { className: "edge-row__btn-del", title: "Удалить связь" }, "×");
     btn.addEventListener("click", function(e) {
       e.stopPropagation();
-      if (confirm("Удалить связь \\"" + edge.relation + "\\"?")) {
+      if (confirm("Удалить связь \\"" + relLabel + "\\"?")) {
         apiDelete("/api/v2/graph/edges/" + edge.edgeId).then(function() {
           toast("Связь удалена", "success");
           selectNode(currentNode.id);
@@ -1059,7 +1503,8 @@ function renderGraphPageScript() {
           id: e.id,
           from: e.source,
           to: e.target,
-          label: e.relation,
+          label: relationLabel(e.relation),
+          title: e.relation,
           arrows: "to",
           color: { color: "rgba(148,163,184,0.6)" },
           font: { size: 10, color: "#94a3b8", strokeWidth: 0 },
@@ -1190,27 +1635,31 @@ function renderGraphPageScript() {
     var typesOptions = state.nodeTypes.filter(function(t) { return !t.is_archived; }).map(function(t) {
       return '<option value="' + escAttr(t.code) + '">' + escHtml((t.icon || "") + " " + t.label_ru) + '</option>';
     }).join("");
+    var tipType = "Категория узла в графе: Шкаф, ПЛК, Плата и так далее. Список редактируется в Настройки → Граф знаний → Типы узлов.";
+    var tipName = "Короткое название узла. Например: Шкаф KS-3, ПЛК DP01, Сигнал KS_T2B1.";
+    var tipAttrs = "Произвольные параметры узла. Для шкафа — cabinet_code, для сигнала — tag, address. Добавьте только те, которые важны для вашей задачи.";
+    var tipParent = "Узел-родитель в иерархии. Если выбран — автоматически создаётся связь по правилам HIERARCHY_RULES (для встроенных типов АСУ ТП). Кастомные типы — связь создаётся вручную после.";
     var html = '<h3 class="graph-modal__title">Новый узел</h3>' +
       '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Тип</label>' +
+        '<label class="graph-modal__label">Тип' +
+          '<span class="hint" data-tip="' + escAttr(tipType) + '">?</span>' +
+        '</label>' +
         '<select class="graph-modal__select" id="modalNodeType">' + typesOptions + '</select>' +
-        '<div class="graph-modal__hint">Тип определяет место узла в дереве (для встроенных типов).</div>' +
       '</div>' +
       '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Имя <span style="color:var(--danger);">*</span></label>' +
+        '<label class="graph-modal__label">Имя <span style="color:var(--danger);">*</span>' +
+          '<span class="hint" data-tip="' + escAttr(tipName) + '">?</span>' +
+        '</label>' +
         '<input class="graph-modal__input" id="modalNodeName" placeholder="например: Шкаф KS-3"/>' +
       '</div>' +
-      '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Атрибуты (JSON)</label>' +
-        '<textarea class="graph-modal__textarea" id="modalNodeAttrs" placeholder=\'{"cabinet_code": "KS-3"}\'>{}</textarea>' +
-        '<div class="graph-modal__hint">Свободные ключ-значение пары. Обязателен валидный JSON.</div>' +
-      '</div>' +
+      renderAttrsEditorHtml("modalNode", tipAttrs) +
       '<div class="graph-modal__row ac-wrap">' +
-        '<label class="graph-modal__label">Родитель (опционально)</label>' +
+        '<label class="graph-modal__label">Родитель (опционально)' +
+          '<span class="hint" data-tip="' + escAttr(tipParent) + '">?</span>' +
+        '</label>' +
         '<input class="graph-modal__input" id="modalNodeParent" placeholder="Начните вводить имя или ID существующего узла"/>' +
         '<input type="hidden" id="modalNodeParentId" value="">' +
         '<div class="ac-dropdown" id="modalNodeParentAc" style="display:none;"></div>' +
-        '<div class="graph-modal__hint">Если выбран — автоматически создаётся иерархическая связь по HIERARCHY_RULES (только для встроенных типов).</div>' +
       '</div>' +
       '<div class="graph-modal__error" id="modalNodeError" style="display:none;"></div>' +
       '<div class="graph-modal__actions">' +
@@ -1219,6 +1668,7 @@ function renderGraphPageScript() {
       '</div>';
     openModal(html, { onMount: function() {
       setupAutocomplete("modalNodeParent", "modalNodeParentId", "modalNodeParentAc");
+      setupAttrsEditor("modalNode", {});
       document.getElementById("modalNodeCancel").addEventListener("click", closeModal);
       document.getElementById("modalNodeSave").addEventListener("click", submitCreateNode);
     }});
@@ -1227,20 +1677,12 @@ function renderGraphPageScript() {
   async function submitCreateNode() {
     var type = document.getElementById("modalNodeType").value;
     var name = document.getElementById("modalNodeName").value.trim();
-    var attrsRaw = document.getElementById("modalNodeAttrs").value.trim();
     var parentId = document.getElementById("modalNodeParentId").value;
     var errEl = document.getElementById("modalNodeError");
     errEl.style.display = "none";
     if (!name) { showModalError(errEl, "Имя не может быть пустым"); return; }
-    var attrs = {};
-    if (attrsRaw) {
-      try { attrs = JSON.parse(attrsRaw); } catch (e) {
-        showModalError(errEl, "Некорректный JSON атрибутов: " + e.message); return;
-      }
-      if (typeof attrs !== "object" || Array.isArray(attrs) || attrs === null) {
-        showModalError(errEl, "Атрибуты должны быть JSON-объектом"); return;
-      }
-    }
+    var attrs = collectAttrsFromActiveMode("modalNode", errEl);
+    if (attrs === null) return;
     try {
       var created = await apiPost("/api/v2/graph/nodes", { type: type, name: name, attributes: attrs });
       // Если выбран родитель — создаём связь по HIERARCHY_RULES (если возможно)
@@ -1291,22 +1733,28 @@ function renderGraphPageScript() {
   }
 
   function openEditNodeModal(node) {
+    var tipType = "Категория узла. Не меняется после создания — это потребовало бы пересборки всех связей.";
+    var tipName = "Короткое название узла. Например: Шкаф KS-3, ПЛК DP01, Сигнал KS_T2B1.";
+    var tipAttrs = "Произвольные параметры узла. Для шкафа — cabinet_code, для сигнала — tag, address. Добавьте только те, которые важны для вашей задачи.";
+    var tipDesc = "Свободный текст-комментарий к узлу. Можно использовать для пометок: история создания, особенности, TODO.";
     var html = '<h3 class="graph-modal__title">Редактировать узел</h3>' +
       '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Тип</label>' +
+        '<label class="graph-modal__label">Тип' +
+          '<span class="hint" data-tip="' + escAttr(tipType) + '">?</span>' +
+        '</label>' +
         '<input class="graph-modal__input" value="' + escAttr(node.type) + '" disabled/>' +
-        '<div class="graph-modal__hint">Тип неизменяем (требует более инвазивных операций).</div>' +
       '</div>' +
       '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Имя</label>' +
+        '<label class="graph-modal__label">Имя' +
+          '<span class="hint" data-tip="' + escAttr(tipName) + '">?</span>' +
+        '</label>' +
         '<input class="graph-modal__input" id="modalEditName" value="' + escAttr(node.name) + '"/>' +
       '</div>' +
+      renderAttrsEditorHtml("modalEdit", tipAttrs) +
       '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Атрибуты (JSON)</label>' +
-        '<textarea class="graph-modal__textarea" id="modalEditAttrs">' + escHtml(JSON.stringify(node.attributes || {}, null, 2)) + '</textarea>' +
-      '</div>' +
-      '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Описание</label>' +
+        '<label class="graph-modal__label">Описание' +
+          '<span class="hint" data-tip="' + escAttr(tipDesc) + '">?</span>' +
+        '</label>' +
         '<textarea class="graph-modal__textarea" id="modalEditDescription" style="min-height:60px;">' + escHtml(node.description || "") + '</textarea>' +
       '</div>' +
       '<div class="graph-modal__error" id="modalEditError" style="display:none;"></div>' +
@@ -1315,6 +1763,7 @@ function renderGraphPageScript() {
         '<button class="graph-btn graph-btn--primary" id="modalEditSave">Сохранить</button>' +
       '</div>';
     openModal(html, { onMount: function() {
+      setupAttrsEditor("modalEdit", node.attributes || {});
       document.getElementById("modalEditCancel").addEventListener("click", closeModal);
       document.getElementById("modalEditSave").addEventListener("click", function() { submitEditNode(node.id); });
     }});
@@ -1322,18 +1771,12 @@ function renderGraphPageScript() {
 
   async function submitEditNode(nodeId) {
     var name = document.getElementById("modalEditName").value.trim();
-    var attrsRaw = document.getElementById("modalEditAttrs").value.trim();
     var description = document.getElementById("modalEditDescription").value;
     var errEl = document.getElementById("modalEditError");
     errEl.style.display = "none";
     if (!name) { showModalError(errEl, "Имя не может быть пустым"); return; }
-    var attrs;
-    try { attrs = attrsRaw ? JSON.parse(attrsRaw) : {}; } catch (e) {
-      showModalError(errEl, "Некорректный JSON: " + e.message); return;
-    }
-    if (typeof attrs !== "object" || Array.isArray(attrs) || attrs === null) {
-      showModalError(errEl, "Атрибуты должны быть JSON-объектом"); return;
-    }
+    var attrs = collectAttrsFromActiveMode("modalEdit", errEl);
+    if (attrs === null) return;
     try {
       await apiPatch("/api/v2/graph/nodes/" + nodeId, {
         name: name,
@@ -1350,6 +1793,7 @@ function renderGraphPageScript() {
 
   function openDeleteNodeModal(node, descendantsCount) {
     var hasDesc = descendantsCount > 0;
+    var tipCascade = "При установке будут удалены ВСЕ потомки этого узла (ПЛК → платы → каналы и так далее). Без галочки потомки останутся в графе, но без связи с этим узлом (станут сиротами в своей типовой группе).";
     var html = '<h3 class="graph-modal__title">Удалить узел</h3>' +
       '<div style="font-size: 14px; color: var(--text); margin-bottom: 12px;">' +
         'Вы действительно хотите удалить узел <strong>' + escHtml(node.name) + '</strong>?' +
@@ -1358,9 +1802,10 @@ function renderGraphPageScript() {
         ? '<div class="graph-modal__row">' +
           '<label style="display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;">' +
             '<input type="checkbox" id="modalDeleteCascade"/>' +
-            '<span>Удалить также <strong>' + descendantsCount + ' потомков</strong> (каскадно по дереву).</span>' +
+            '<span>Удалить также <strong>' + descendantsCount + ' потомков</strong> (каскадно по дереву).' +
+              '<span class="hint" data-tip="' + escAttr(tipCascade) + '">?</span>' +
+            '</span>' +
           '</label>' +
-          '<div class="graph-modal__hint">Без галочки — потомки останутся как сироты в дереве (они не исчезнут, но потеряют связь с этим узлом).</div>' +
         '</div>'
         : '<div class="graph-modal__hint">У этого узла нет потомков по дереву.</div>') +
       '<div class="graph-modal__error" id="modalDeleteError" style="display:none;"></div>' +
@@ -1380,6 +1825,10 @@ function renderGraphPageScript() {
     var errEl = document.getElementById("modalDeleteError");
     errEl.style.display = "none";
     try {
+      // POST /hard-delete без тела — Fastify реджектит запросы с
+      // Content-Type: application/json и пустым телом. apiPost
+      // (после фикса в #8.2.hotfix) больше не выставляет Content-Type
+      // если тело не передано — это решает баг "Body cannot be empty".
       var res = await apiPost("/api/v2/graph/nodes/" + node.id + "/hard-delete?cascade=" + (cascade ? "true" : "false"));
       toast("Удалено узлов: " + res.deletedCount, "success");
       closeModal();
@@ -1392,32 +1841,54 @@ function renderGraphPageScript() {
   }
 
   function openCreateEdgeModal(fromNode) {
+    var tipTarget = "Целевой узел связи. Связь идёт ОТ текущего узла К другому. Например: сигнал → канал, плата → ПЛК.";
+    var tipRelation = "Какая связь между узлами. Выберите из списка или введите свой код для кастомных доменов.";
+    var tipConfidence = "Насколько вы уверены, что эта связь правильна. Для ручного создания обычно — Точно. Если связь предположительная — Возможно или Сомнительно.";
+    // Опции datalist с русскими подписями (browser показывает label рядом с value)
+    var relationOptions = "";
+    var codes = Object.keys(EDGE_TYPE_LABELS);
+    for (var ri = 0; ri < codes.length; ri++) {
+      var code = codes[ri];
+      var meta = EDGE_TYPE_LABELS[code];
+      relationOptions += '<option value="' + escAttr(code) + '">' + escHtml(meta.icon + " " + meta.label_ru) + '</option>';
+    }
     var html = '<h3 class="graph-modal__title">Новая связь</h3>' +
       '<div class="graph-modal__row">' +
         '<label class="graph-modal__label">От</label>' +
         '<input class="graph-modal__input" value="' + escAttr(fromNode.name) + '" disabled/>' +
       '</div>' +
       '<div class="graph-modal__row ac-wrap">' +
-        '<label class="graph-modal__label">К <span style="color:var(--danger);">*</span></label>' +
+        '<label class="graph-modal__label">К <span style="color:var(--danger);">*</span>' +
+          '<span class="hint" data-tip="' + escAttr(tipTarget) + '">?</span>' +
+        '</label>' +
         '<input class="graph-modal__input" id="modalEdgeTarget" placeholder="Начните вводить имя или ID узла"/>' +
         '<input type="hidden" id="modalEdgeTargetId" value="">' +
         '<div class="ac-dropdown" id="modalEdgeTargetAc" style="display:none;"></div>' +
       '</div>' +
       '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Тип связи <span style="color:var(--danger);">*</span></label>' +
-        '<input class="graph-modal__input" id="modalEdgeRelation" list="edgeRelationList" placeholder="например: installed_in"/>' +
-        '<datalist id="edgeRelationList">' +
-          '<option value="installed_in"></option>' +
-          '<option value="has_channel"></option>' +
-          '<option value="connected_to"></option>' +
-          '<option value="measures"></option>' +
-          '<option value="described_in"></option>' +
-        '</datalist>' +
+        '<label class="graph-modal__label">Тип связи <span style="color:var(--danger);">*</span>' +
+          '<span class="hint" data-tip="' + escAttr(tipRelation) + '">?</span>' +
+        '</label>' +
+        '<input class="graph-modal__input" id="modalEdgeRelation" list="edgeRelationList" placeholder="например: Установлен в"/>' +
+        '<datalist id="edgeRelationList">' + relationOptions + '</datalist>' +
       '</div>' +
-      '<div class="graph-modal__row">' +
-        '<label class="graph-modal__label">Confidence (0.0 — 1.0)</label>' +
-        '<input class="graph-modal__input" id="modalEdgeConfidence" value="1.0" type="number" min="0" max="1" step="0.01"/>' +
-      '</div>' +
+      '<details class="graph-modal__advanced">' +
+        '<summary>Расширенные настройки</summary>' +
+        '<div class="graph-modal__row">' +
+          '<label class="graph-modal__label">Уверенность в связи' +
+            '<span class="hint" data-tip="' + escAttr(tipConfidence) + '">?</span>' +
+          '</label>' +
+          '<select class="graph-modal__select" id="modalEdgeConfidence">' +
+            '<option value="1.0" selected>Точно (по умолчанию)</option>' +
+            '<option value="0.6">Возможно</option>' +
+            '<option value="0.3">Сомнительно</option>' +
+            '<option value="custom">Своё значение…</option>' +
+          '</select>' +
+          '<input class="graph-modal__input" id="modalEdgeConfidenceCustom" ' +
+            'type="number" min="0" max="1" step="0.05" value="1.0" ' +
+            'style="display:none; margin-top:8px;"/>' +
+        '</div>' +
+      '</details>' +
       '<div class="graph-modal__error" id="modalEdgeError" style="display:none;"></div>' +
       '<div class="graph-modal__actions">' +
         '<button class="graph-btn" id="modalEdgeCancel">Отмена</button>' +
@@ -1425,19 +1896,42 @@ function renderGraphPageScript() {
       '</div>';
     openModal(html, { onMount: function() {
       setupAutocomplete("modalEdgeTarget", "modalEdgeTargetId", "modalEdgeTargetAc");
+      var selEl = document.getElementById("modalEdgeConfidence");
+      var customEl = document.getElementById("modalEdgeConfidenceCustom");
+      selEl.addEventListener("change", function() {
+        if (selEl.value === "custom") {
+          customEl.style.display = "block";
+          customEl.focus();
+        } else {
+          customEl.style.display = "none";
+        }
+      });
       document.getElementById("modalEdgeCancel").addEventListener("click", closeModal);
       document.getElementById("modalEdgeSave").addEventListener("click", function() { submitCreateEdge(fromNode); });
     }});
   }
 
+  function getEdgeConfidence() {
+    var selEl = document.getElementById("modalEdgeConfidence");
+    var customEl = document.getElementById("modalEdgeConfidenceCustom");
+    if (selEl.value === "custom") {
+      var v = parseFloat(customEl.value);
+      if (isNaN(v)) return 1.0;
+      if (v < 0) return 0;
+      if (v > 1) return 1;
+      return v;
+    }
+    return parseFloat(selEl.value);
+  }
+
   async function submitCreateEdge(fromNode) {
     var targetId = document.getElementById("modalEdgeTargetId").value;
     var relation = document.getElementById("modalEdgeRelation").value.trim();
-    var conf = parseFloat(document.getElementById("modalEdgeConfidence").value);
     var errEl = document.getElementById("modalEdgeError");
     errEl.style.display = "none";
     if (!targetId) { showModalError(errEl, "Выберите целевой узел из списка"); return; }
     if (!relation) { showModalError(errEl, "Укажите тип связи"); return; }
+    var conf = getEdgeConfidence();
     if (isNaN(conf) || conf < 0 || conf > 1) conf = 1.0;
     try {
       await apiPost("/api/v2/graph/edges", {
