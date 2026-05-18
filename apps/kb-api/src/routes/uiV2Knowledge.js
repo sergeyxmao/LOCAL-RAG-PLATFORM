@@ -917,6 +917,11 @@ function renderKnowledgeScript(initialStateJson) {
           var chunksCell = chunkCount > 0
             ? String(chunkCount)
             : '<span class="kb-summary__divider">—</span>';
+          var lowerName = String(doc.original_file_name || doc.original_file_path || doc.title || "").toLowerCase();
+          var isGraphFile = /\.(xlsx|xls|xlsm)$/.test(lowerName);
+          var reparseBtn = isGraphFile
+            ? '<button type="button" class="kb-doc-action" data-action="reparse-graph" data-doc-id="' + escapeHtml(doc.id) + '" data-doc-title="' + escapeHtml(doc.title || doc.original_file_name || "") + '" title="Перепарсить граф">' + INITIAL_STATE.icons.graph + '</button>'
+            : '';
           return '<tr data-doc-id="' + escapeHtml(doc.id) + '">' +
             '<td><input type="checkbox" data-action="select-doc" data-doc-id="' + escapeHtml(doc.id) + '" ' + checked + ' style="accent-color:var(--accent)" /></td>' +
             '<td><div class="doc-title" title="' + escapeHtml(doc.title || "") + '">' + escapeHtml(doc.title || doc.original_file_name || "(без названия)") + '</div>' +
@@ -932,6 +937,7 @@ function renderKnowledgeScript(initialStateJson) {
             '<button type="button" class="kb-doc-action" data-action="move-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Переместить в раздел">' + INITIAL_STATE.icons.folder + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="edit-tags" data-doc-id="' + escapeHtml(doc.id) + '" title="Редактировать теги">' + INITIAL_STATE.icons.tag + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="reindex-doc" data-doc-id="' + escapeHtml(doc.id) + '" data-doc-title="' + escapeHtml(doc.title || doc.original_file_name || "") + '" title="Переиндексировать (вкл. OCR)">' + INITIAL_STATE.icons.refresh + '</button>' +
+            reparseBtn +
             '<button type="button" class="kb-doc-action is-danger" data-action="delete-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Удалить">' + INITIAL_STATE.icons.trash + '</button>' +
             '</div></td>' +
             '</tr>';
@@ -1703,6 +1709,70 @@ function renderKnowledgeScript(initialStateJson) {
         });
       }
 
+      function confirmReparseGraph(documentId, docTitle) {
+        openConfirmModal({
+          title: "Перепарсить граф?",
+          bodyHtml:
+            '<p style="margin:0;">Запустить парсер графа знаний для документа «<strong>' + escapeHtml(docTitle || documentId) + '</strong>»?</p>' +
+            '<ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-muted);">' +
+            '<li>Существующие узлы графа обновятся по бизнес-ключу (UPSERT)</li>' +
+            '<li>Новые узлы будут созданы</li>' +
+            '<li>RAG-индекс и теги документа не затрагиваются</li>' +
+            '<li>Применяются текущие профили из <span class="mono">config/graph-parsers.yaml</span></li>' +
+            '</ul>',
+          confirmLabel: "Перепарсить",
+          danger: false,
+          onConfirm: function () {
+            showToast("Парсер графа запущен…");
+            api("POST", "/api/v2/graph/reparse/" + encodeURIComponent(documentId), {}).then(function (data) {
+              var report = (data && data.report) || {};
+              if (report.ok === false) {
+                showToast("Парсер вернул ошибку: " + (report.error || "неизвестно"), "error");
+                showGraphReparseDetails(docTitle, report);
+                return;
+              }
+              if (!report.profile_id) {
+                showToast("Профиль для этого файла не распознан. Откройте Настройки → Граф знаний и добавьте/настройте профиль.", "warning");
+                showGraphReparseDetails(docTitle, report);
+                return;
+              }
+              var s = report.summary || {};
+              var totalCreated = 0, totalUpdated = 0;
+              Object.keys(s).forEach(function (k) {
+                totalCreated += Number(s[k] && s[k].created || 0);
+                totalUpdated += Number(s[k] && s[k].updated || 0);
+              });
+              showToast(
+                "Граф обновлён. Профиль: " + report.profile_id +
+                ". Создано: " + totalCreated +
+                ", обновлено: " + totalUpdated +
+                ", связей: " + Number(report.edges_created || 0)
+              );
+              showGraphReparseDetails(docTitle, report);
+            }).catch(function (err) { showToast("Не удалось перепарсить: " + err.message, "error"); });
+          },
+        });
+      }
+
+      function showGraphReparseDetails(docTitle, report) {
+        var wrap = document.createElement("div");
+        wrap.className = "kb-prompt";
+        var title = document.createElement("p");
+        title.style.cssText = "margin:0;font-size:13px;";
+        title.innerHTML = "Отчёт парсера для <strong>" + escapeHtml(docTitle || "(без имени)") + "</strong>";
+        wrap.appendChild(title);
+        var pre = document.createElement("pre");
+        pre.style.cssText = "background:var(--surface-2);padding:8px;border-radius:6px;font-size:11px;max-height:400px;overflow:auto;white-space:pre-wrap;";
+        try {
+          pre.textContent = JSON.stringify(report, null, 2);
+        } catch (e) {
+          pre.textContent = String(report);
+        }
+        wrap.appendChild(pre);
+        var closeBtn = makeButton("Закрыть", "btn--ghost", closeModal);
+        openModal("Отчёт парсера графа", wrap, [closeBtn]);
+      }
+
       function openRenameModal(documentId) {
         var doc = state.documents.find(function (d) { return d.id === documentId; });
         if (!doc) { showToast("Документ не найден в списке", "error"); return; }
@@ -2240,6 +2310,11 @@ function renderKnowledgeScript(initialStateJson) {
             confirmReindexDocument(reindexBtn.getAttribute("data-doc-id"), reindexBtn.getAttribute("data-doc-title") || "");
             return;
           }
+          var reparseGraphBtn = event.target.closest("[data-action='reparse-graph']");
+          if (reparseGraphBtn) {
+            confirmReparseGraph(reparseGraphBtn.getAttribute("data-doc-id"), reparseGraphBtn.getAttribute("data-doc-title") || "");
+            return;
+          }
           var delBtn = event.target.closest("[data-action='delete-doc']");
           if (delBtn) {
             var docId = delBtn.getAttribute("data-doc-id");
@@ -2540,6 +2615,8 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
       trash: ICONS.trash,
       edit: ICONS.edit,
       refresh: ICONS.refresh,
+      graph:
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
     },
   };
 

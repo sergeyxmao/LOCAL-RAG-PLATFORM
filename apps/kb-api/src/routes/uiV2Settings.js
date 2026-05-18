@@ -410,10 +410,161 @@ function renderSettingsCss() {
       .settings-row, .settings-row--triple { grid-template-columns: 1fr; }
       .services-grid { grid-template-columns: 1fr; }
     }
+
+    /* ─── Граф знаний (вкладка) ───────────────────────────────── */
+    .graph-subtabs {
+      display: inline-flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0;
+    }
+    .graph-subtab {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .graph-subtab:hover { color: var(--text); }
+    .graph-subtab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+    .graph-subtab-panel { display: none; flex-direction: column; gap: 10px; }
+    .graph-subtab-panel.is-active { display: flex; }
+
+    .graph-item-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .graph-item-card__head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .graph-item-card__title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-strong);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .graph-item-card__desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .graph-item-card__meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .graph-item-card__actions {
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .graph-alias-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .graph-alias-pill {
+      font-size: 11px;
+      padding: 2px 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .graph-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .graph-form__row {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .graph-form__row > label {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding-top: 6px;
+    }
+    .graph-form__row > .graph-form__field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .graph-form__hint {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .graph-form__error {
+      font-size: 12px;
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid var(--danger);
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+    .graph-form textarea, .graph-form input[type="text"], .graph-form input[type="number"], .graph-form select {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 13px;
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: inherit;
+    }
+    .graph-form textarea.graph-mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .graph-preview {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 12px;
+      max-height: 320px;
+      overflow: auto;
+    }
+    .graph-preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .graph-preview-table th, .graph-preview-table td {
+      padding: 4px 6px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      vertical-align: top;
+    }
+    .graph-warnings { display:flex; flex-direction:column; gap:4px; margin-top:8px; }
+    .graph-warning-item {
+      font-size: 12px;
+      color: var(--text);
+      background: rgba(218, 165, 32, 0.10);
+      border-left: 3px solid #d18f00;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
   `;
 }
 
-function renderSettingsScript(initialStateJson) {
+function renderSettingsScript(initialStateJson, extraScripts = "") {
   return `
     (function () {
       var INITIAL_STATE = ${initialStateJson};
@@ -1319,7 +1470,7 @@ function renderSettingsScript(initialStateJson) {
       }
 
       function setActiveSettingsTab(name) {
-        var valid = ["models", "search", "prompt", "services", "diagnostics", "maintenance", "backups"];
+        var valid = ["models", "search", "prompt", "services", "diagnostics", "graph", "maintenance", "backups"];
         if (valid.indexOf(name) === -1) name = "models";
         document.querySelectorAll("[data-settings-tab]").forEach(function (btn) {
           btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === name);
@@ -1328,6 +1479,9 @@ function renderSettingsScript(initialStateJson) {
           panel.classList.toggle("is-active", panel.getAttribute("data-settings-panel") === name);
         });
         try { localStorage.setItem("localrag.settings.activeTab", name); } catch (err) {}
+        if (name === "graph" && typeof window.__graphTabActivate === "function") {
+          window.__graphTabActivate();
+        }
       }
 
       function bindSettingsTabs() {
@@ -1363,10 +1517,632 @@ function renderSettingsScript(initialStateJson) {
 
       bootstrap();
     })();
+    ${extraScripts}
   `;
 }
 
+function renderGraphTabScript() {
+  // Self-contained IIFE for the «Граф знаний» tab. Uses no template literals
+  // to keep nesting inside the parent template safe.
+  return [
+"(function () {",
+"  function $(id) { return document.getElementById(id); }",
+"  function esc(value) {",
+"    if (value === null || value === undefined) return '';",
+"    return String(value)",
+"      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')",
+"      .replace(/\\\"/g, '&quot;').replace(/'/g, '&#39;');",
+"  }",
+"  function toast(msg, kind) {",
+"    var existing = document.querySelector('.toast');",
+"    if (existing) existing.remove();",
+"    var el = document.createElement('div');",
+"    el.className = 'toast' + (kind === 'error' ? ' toast--error' : '');",
+"    if (kind === 'warning') { el.style.borderColor = '#d18f00'; el.style.color = '#a86a00'; }",
+"    el.textContent = msg;",
+"    document.body.appendChild(el);",
+"    var ttl = (kind === 'warning' || kind === 'error') ? 8000 : 4200;",
+"    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, ttl);",
+"  }",
+"  function api(method, url, body) {",
+"    var opts = { method: method, headers: {} };",
+"    if (body !== undefined && !(body instanceof FormData)) {",
+"      opts.headers['Content-Type'] = 'application/json';",
+"      opts.body = JSON.stringify(body);",
+"    } else if (body instanceof FormData) { opts.body = body; }",
+"    return fetch(url, opts).then(function (resp) {",
+"      return resp.json().then(function (data) {",
+"        if (!resp.ok || (data && data.ok === false)) {",
+"          var err = new Error((data && (data.error || data.message)) || ('HTTP ' + resp.status));",
+"          err.status = resp.status; err.data = data; throw err;",
+"        }",
+"        return data;",
+"      });",
+"    });",
+"  }",
+"  function setBanner(el, msg, kind) {",
+"    if (!el) return;",
+"    if (!msg) { el.classList.remove('is-visible'); el.innerHTML = ''; return; }",
+"    el.classList.add('is-visible');",
+"    el.classList.toggle('settings-banner--success', kind === 'success');",
+"    el.classList.toggle('settings-banner--error', kind === 'error');",
+"    el.innerHTML = '<span>' + esc(msg) + '</span>';",
+"  }",
+"",
+"  // ─── Modal helpers (independent backdrop within graph tab) ───",
+"  var modal = {",
+"    backdrop: null, title: null, body: null, foot: null, closeBtn: null,",
+"  };",
+"  function ensureModal() {",
+"    if (modal.backdrop) return;",
+"    modal.backdrop = $('graphModalBackdrop');",
+"    modal.title = $('graphModalTitle');",
+"    modal.body = $('graphModalBody');",
+"    modal.foot = $('graphModalFoot');",
+"    modal.closeBtn = $('graphModalCloseBtn');",
+"    if (modal.closeBtn) modal.closeBtn.addEventListener('click', closeModal);",
+"    if (modal.backdrop) modal.backdrop.addEventListener('click', function (e) {",
+"      if (e.target === modal.backdrop) closeModal();",
+"    });",
+"    document.addEventListener('keydown', function (e) {",
+"      if (e.key === 'Escape' && modal.backdrop && modal.backdrop.classList.contains('is-open')) closeModal();",
+"    });",
+"  }",
+"  function openModal(title, bodyEl, buttons) {",
+"    ensureModal();",
+"    if (!modal.backdrop) return;",
+"    modal.title.textContent = title || '';",
+"    modal.body.innerHTML = '';",
+"    if (typeof bodyEl === 'string') modal.body.innerHTML = bodyEl;",
+"    else if (bodyEl) modal.body.appendChild(bodyEl);",
+"    modal.foot.innerHTML = '';",
+"    (buttons || []).forEach(function (btn) { modal.foot.appendChild(btn); });",
+"    modal.backdrop.classList.add('is-open');",
+"  }",
+"  function closeModal() {",
+"    if (modal.backdrop) modal.backdrop.classList.remove('is-open');",
+"    if (modal.body) modal.body.innerHTML = '';",
+"    if (modal.foot) modal.foot.innerHTML = '';",
+"  }",
+"  function makeBtn(text, cls, onClick) {",
+"    var b = document.createElement('button');",
+"    b.type = 'button'; b.className = 'btn ' + (cls || ''); b.textContent = text;",
+"    b.addEventListener('click', onClick); return b;",
+"  }",
+"",
+"  // ─── State ───────────────────────────────────────────────────",
+"  var state = { loaded: false, profiles: [], aliases: {} };",
+"",
+"  // ─── Profiles list ───────────────────────────────────────────",
+"  function loadProfiles() {",
+"    var listEl = $('graphProfileList');",
+"    if (listEl) listEl.innerHTML = '<div class=\"settings-hint\">Загрузка…</div>';",
+"    return api('GET', '/api/v2/graph/profiles').then(function (data) {",
+"      state.profiles = (data && data.profiles) || [];",
+"      renderProfilesList();",
+"    }).catch(function (err) {",
+"      if (listEl) listEl.innerHTML = '<div class=\"graph-form__error\">Не удалось загрузить профили: ' + esc(err.message) + '</div>';",
+"    });",
+"  }",
+"  function renderProfilesList() {",
+"    var listEl = $('graphProfileList');",
+"    if (!listEl) return;",
+"    if (state.profiles.length === 0) {",
+"      listEl.innerHTML = '<div class=\"settings-hint\">Профилей пока нет. Нажмите «Создать профиль».</div>';",
+"      return;",
+"    }",
+"    listEl.innerHTML = state.profiles.map(function (p) {",
+"      var style = p.per_sheet ? 'koyo-style (per_sheet)' : 'metso-style (один шкаф/лист)';",
+"      var matchBits = [];",
+"      if (p.match && Array.isArray(p.match.file_extensions)) matchBits.push('ext: ' + p.match.file_extensions.join(', '));",
+"      if (p.match && p.match.sheet_name_pattern) matchBits.push('sheet: /' + p.match.sheet_name_pattern + '/');",
+"      if (p.match && Array.isArray(p.match.required_sheets)) matchBits.push('требует листы: ' + p.match.required_sheets.join(', '));",
+"      return '<div class=\"graph-item-card\">' +",
+"        '<div class=\"graph-item-card__head\">' +",
+"          '<div>' +",
+"            '<div class=\"graph-item-card__title\">' + esc(p.id) + '</div>' +",
+"            '<div class=\"graph-item-card__desc\">' + esc(p.description || '') + '</div>' +",
+"          '</div>' +",
+"          '<div class=\"graph-item-card__actions\">' +",
+"            '<button type=\"button\" class=\"btn btn--ghost\" data-graph-action=\"edit-profile\" data-id=\"' + esc(p.id) + '\">Изменить</button>' +",
+"            '<button type=\"button\" class=\"btn btn--ghost\" data-graph-action=\"delete-profile\" data-id=\"' + esc(p.id) + '\">Удалить</button>' +",
+"          '</div>' +",
+"        '</div>' +",
+"        '<div class=\"graph-item-card__meta\">' +",
+"          '<span>Стиль: ' + esc(style) + '</span>' +",
+"          (matchBits.length ? '<span>' + esc(matchBits.join(' · ')) + '</span>' : '') +",
+"        '</div>' +",
+"      '</div>';",
+"    }).join('');",
+"  }",
+"",
+"  // ─── Aliases list ────────────────────────────────────────────",
+"  function loadAliases() {",
+"    var listEl = $('graphAliasList');",
+"    if (listEl) listEl.innerHTML = '<div class=\"settings-hint\">Загрузка…</div>';",
+"    return api('GET', '/api/v2/graph/aliases').then(function (data) {",
+"      state.aliases = (data && data.signal_kind) || {};",
+"      renderAliasesList();",
+"    }).catch(function (err) {",
+"      if (listEl) listEl.innerHTML = '<div class=\"graph-form__error\">Не удалось загрузить алиасы: ' + esc(err.message) + '</div>';",
+"    });",
+"  }",
+"  function renderAliasesList() {",
+"    var listEl = $('graphAliasList');",
+"    if (!listEl) return;",
+"    var keys = Object.keys(state.aliases);",
+"    if (keys.length === 0) {",
+"      listEl.innerHTML = '<div class=\"settings-hint\">Канонических значений пока нет. Нажмите «Добавить значение».</div>';",
+"      return;",
+"    }",
+"    listEl.innerHTML = keys.map(function (k) {",
+"      var entry = state.aliases[k] || {};",
+"      var aliases = Array.isArray(entry.aliases) ? entry.aliases : [];",
+"      var pills = aliases.map(function (a) { return '<span class=\"graph-alias-pill\">' + esc(a) + '</span>'; }).join('');",
+"      return '<div class=\"graph-item-card\">' +",
+"        '<div class=\"graph-item-card__head\">' +",
+"          '<div>' +",
+"            '<div class=\"graph-item-card__title\">' + esc(k) + '</div>' +",
+"            '<div class=\"graph-item-card__desc\">' + esc(entry.description || '') + '</div>' +",
+"          '</div>' +",
+"          '<div class=\"graph-item-card__actions\">' +",
+"            '<button type=\"button\" class=\"btn btn--ghost\" data-graph-action=\"edit-alias\" data-id=\"' + esc(k) + '\">Изменить</button>' +",
+"            '<button type=\"button\" class=\"btn btn--ghost\" data-graph-action=\"delete-alias\" data-id=\"' + esc(k) + '\">Удалить</button>' +",
+"          '</div>' +",
+"        '</div>' +",
+"        '<div class=\"graph-alias-pills\">' + pills + '</div>' +",
+"      '</div>';",
+"    }).join('');",
+"  }",
+"",
+"  // ─── Alias editor ───────────────────────────────────────────",
+"  function openAliasEditor(existingKey) {",
+"    var existing = existingKey ? (state.aliases[existingKey] || {}) : {};",
+"    var isEdit = !!existingKey;",
+"    var wrap = document.createElement('div');",
+"    wrap.className = 'graph-form';",
+"    wrap.innerHTML =",
+"      '<div class=\"graph-form__row\"><label>Каноническое значение</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"aliasCanonical\" maxlength=\"64\" placeholder=\"AI, AO, DI, …\" />' +",
+"        '<span class=\"graph-form__hint\">Только латиница/цифры/_-, до 64 символов. Не меняется при редактировании.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>Описание</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"aliasDesc\" maxlength=\"256\" placeholder=\"Аналоговый вход 4-20 мА\" />' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>Алиасы (по одному в строке)</label><div class=\"graph-form__field\">' +",
+"        '<textarea id=\"aliasList\" class=\"graph-mono\" rows=\"10\" placeholder=\"AI&#10;1AI&#10;Аналоговый вход\"></textarea>' +",
+"        '<span class=\"graph-form__hint\">Каждая строка — одна форма написания. Сравнение нечувствительно к регистру и пробелам.</span>' +",
+"      '</div></div>' +",
+"      '<div id=\"aliasErr\" style=\"display:none\" class=\"graph-form__error\"></div>';",
+"    setTimeout(function () {",
+"      var k = $('aliasCanonical'); var d = $('aliasDesc'); var a = $('aliasList');",
+"      if (k) { k.value = existingKey || ''; if (isEdit) k.disabled = true; }",
+"      if (d) d.value = existing.description || '';",
+"      if (a) a.value = (Array.isArray(existing.aliases) ? existing.aliases : []).join('\\n');",
+"    }, 0);",
+"    var saveBtn = makeBtn('Сохранить', 'btn--accent', function () {",
+"      var canonical = ($('aliasCanonical').value || '').trim();",
+"      var description = ($('aliasDesc').value || '').trim();",
+"      var aliases = ($('aliasList').value || '').split(/\\r?\\n/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });",
+"      var errEl = $('aliasErr');",
+"      if (!isEdit && !/^[A-Za-z][A-Za-z0-9_-]*$/.test(canonical)) {",
+"        errEl.style.display = 'block';",
+"        errEl.textContent = 'Канон должен начинаться с буквы латиницы и содержать только буквы, цифры, _ или -';",
+"        return;",
+"      }",
+"      var body = { description: description, aliases: aliases };",
+"      var p;",
+"      if (isEdit) {",
+"        p = api('PUT', '/api/v2/graph/aliases/' + encodeURIComponent(existingKey), body);",
+"      } else {",
+"        p = api('POST', '/api/v2/graph/aliases', Object.assign({ canonical: canonical }, body));",
+"      }",
+"      p.then(function (res) {",
+"        toast(res.message || 'Сохранено');",
+"        closeModal();",
+"        loadAliases();",
+"      }).catch(function (err) {",
+"        errEl.style.display = 'block';",
+"        errEl.textContent = err.message || 'Не удалось сохранить';",
+"      });",
+"    });",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    openModal(isEdit ? ('Изменить алиас: ' + existingKey) : 'Новое каноническое значение', wrap, [cancelBtn, saveBtn]);",
+"  }",
+"  function confirmDeleteAlias(canonical) {",
+"    var wrap = document.createElement('div');",
+"    wrap.innerHTML = '<p style=\"margin:0;\">Удалить каноническое значение <strong>' + esc(canonical) + '</strong> и все его алиасы?</p>' +",
+"      '<p class=\"settings-hint\" style=\"margin-top:6px;\">Это не сломает kb-api. Сигналы с этим значением получат signal_kind = null до тех пор, пока не появится новый алиас.</p>';",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    var del = makeBtn('Удалить', 'btn--danger', function () {",
+"      api('DELETE', '/api/v2/graph/aliases/' + encodeURIComponent(canonical)).then(function (res) {",
+"        toast(res.message || 'Удалено');",
+"        closeModal();",
+"        loadAliases();",
+"      }).catch(function (err) { toast('Не удалось удалить: ' + err.message, 'error'); });",
+"    });",
+"    openModal('Удалить алиас?', wrap, [cancelBtn, del]);",
+"  }",
+"",
+"  // ─── Raw YAML editors ────────────────────────────────────────",
+"  function openRawEditor(kind) {",
+"    var isProfiles = (kind === 'profiles');",
+"    var getUrl = isProfiles ? '/api/v2/graph/profiles/raw' : '/api/v2/graph/aliases/raw';",
+"    var validateUrl = isProfiles ? '/api/v2/graph/profiles/raw/validate' : '/api/v2/graph/aliases/raw/validate';",
+"    var putUrl = getUrl;",
+"    var title = isProfiles ? 'YAML: graph-parsers.yaml' : 'YAML: graph-aliases.yaml';",
+"    var wrap = document.createElement('div');",
+"    wrap.className = 'graph-form';",
+"    wrap.innerHTML =",
+"      '<p class=\"graph-form__hint\">Перед каждой записью kb-api создаёт резервную копию в <span class=\"mono\">data/config-backups/</span> (последние 10). После сохранения kb-api сразу подхватит изменения — рестарт не нужен.</p>' +",
+"      '<textarea id=\"rawYaml\" class=\"graph-mono\" rows=\"22\" spellcheck=\"false\"></textarea>' +",
+"      '<div id=\"rawErr\" class=\"graph-form__error\" style=\"display:none\"></div>' +",
+"      '<div id=\"rawOk\" class=\"graph-form__hint\" style=\"color:var(--success); display:none\"></div>';",
+"    setTimeout(function () {",
+"      api('GET', getUrl).then(function (data) {",
+"        var ta = $('rawYaml');",
+"        if (ta) ta.value = (data && data.content) || '';",
+"      }).catch(function (err) {",
+"        var errEl = $('rawErr');",
+"        if (errEl) { errEl.style.display = 'block'; errEl.textContent = 'Не удалось загрузить файл: ' + err.message; }",
+"      });",
+"    }, 0);",
+"    var checkBtn = makeBtn('Проверить синтаксис', 'btn--ghost', function () {",
+"      var content = ($('rawYaml').value || '');",
+"      var errEl = $('rawErr'); var okEl = $('rawOk');",
+"      errEl.style.display = 'none'; okEl.style.display = 'none';",
+"      api('POST', validateUrl, { content: content }).then(function (res) {",
+"        okEl.style.display = 'block';",
+"        okEl.textContent = isProfiles",
+"          ? ('YAML корректен. Профилей: ' + (res.profiles_count || 0))",
+"          : ('YAML корректен. Канонических значений: ' + (res.canonicals_count || 0));",
+"      }).catch(function (err) {",
+"        errEl.style.display = 'block';",
+"        errEl.textContent = err.message || 'Невалидный YAML';",
+"      });",
+"    });",
+"    var saveBtn = makeBtn('Сохранить', 'btn--accent', function () {",
+"      var content = ($('rawYaml').value || '');",
+"      var errEl = $('rawErr'); var okEl = $('rawOk');",
+"      errEl.style.display = 'none'; okEl.style.display = 'none';",
+"      api('PUT', putUrl, { content: content }).then(function (res) {",
+"        toast(res.message || 'Сохранено');",
+"        closeModal();",
+"        if (isProfiles) loadProfiles(); else loadAliases();",
+"      }).catch(function (err) {",
+"        errEl.style.display = 'block';",
+"        errEl.textContent = err.message || 'Не удалось сохранить';",
+"      });",
+"    });",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    openModal(title, wrap, [cancelBtn, checkBtn, saveBtn]);",
+"  }",
+"",
+"  // ─── Profile wizard (create / edit) ─────────────────────────",
+"  function openProfileEditor(existingProfile) {",
+"    var isEdit = !!existingProfile;",
+"    var data = existingProfile ? JSON.parse(JSON.stringify(existingProfile)) : {",
+"      id: '', description: '',",
+"      match: { file_extensions: ['.xlsx'], sheet_name_pattern: '', required_headers: [], required_sheets: [] },",
+"      layout: { header_row: 1, data_start_row: 4 },",
+"      columns: {},",
+"      builds: ['cabinet', 'station', 'card', 'channel', 'signal', 'device'],",
+"      cabinet: { source: 'sheet_name', pattern: '', name_template: 'Cabinet {cabinet_code}' },",
+"      skip_rows: [],",
+"    };",
+"    var detectedStyle = (data.per_sheet && Object.keys(data.per_sheet).length) ? 'koyo' : 'metso';",
+"    var sampleSheets = [];",
+"    var wrap = document.createElement('div');",
+"    wrap.className = 'graph-form';",
+"    wrap.innerHTML =",
+"      '<div class=\"graph-form__row\"><label>1. Образец XLSX <span class=\"graph-form__hint\">(до 5 МБ)</span></label><div class=\"graph-form__field\">' +",
+"        '<input type=\"file\" id=\"wzSample\" accept=\".xlsx,.xls,.xlsm\" />' +",
+"        '<span class=\"graph-form__hint\" id=\"wzSampleHint\">Опционально. Помогает автодетекту и предпросмотру.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>2. Стиль профиля</label><div class=\"graph-form__field\">' +",
+"        '<select id=\"wzStyle\">' +",
+"          '<option value=\"metso\">metso-style (один лист = один шкаф)</option>' +",
+"          '<option value=\"koyo\">koyo-style (листы по типам сигналов AI/AO/DI/DO)</option>' +",
+"        '</select>' +",
+"        '<span class=\"graph-form__hint\" id=\"wzStyleHint\"></span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>3. ID профиля</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzId\" maxlength=\"96\" placeholder=\"my_new_profile\" />' +",
+"        '<span class=\"graph-form__hint\">snake_case латиницей. ID не меняется при редактировании.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>4. Описание</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzDesc\" maxlength=\"512\" placeholder=\"Краткое описание формата XLSX\" />' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>5. Условия match.file_extensions</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzExt\" placeholder=\".xlsx, .xlsm\" />' +",
+"        '<span class=\"graph-form__hint\">Через запятую, с точкой.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>match.sheet_name_pattern</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzSheetRe\" placeholder=\"^_?IO-\\\\d+\" />' +",
+"        '<span class=\"graph-form__hint\">Regex, должен совпасть хотя бы с одним листом. Опционально.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>match.required_headers</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzReqHeaders\" placeholder=\"LOOPTAG, ADDRESS, CARH_TYPE\" />' +",
+"        '<span class=\"graph-form__hint\">Через запятую. Сравнивается без учёта регистра и пробелов.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>match.required_sheets</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzReqSheets\" placeholder=\"AI, AO, DI, DO\" />' +",
+"        '<span class=\"graph-form__hint\">Все указанные листы должны присутствовать.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>6. layout.header_row / data_start_row</label><div class=\"graph-form__field\">' +",
+"        '<div style=\"display:flex;gap:8px;\">' +",
+"          '<input type=\"number\" id=\"wzHeaderRow\" min=\"1\" max=\"100\" style=\"max-width:120px\" />' +",
+"          '<input type=\"number\" id=\"wzDataStart\" min=\"1\" max=\"500\" style=\"max-width:120px\" />' +",
+"        '</div>' +",
+"        '<span class=\"graph-form__hint\">Номера строк в Excel (1-indexed).</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>7. builds</label><div class=\"graph-form__field\">' +",
+"        '<div id=\"wzBuilds\" style=\"display:flex;gap:10px;flex-wrap:wrap;\"></div>' +",
+"        '<span class=\"graph-form__hint\">Какие уровни иерархии создавать.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\" id=\"wzCabinetRow\"><label>8. cabinet (metso)</label><div class=\"graph-form__field\">' +",
+"        '<input type=\"text\" id=\"wzCabPattern\" placeholder=\"^_?(IO-\\\\d+)\" />' +",
+"        '<input type=\"text\" id=\"wzCabTemplate\" placeholder=\"Cabinet {cabinet_code}\" />' +",
+"        '<span class=\"graph-form__hint\">Regex и шаблон имени шкафа на основе имени листа.</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>9. columns (JSON)</label><div class=\"graph-form__field\">' +",
+"        '<textarea id=\"wzColumns\" class=\"graph-mono\" rows=\"8\" placeholder=\"{\\n  &quot;loop_tag&quot;: &quot;LOOPTAG&quot;,\\n  &quot;address&quot;: &quot;ADDRESS&quot;\\n}\"></textarea>' +",
+"        '<span class=\"graph-form__hint\">Маппинг внутренних полей парсера на заголовки колонок XLSX (metso-style).</span>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>per_sheet (JSON, koyo)</label><div class=\"graph-form__field\">' +",
+"        '<textarea id=\"wzPerSheet\" class=\"graph-mono\" rows=\"8\" placeholder=\"{\\n  &quot;AI&quot;: { &quot;builds&quot;: [&quot;station&quot;,&quot;card&quot;,&quot;channel&quot;,&quot;signal&quot;], &quot;signal_kind&quot;: &quot;AI&quot;, &quot;columns&quot;: { &quot;tag&quot;: &quot;Tag Name&quot; } }\\n}\"></textarea>' +",
+"      '</div></div>' +",
+"      '<div class=\"graph-form__row\"><label>skip_rows (JSON)</label><div class=\"graph-form__field\">' +",
+"        '<textarea id=\"wzSkipRows\" class=\"graph-mono\" rows=\"4\" placeholder=\"[{ &quot;condition&quot;: &quot;loop_tag_empty&quot; }]\"></textarea>' +",
+"      '</div></div>' +",
+"      '<div id=\"wzErr\" class=\"graph-form__error\" style=\"display:none\"></div>' +",
+"      '<div id=\"wzPreviewWrap\"></div>';",
+"",
+"    function fillFromData() {",
+"      $('wzStyle').value = detectedStyle;",
+"      $('wzId').value = data.id || '';",
+"      if (isEdit) { $('wzId').disabled = true; }",
+"      $('wzDesc').value = data.description || '';",
+"      var m = data.match || {};",
+"      $('wzExt').value = (m.file_extensions || []).join(', ');",
+"      $('wzSheetRe').value = m.sheet_name_pattern || '';",
+"      $('wzReqHeaders').value = (m.required_headers || []).join(', ');",
+"      $('wzReqSheets').value = (m.required_sheets || []).join(', ');",
+"      var l = data.layout || {};",
+"      $('wzHeaderRow').value = l.header_row || 1;",
+"      $('wzDataStart').value = l.data_start_row || 2;",
+"      var allBuilds = ['cabinet','station','card','channel','signal','device'];",
+"      var selected = new Set(Array.isArray(data.builds) ? data.builds : []);",
+"      $('wzBuilds').innerHTML = allBuilds.map(function (b) {",
+"        var ck = selected.has(b) ? 'checked' : '';",
+"        return '<label style=\"display:inline-flex;align-items:center;gap:4px;\"><input type=\"checkbox\" data-build=\"' + b + '\" ' + ck + ' />' + b + '</label>';",
+"      }).join('');",
+"      var c = data.cabinet || {};",
+"      $('wzCabPattern').value = c.pattern || '';",
+"      $('wzCabTemplate').value = c.name_template || '';",
+"      $('wzColumns').value = JSON.stringify(data.columns || {}, null, 2);",
+"      $('wzPerSheet').value = data.per_sheet ? JSON.stringify(data.per_sheet, null, 2) : '';",
+"      $('wzSkipRows').value = JSON.stringify(Array.isArray(data.skip_rows) ? data.skip_rows : [], null, 2);",
+"      toggleStyleRows();",
+"    }",
+"    function toggleStyleRows() {",
+"      var style = $('wzStyle').value;",
+"      $('wzCabinetRow').style.display = style === 'metso' ? 'grid' : 'none';",
+"    }",
+"    function parseList(s) { return String(s || '').split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x.length > 0; }); }",
+"    function collectPayload() {",
+"      var payload = {};",
+"      if (!isEdit) payload.id = ($('wzId').value || '').trim();",
+"      payload.description = ($('wzDesc').value || '').trim();",
+"      payload.match = {};",
+"      var ext = parseList($('wzExt').value); if (ext.length) payload.match.file_extensions = ext;",
+"      var snp = ($('wzSheetRe').value || '').trim(); if (snp) payload.match.sheet_name_pattern = snp;",
+"      var rh = parseList($('wzReqHeaders').value); if (rh.length) payload.match.required_headers = rh;",
+"      var rs = parseList($('wzReqSheets').value); if (rs.length) payload.match.required_sheets = rs;",
+"      payload.layout = { header_row: Number($('wzHeaderRow').value) || 1, data_start_row: Number($('wzDataStart').value) || 2 };",
+"      payload.builds = Array.from(document.querySelectorAll('#wzBuilds input[type=checkbox]:checked')).map(function (cb) { return cb.getAttribute('data-build'); });",
+"      var style = $('wzStyle').value;",
+"      if (style === 'metso') {",
+"        var cabPattern = ($('wzCabPattern').value || '').trim();",
+"        var cabTemplate = ($('wzCabTemplate').value || '').trim();",
+"        if (cabPattern || cabTemplate) {",
+"          payload.cabinet = { source: 'sheet_name', pattern: cabPattern, name_template: cabTemplate || 'Cabinet {cabinet_code}' };",
+"        }",
+"      }",
+"      var colTxt = ($('wzColumns').value || '').trim();",
+"      if (colTxt) {",
+"        try { payload.columns = JSON.parse(colTxt); }",
+"        catch (e) { throw new Error('columns: невалидный JSON — ' + e.message); }",
+"      }",
+"      var psTxt = ($('wzPerSheet').value || '').trim();",
+"      if (psTxt) {",
+"        try { payload.per_sheet = JSON.parse(psTxt); }",
+"        catch (e) { throw new Error('per_sheet: невалидный JSON — ' + e.message); }",
+"      }",
+"      var skTxt = ($('wzSkipRows').value || '').trim();",
+"      if (skTxt) {",
+"        try { payload.skip_rows = JSON.parse(skTxt); }",
+"        catch (e) { throw new Error('skip_rows: невалидный JSON — ' + e.message); }",
+"      }",
+"      return payload;",
+"    }",
+"",
+"    setTimeout(fillFromData, 0);",
+"    setTimeout(function () {",
+"      var styleSel = $('wzStyle');",
+"      if (styleSel) styleSel.addEventListener('change', toggleStyleRows);",
+"      var sample = $('wzSample');",
+"      if (sample) sample.addEventListener('change', function () {",
+"        var f = sample.files && sample.files[0];",
+"        if (!f) return;",
+"        var fd = new FormData(); fd.append('file', f);",
+"        $('wzSampleHint').textContent = 'Анализ файла…';",
+"        api('POST', '/api/v2/graph/profiles/detect-style', fd).then(function (res) {",
+"          sampleSheets = res.sheets || [];",
+"          detectedStyle = res.style || detectedStyle;",
+"          $('wzStyle').value = detectedStyle;",
+"          $('wzStyleHint').textContent = 'Автодетект: ' + detectedStyle + '. Листы: ' + sampleSheets.map(function (s) { return s.name; }).join(', ');",
+"          if (sampleSheets.length === 1 && (!$('wzColumns').value || $('wzColumns').value === '{}')) {",
+"            var hdr = sampleSheets[0].sample_header || [];",
+"            var map = {}; hdr.forEach(function (h) { if (h && String(h).trim()) map[String(h).trim()] = String(h).trim(); });",
+"            // do not overwrite; only fill if user hasn't edited",
+"          }",
+"          toggleStyleRows();",
+"          $('wzSampleHint').textContent = 'Готово. Можно нажать «Проверить профиль».';",
+"        }).catch(function (err) {",
+"          $('wzSampleHint').textContent = 'Не удалось проанализировать файл: ' + err.message;",
+"        });",
+"      });",
+"    }, 0);",
+"",
+"    function showError(msg) { var e = $('wzErr'); e.style.display = 'block'; e.textContent = msg; }",
+"    function clearError() { var e = $('wzErr'); e.style.display = 'none'; e.textContent = ''; }",
+"",
+"    var testBtn = makeBtn('Проверить профиль', 'btn--ghost', function () {",
+"      clearError();",
+"      var sample = $('wzSample');",
+"      var f = sample && sample.files && sample.files[0];",
+"      if (!f) { showError('Прикрепите образец XLSX в разделе 1, чтобы проверить профиль.'); return; }",
+"      var payload;",
+"      try { payload = collectPayload(); } catch (e) { showError(e.message); return; }",
+"      if (!payload.id && isEdit) payload.id = data.id;",
+"      var fd = new FormData(); fd.append('file', f); fd.append('profile', JSON.stringify(payload));",
+"      var pw = $('wzPreviewWrap'); pw.innerHTML = '<div class=\"settings-hint\">Проверка…</div>';",
+"      api('POST', '/api/v2/graph/profiles/test', fd).then(function (res) {",
+"        renderPreview(pw, res);",
+"      }).catch(function (err) {",
+"        pw.innerHTML = '';",
+"        showError(err.message || 'Не удалось проверить профиль');",
+"      });",
+"    });",
+"    var saveBtn = makeBtn('Сохранить', 'btn--accent', function () {",
+"      clearError();",
+"      var payload;",
+"      try { payload = collectPayload(); } catch (e) { showError(e.message); return; }",
+"      if (isEdit) {",
+"        api('PUT', '/api/v2/graph/profiles/' + encodeURIComponent(data.id), payload).then(function (res) {",
+"          toast(res.message || 'Профиль обновлён');",
+"          closeModal(); loadProfiles();",
+"        }).catch(function (err) { showError(err.message); });",
+"      } else {",
+"        if (!/^[a-z][a-z0-9_]*$/.test(payload.id || '')) {",
+"          showError('ID профиля должен быть snake_case латиницей'); return;",
+"        }",
+"        api('POST', '/api/v2/graph/profiles', payload).then(function (res) {",
+"          toast(res.message || 'Профиль создан');",
+"          closeModal(); loadProfiles();",
+"        }).catch(function (err) { showError(err.message); });",
+"      }",
+"    });",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    openModal(isEdit ? ('Изменить профиль: ' + data.id) : 'Создание профиля парсера', wrap, [cancelBtn, testBtn, saveBtn]);",
+"  }",
+"",
+"  function renderPreview(container, res) {",
+"    var s = res.summary || {};",
+"    var rows = ['cabinet','station','card','channel','signal','device'].map(function (k) {",
+"      var n = (s[k] && s[k].found) || 0;",
+"      return '<tr><td>' + k + '</td><td style=\"text-align:right;\">' + n + '</td></tr>';",
+"    }).join('');",
+"    var warningsHtml = '';",
+"    if (Array.isArray(res.warnings) && res.warnings.length > 0) {",
+"      warningsHtml = '<div class=\"graph-warnings\">' + res.warnings.map(function (w) {",
+"        var examples = (w.examples || []).slice(0, 3).join(', ');",
+"        return '<div class=\"graph-warning-item\">' + esc(w.code) + ' (×' + (w.count || 0) + ')' +",
+"          (examples ? ': ' + esc(examples) : '') +",
+"          (w.hint ? '<br><span class=\"graph-form__hint\">' + esc(w.hint) + '</span>' : '') +",
+"          '</div>';",
+"      }).join('') + '</div>';",
+"    }",
+"    var samples = Array.isArray(res.sample_signals) ? res.sample_signals : [];",
+"    var samplesHtml = '';",
+"    if (samples.length > 0) {",
+"      samplesHtml = '<table class=\"graph-preview-table\" style=\"margin-top:8px;\"><thead><tr><th>tag</th><th>kind</th><th>raw</th><th>addr</th><th>chan</th><th>station</th></tr></thead><tbody>' +",
+"        samples.map(function (sg) {",
+"          return '<tr>' +",
+"            '<td>' + esc(sg.tag || '') + '</td>' +",
+"            '<td>' + esc(sg.signal_kind || '') + '</td>' +",
+"            '<td>' + esc(sg.signal_kind_raw || '') + '</td>' +",
+"            '<td>' + esc(sg.address || '') + '</td>' +",
+"            '<td>' + esc(sg.channel || '') + '</td>' +",
+"            '<td>' + esc(sg.station_code || '') + '</td>' +",
+"          '</tr>';",
+"        }).join('') +",
+"        '</tbody></table>';",
+"    }",
+"    container.innerHTML = '<div class=\"graph-preview\"><strong>Если бы профиль применили:</strong>' +",
+"      '<table class=\"graph-preview-table\"><tbody>' + rows + '</tbody></table>' +",
+"      '<div class=\"graph-form__hint\" style=\"margin-top:4px;\">Связей (оценка): ' + (res.edges_estimate || 0) + '</div>' +",
+"      warningsHtml + samplesHtml + '</div>';",
+"  }",
+"",
+"  function confirmDeleteProfile(profileId) {",
+"    var wrap = document.createElement('div');",
+"    wrap.innerHTML = '<p style=\"margin:0;\">Удалить профиль <strong>' + esc(profileId) + '</strong>?</p>' +",
+"      '<p class=\"settings-hint\" style=\"margin-top:6px;\">Граф уже импортированных документов не меняется. Файлы, которые подходили под этот профиль, при будущем импорте будут проверяться на остальные профили.</p>';",
+"    var cancelBtn = makeBtn('Отмена', 'btn--ghost', closeModal);",
+"    var del = makeBtn('Удалить', 'btn--danger', function () {",
+"      api('DELETE', '/api/v2/graph/profiles/' + encodeURIComponent(profileId)).then(function (res) {",
+"        toast(res.message || 'Удалено');",
+"        closeModal(); loadProfiles();",
+"      }).catch(function (err) { toast('Не удалось удалить: ' + err.message, 'error'); });",
+"    });",
+"    openModal('Удалить профиль?', wrap, [cancelBtn, del]);",
+"  }",
+"",
+"  // ─── Subtabs / event wiring ──────────────────────────────────",
+"  function setActiveSubtab(name) {",
+"    document.querySelectorAll('[data-graph-subtab]').forEach(function (btn) {",
+"      btn.classList.toggle('is-active', btn.getAttribute('data-graph-subtab') === name);",
+"    });",
+"    document.querySelectorAll('[data-graph-subpanel]').forEach(function (panel) {",
+"      panel.classList.toggle('is-active', panel.getAttribute('data-graph-subpanel') === name);",
+"    });",
+"  }",
+"  function bindEvents() {",
+"    document.addEventListener('click', function (e) {",
+"      var subBtn = e.target.closest('[data-graph-subtab]');",
+"      if (subBtn) { setActiveSubtab(subBtn.getAttribute('data-graph-subtab')); return; }",
+"      var action = e.target.closest('[data-graph-action]');",
+"      if (action) {",
+"        var name = action.getAttribute('data-graph-action');",
+"        var id = action.getAttribute('data-id');",
+"        if (name === 'edit-profile') {",
+"          var p = state.profiles.find(function (x) { return x.id === id; });",
+"          if (p) openProfileEditor(p);",
+"        } else if (name === 'delete-profile') {",
+"          confirmDeleteProfile(id);",
+"        } else if (name === 'edit-alias') {",
+"          openAliasEditor(id);",
+"        } else if (name === 'delete-alias') {",
+"          confirmDeleteAlias(id);",
+"        }",
+"        return;",
+"      }",
+"    });",
+"    var cBtn = $('graphProfileCreateBtn'); if (cBtn) cBtn.addEventListener('click', function () { openProfileEditor(null); });",
+"    var rBtn = $('graphProfileRawBtn'); if (rBtn) rBtn.addEventListener('click', function () { openRawEditor('profiles'); });",
+"    var pRef = $('graphProfileRefresh'); if (pRef) pRef.addEventListener('click', loadProfiles);",
+"    var aBtn = $('graphAliasCreateBtn'); if (aBtn) aBtn.addEventListener('click', function () { openAliasEditor(null); });",
+"    var arBtn = $('graphAliasRawBtn'); if (arBtn) arBtn.addEventListener('click', function () { openRawEditor('aliases'); });",
+"    var aRef = $('graphAliasRefresh'); if (aRef) aRef.addEventListener('click', loadAliases);",
+"  }",
+"",
+"  window.__graphTabActivate = function () {",
+"    if (state.loaded) return;",
+"    state.loaded = true;",
+"    ensureModal();",
+"    bindEvents();",
+"    Promise.all([loadProfiles(), loadAliases()]);",
+"  };",
+"})();",
+""
+  ].join("\n");
+}
+
 export function renderSettingsPage({ ICONS, renderLayout }) {
+  const graphIcon =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>';
   const contextSidebar = `
     <div class="sidebar-context__title">Разделы настроек</div>
     <nav class="settings-anchors" aria-label="Разделы настроек">
@@ -1375,6 +2151,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       <a class="settings-anchor" href="#" data-settings-tab-link="prompt">Системный промпт</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="services">Сервисы</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="diagnostics">Диагностика</a>
+      <a class="settings-anchor" href="#" data-settings-tab-link="graph">Граф знаний</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="maintenance">Обслуживание</a>
       <a class="settings-anchor" href="#" data-settings-tab-link="backups">Бэкапы</a>
     </nav>
@@ -1391,6 +2168,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       <button type="button" class="header-tab" data-settings-tab="prompt" role="tab">${ICONS.fileText}<span>Промпт</span></button>
       <button type="button" class="header-tab" data-settings-tab="services" role="tab">${ICONS.alertCircle}<span>Сервисы</span></button>
       <button type="button" class="header-tab" data-settings-tab="diagnostics" role="tab">${ICONS.check}<span>Диагностика</span></button>
+      <button type="button" class="header-tab" data-settings-tab="graph" role="tab">${graphIcon}<span>Граф знаний</span></button>
       <button type="button" class="header-tab" data-settings-tab="maintenance" role="tab">${ICONS.alertCircle}<span>Обслуживание</span></button>
       <button type="button" class="header-tab" data-settings-tab="backups" role="tab">${ICONS.database}<span>Бэкапы</span></button>
     </nav>
@@ -1539,6 +2317,61 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
       </div>
       </div>
 
+      <div class="settings-tab-panel" data-settings-panel="graph">
+        <div class="settings-card" id="section-graph">
+          <div class="settings-card__head">
+            <div class="settings-card__title">${graphIcon}<span>Граф знаний — конфигурация парсера</span></div>
+            <span class="settings-hint">Файлы: <span class="mono">config/graph-parsers.yaml</span>, <span class="mono">config/graph-aliases.yaml</span></span>
+          </div>
+          <div class="settings-card__body" style="gap:14px;">
+            <div class="graph-subtabs" role="tablist" aria-label="Подвкладки графа">
+              <button type="button" class="graph-subtab is-active" data-graph-subtab="profiles" role="tab">Профили парсера</button>
+              <button type="button" class="graph-subtab" data-graph-subtab="aliases" role="tab">Алиасы signal_kind</button>
+            </div>
+            <p class="settings-hint">
+              Профили решают, как читать XLSX с таблицами сигналов. Алиасы — как нормализовать значения signal_kind
+              (AI/AO/DI/DO/RTD/FI/RS). После любого сохранения kb-api автоматически перечитывает YAML — рестарт не нужен.
+              Резервные копии хранятся в <span class="mono">data/config-backups/</span> (последние 10).
+            </p>
+
+            <div class="graph-subtab-panel is-active" data-graph-subpanel="profiles">
+              <div class="settings-actions" style="margin-bottom:8px;">
+                <button type="button" class="btn btn--accent" id="graphProfileCreateBtn">${ICONS.plus}<span>Создать профиль</span></button>
+                <button type="button" class="btn" id="graphProfileRawBtn">Редактировать YAML напрямую</button>
+                <button type="button" class="btn btn--ghost btn--icon" id="graphProfileRefresh" aria-label="Обновить">${ICONS.refresh}</button>
+              </div>
+              <div class="settings-banner" id="graphProfileBanner"></div>
+              <div id="graphProfileList" style="display:flex;flex-direction:column;gap:8px;">
+                <div class="settings-hint">Загрузка…</div>
+              </div>
+            </div>
+
+            <div class="graph-subtab-panel" data-graph-subpanel="aliases">
+              <div class="settings-actions" style="margin-bottom:8px;">
+                <button type="button" class="btn btn--accent" id="graphAliasCreateBtn">${ICONS.plus}<span>Добавить значение</span></button>
+                <button type="button" class="btn" id="graphAliasRawBtn">Редактировать YAML напрямую</button>
+                <button type="button" class="btn btn--ghost btn--icon" id="graphAliasRefresh" aria-label="Обновить">${ICONS.refresh}</button>
+              </div>
+              <div class="settings-banner" id="graphAliasBanner"></div>
+              <div id="graphAliasList" style="display:flex;flex-direction:column;gap:8px;">
+                <div class="settings-hint">Загрузка…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="kb-modal-backdrop" id="graphModalBackdrop">
+          <div class="kb-modal" role="dialog" aria-modal="true" style="max-width:840px;">
+            <div class="kb-modal__head">
+              <div class="kb-modal__title" id="graphModalTitle">Окно</div>
+              <button type="button" class="btn btn--ghost btn--icon" id="graphModalCloseBtn" aria-label="Закрыть">${ICONS.x}</button>
+            </div>
+            <div class="kb-modal__body" id="graphModalBody"></div>
+            <div class="kb-modal__foot" id="graphModalFoot"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="settings-tab-panel" data-settings-panel="search">
       <div class="settings-card" id="section-retrieval">
         <div class="settings-card__head">
@@ -1671,7 +2504,7 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
     content,
     headerTabs,
     contextSidebar,
-    pageScript: renderSettingsScript(initialStateJson),
+    pageScript: renderSettingsScript(initialStateJson, renderGraphTabScript()),
     bodyClass: "page-settings",
   }).replace("</style>", `${renderSettingsCss()}</style>`);
 }

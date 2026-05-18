@@ -18,6 +18,8 @@ import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
 import { GraphService } from "./services/graphService.js";
 import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngestionService.js";
+import { GraphConfigService } from "./services/graphConfigService.js";
+import { GraphPreviewService } from "./services/graphPreviewService.js";
 import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
@@ -38,6 +40,8 @@ import { uiV2Routes } from "./routes/uiV2.js";
 import { chatSessionRoutes } from "./routes/chatSessions.js";
 import { graphRoutes } from "./routes/graph.js";
 import { graphReparseRoutes } from "./routes/graphReparse.js";
+import { graphProfilesRoutes } from "./routes/graphProfiles.js";
+import { graphAliasesRoutes } from "./routes/graphAliases.js";
 import { parseTagList } from "./utils/tags.js";
 
 async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger }) {
@@ -154,6 +158,20 @@ const graphIngestionService = new GraphIngestionService({
   logger: app.log,
 });
 
+const graphBackupDir =
+  process.env.GRAPH_CONFIG_BACKUP_DIR ||
+  `${appConfig.dataRoot}/config-backups`;
+const graphConfigService = new GraphConfigService({
+  profilesPath: `${graphConfigDir}/graph-parsers.yaml`,
+  aliasesPath: `${graphConfigDir}/graph-aliases.yaml`,
+  backupDir: graphBackupDir,
+  logger: app.log,
+});
+const graphPreviewService = new GraphPreviewService({
+  graphConfigService,
+  logger: app.log,
+});
+
 const ingestionService = new IngestionService({
   config: appConfig,
   postgresProvider,
@@ -223,6 +241,8 @@ app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("backupService", backupService);
 app.decorate("graphService", graphService);
 app.decorate("graphIngestionService", graphIngestionService);
+app.decorate("graphConfigService", graphConfigService);
+app.decorate("graphPreviewService", graphPreviewService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -240,6 +260,8 @@ await app.register(backupApiRoutes);
 await app.register(diagnosticsRoutes);
 await app.register(graphRoutes);
 await app.register(graphReparseRoutes);
+await app.register(graphProfilesRoutes);
+await app.register(graphAliasesRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 
