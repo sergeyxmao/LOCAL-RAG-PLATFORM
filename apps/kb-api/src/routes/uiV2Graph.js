@@ -633,19 +633,22 @@ function renderGraphPageCss() {
     }
     .attrs-mode-btn:hover { color: var(--text); }
     .attrs-mode-btn.active { background: var(--accent); color: #fff; }
-    .attrs-table table {
+    .attrs-table table,
+    .attrs-tbl {
       width: 100%;
       border-collapse: collapse;
       background: var(--surface-2);
       border-radius: 8px;
       overflow: hidden;
     }
-    .attrs-table td {
+    .attrs-table td,
+    .attrs-tbl td {
       padding: 8px 12px;
       border-bottom: 1px solid var(--border);
       font-size: 13px;
     }
-    .attrs-table tr:last-child td { border-bottom: none; }
+    .attrs-table tr:last-child td,
+    .attrs-tbl tr:last-child td { border-bottom: none; }
     .attr-key {
       font-family: var(--font-mono, "JetBrains Mono", monospace);
       color: var(--text-muted);
@@ -944,12 +947,13 @@ function renderGraphPageScript() {
 
   // Переключение режима визуального редактора атрибутов в модалке.
   // prefix — уникальный префикс id'ов ("modalNode" или "modalEdit").
+  // Полные id формируются как prefix + "_attrsVisual" / "_attrsJson" / ...
   // Возвращает true при успехе, false при ошибке валидации JSON.
   function switchAttrsMode(prefix, mode) {
-    var visual = document.getElementById(prefix + "AttrsVisual");
-    var json = document.getElementById(prefix + "AttrsJson");
-    var error = document.getElementById(prefix + "AttrsError");
-    var list = document.getElementById(prefix + "AttrsList");
+    var visual = document.getElementById(prefix + "_attrsVisual");
+    var json = document.getElementById(prefix + "_attrsJson");
+    var error = document.getElementById(prefix + "_attrsError");
+    var list = document.getElementById(prefix + "_attrsList");
     error.style.display = "none";
 
     if (mode === "json") {
@@ -974,7 +978,7 @@ function renderGraphPageScript() {
       visual.style.display = "block";
     }
 
-    var toggleWrap = document.getElementById(prefix + "AttrsModeToggle");
+    var toggleWrap = document.getElementById(prefix + "_attrsModeToggle");
     if (toggleWrap) {
       var btns = toggleWrap.querySelectorAll(".kv-mode-btn");
       for (var i = 0; i < btns.length; i++) {
@@ -987,11 +991,11 @@ function renderGraphPageScript() {
   // Считать атрибуты из активного режима (визуального или JSON).
   // При ошибке JSON показывает её в errEl и возвращает null.
   function collectAttrsFromActiveMode(prefix, errEl) {
-    var visual = document.getElementById(prefix + "AttrsVisual");
-    var json = document.getElementById(prefix + "AttrsJson");
+    var visual = document.getElementById(prefix + "_attrsVisual");
+    var json = document.getElementById(prefix + "_attrsJson");
     var visualOpen = visual && visual.style.display !== "none";
     if (visualOpen) {
-      return collectAttrsFromVisual(document.getElementById(prefix + "AttrsList"));
+      return collectAttrsFromVisual(document.getElementById(prefix + "_attrsList"));
     }
     try {
       var raw = (json.value || "").trim();
@@ -1010,9 +1014,9 @@ function renderGraphPageScript() {
   // Привязка обработчиков к табам режимов и кнопке "+ Добавить параметр".
   // Возвращает функцию для повторной инициализации списка.
   function setupAttrsEditor(prefix, initialAttrs) {
-    var listEl = document.getElementById(prefix + "AttrsList");
-    var addBtn = document.getElementById(prefix + "AttrsAddBtn");
-    var toggleWrap = document.getElementById(prefix + "AttrsModeToggle");
+    var listEl = document.getElementById(prefix + "_attrsList");
+    var addBtn = document.getElementById(prefix + "_attrsAddBtn");
+    var toggleWrap = document.getElementById(prefix + "_attrsModeToggle");
     fillAttrsVisual(listEl, initialAttrs || {});
     addBtn.addEventListener("click", function() { addAttrRow(listEl, "", ""); });
     var btns = toggleWrap.querySelectorAll(".kv-mode-btn");
@@ -1027,24 +1031,30 @@ function renderGraphPageScript() {
   }
 
   // HTML визуального редактора атрибутов (для модалок Создать/Редактировать).
-  // prefix — уникальный префикс id'ов.
+  // prefix — уникальный префикс id'ов. Внутри собираются id:
+  //   prefix + "_attrsVisual"     — обёртка визуального редактора;
+  //   prefix + "_attrsJson"       — textarea с JSON;
+  //   prefix + "_attrsList"       — список kv-row;
+  //   prefix + "_attrsAddBtn"     — кнопка "+ Добавить параметр";
+  //   prefix + "_attrsModeToggle" — переключатель Визуально/JSON;
+  //   prefix + "_attrsError"      — блок ошибки парсинга JSON.
   function renderAttrsEditorHtml(prefix, tipText) {
     return '<div class="graph-modal__row">' +
       '<label class="graph-modal__label">Атрибуты' +
         '<span class="hint" data-tip="' + escAttr(tipText) + '">?</span>' +
       '</label>' +
-      '<div class="kv-mode-toggle" id="' + prefix + 'AttrsModeToggle">' +
+      '<div class="kv-mode-toggle" id="' + prefix + '_attrsModeToggle">' +
         '<button type="button" class="kv-mode-btn active" data-mode="visual">Визуально</button>' +
         '<button type="button" class="kv-mode-btn" data-mode="json">Как JSON</button>' +
       '</div>' +
-      '<div class="kv-visual" id="' + prefix + 'AttrsVisual">' +
-        '<div class="kv-list" id="' + prefix + 'AttrsList"></div>' +
-        '<button type="button" class="kv-add-btn" id="' + prefix + 'AttrsAddBtn">+ Добавить параметр</button>' +
+      '<div class="kv-visual" id="' + prefix + '_attrsVisual">' +
+        '<div class="kv-list" id="' + prefix + '_attrsList"></div>' +
+        '<button type="button" class="kv-add-btn" id="' + prefix + '_attrsAddBtn">+ Добавить параметр</button>' +
       '</div>' +
-      '<textarea class="graph-modal__textarea" id="' + prefix + 'AttrsJson" ' +
+      '<textarea class="graph-modal__textarea" id="' + prefix + '_attrsJson" ' +
         'style="display:none;" ' +
         'placeholder="{&quot;cabinet_code&quot;: &quot;KS-3&quot;}">{}</textarea>' +
-      '<div class="graph-modal__error" id="' + prefix + 'AttrsError" style="display:none;"></div>' +
+      '<div class="graph-modal__error" id="' + prefix + '_attrsError" style="display:none;"></div>' +
     '</div>';
   }
 
@@ -1297,50 +1307,60 @@ function renderGraphPageScript() {
     }
   }
 
+  // Рендер таба "Атрибуты" в карточке узла. Содержит блок с атрибутами
+  // (таблица + JSON через переключатель) и опциональный блок "Описание".
   function renderAttrsTab(container, node) {
     var attrs = node.attributes || {};
-    var hasAttrs = Object.keys(attrs).length > 0;
-
-    if (hasAttrs) {
-      // Переключатель режима (Таблица / JSON)
-      var toggleWrap = el("div", { className: "attrs-mode-toggle" });
-      var btnTable = el("button", { className: "attrs-mode-btn active", dataset: { mode: "table" } }, "Таблица");
-      var btnJson = el("button", { className: "attrs-mode-btn", dataset: { mode: "json" } }, "JSON");
-      toggleWrap.appendChild(btnTable);
-      toggleWrap.appendChild(btnJson);
-      container.appendChild(toggleWrap);
-
-      var tableWrap = el("div", { className: "attrs-table", id: "cardAttrsTable" });
-      var rowsHtml = Object.entries(attrs).map(function(e) {
-        return '<tr><td class="attr-key">' + escHtml(e[0]) +
-          '</td><td class="attr-val">' + escHtml(formatValueForInput(e[1])) + '</td></tr>';
-      }).join("");
-      tableWrap.innerHTML = "<table>" + rowsHtml + "</table>";
-      container.appendChild(tableWrap);
-
-      var jsonWrap = el("pre", { className: "attrs-pre", id: "cardAttrsJson", style: "display:none;", innerHTML: prettyJson(attrs) });
-      container.appendChild(jsonWrap);
-
-      btnTable.addEventListener("click", function() {
-        tableWrap.style.display = "";
-        jsonWrap.style.display = "none";
-        btnTable.classList.add("active");
-        btnJson.classList.remove("active");
-      });
-      btnJson.addEventListener("click", function() {
-        tableWrap.style.display = "none";
-        jsonWrap.style.display = "block";
-        btnJson.classList.add("active");
-        btnTable.classList.remove("active");
-      });
-    } else {
-      container.appendChild(el("div", { className: "card-welcome" }, "У узла нет атрибутов."));
-    }
+    renderCardAttributes(container, attrs);
 
     if (node.description) {
       container.appendChild(el("h4", { style: "margin: 16px 0 6px 0; color: var(--text-muted); text-transform: uppercase; font-size: 12px;" }, "Описание"));
       container.appendChild(el("div", { style: "font-size: 13px; color: var(--text); line-height: 1.5;" }, node.description));
     }
+  }
+
+  // Рендер атрибутов узла в карточке: переключатель Таблица/JSON,
+  // табличный вид с классом .attrs-tbl и JSON-вид с подсветкой.
+  // Пустой объект показывает заметку "У узла нет атрибутов."
+  function renderCardAttributes(container, attrs) {
+    var safeAttrs = attrs || {};
+    var entries = Object.entries(safeAttrs);
+    if (entries.length === 0) {
+      container.appendChild(el("div", { className: "card-welcome" }, "У узла нет атрибутов."));
+      return;
+    }
+
+    // Переключатель режима (Таблица / JSON)
+    var toggleWrap = el("div", { className: "attrs-mode-toggle" });
+    var btnTable = el("button", { className: "attrs-mode-btn active", dataset: { mode: "table" } }, "Таблица");
+    var btnJson = el("button", { className: "attrs-mode-btn", dataset: { mode: "json" } }, "JSON");
+    toggleWrap.appendChild(btnTable);
+    toggleWrap.appendChild(btnJson);
+    container.appendChild(toggleWrap);
+
+    var tableWrap = el("div", { className: "attrs-table", id: "cardAttrsTable" });
+    var rowsHtml = entries.map(function(e) {
+      return '<tr><td class="attr-key">' + escHtml(e[0]) +
+        '</td><td class="attr-val">' + escHtml(formatValueForInput(e[1])) + '</td></tr>';
+    }).join("");
+    tableWrap.innerHTML = '<table class="attrs-tbl">' + rowsHtml + "</table>";
+    container.appendChild(tableWrap);
+
+    var jsonWrap = el("pre", { className: "attrs-pre", id: "cardAttrsJson", style: "display:none;", innerHTML: prettyJson(safeAttrs) });
+    container.appendChild(jsonWrap);
+
+    btnTable.addEventListener("click", function() {
+      tableWrap.style.display = "";
+      jsonWrap.style.display = "none";
+      btnTable.classList.add("active");
+      btnJson.classList.remove("active");
+    });
+    btnJson.addEventListener("click", function() {
+      tableWrap.style.display = "none";
+      jsonWrap.style.display = "block";
+      btnJson.classList.add("active");
+      btnTable.classList.remove("active");
+    });
   }
 
   function prettyJson(obj) {

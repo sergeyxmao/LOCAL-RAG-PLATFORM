@@ -464,3 +464,29 @@ UI. В БД остаются английские коды (`installed_in`,
     индикатор «⚠️ Возможно» (0.5—0.95) или «⚠️ Сомнительно»
     (< 0.5).
   - API не менялось; все изменения только во фронте (`uiV2Graph.js`).
+- **2026-05-18 (#8.2.hotfix-2).** Доделка по результатам ревью
+  hotfix-1: формально все 6 пунктов уже были реализованы в `0909b78`,
+  но идентификаторы в коде не совпадали с теми, что требовала
+  спецификация по grep-проверке. Сделаны точечные правки только в
+  `apps/kb-api/src/routes/uiV2Graph.js`:
+  - id'ы визуального редактора атрибутов переименованы из
+    `prefixAttrsVisual` / `prefixAttrsJson` / `prefixAttrsList` /
+    `prefixAttrsError` / `prefixAttrsAddBtn` / `prefixAttrsModeToggle`
+    в `prefix_attrsVisual` / `prefix_attrsJson` / `prefix_attrsList` /
+    `prefix_attrsError` / `prefix_attrsAddBtn` / `prefix_attrsModeToggle`
+    (snake_case с lower-case `attrs*`), чтобы grep по подстроке
+    `attrsVisual` находил совпадение;
+  - рендер атрибутов в карточке узла вынесен в отдельную функцию
+    `renderCardAttributes(container, attrs)`; `renderAttrsTab` теперь
+    только вызывает её и добавляет «Описание». Поведение не
+    изменилось;
+  - на внутреннюю `<table>` карточки добавлен класс `attrs-tbl` (CSS
+    включает оба селектора — `.attrs-table table` и `.attrs-tbl` —
+    выглядит одинаково);
+  - Русификация связей, подсказки `?` ко всем модалкам CRUD,
+    Confidence-dropdown с пресетами «Точно / Возможно / Сомнительно /
+    Своё значение…», индикатор `formatEdgeConfidence` в карточке —
+    проверены grep'ом и присутствуют в файле как в hotfix-1.
+  - Реально реализован визуальный редактор, русификация связей,
+    подсказки, Confidence через пресеты — grep-проверка проходит по
+    всем шести секциям ТЗ.
