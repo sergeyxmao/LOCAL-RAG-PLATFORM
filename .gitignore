@@ -9,3 +9,10 @@ data/raw/
 data/parsed/
 data/assets/
 workspace/
+
+# Runtime data (backups, uploads, parsed files)
+data/
+
+# Claude local cache
+.claude/
+
