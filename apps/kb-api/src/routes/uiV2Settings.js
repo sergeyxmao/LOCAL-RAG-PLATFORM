@@ -2249,42 +2249,57 @@ function renderGraphTabScript() {
 "      function attachTemplateClick(btn, profileId) {",
 "        btn.addEventListener('click', function () {",
 "          api('GET', '/api/v2/graph/profiles/' + encodeURIComponent(profileId)).then(function (res) {",
-"            var src = res && res.profile;",
-"            if (!src) { toast('Профиль не найден', 'error'); return; }",
-"            // Скопировать все поля КРОМЕ id",
-"            if ($('wzDesc') && !$('wzDesc').value) $('wzDesc').value = src.description || '';",
-"            var m = src.match || {};",
-"            $('wzExt').value = (m.file_extensions || []).join(', ');",
-"            $('wzSheetRe').value = m.sheet_name_pattern || '';",
-"            $('wzReqHeaders').value = (m.required_headers || []).join(', ');",
-"            $('wzReqSheets').value = (m.required_sheets || []).join(', ');",
-"            var l = src.layout || {};",
-"            $('wzHeaderRow').value = l.header_row || 1;",
-"            $('wzDataStart').value = l.data_start_row || 2;",
-"            $('wzSheetFilter').value = l.sheet_filter || '';",
-"            var c = src.cabinet || {};",
-"            $('wzCabPattern').value = c.pattern || '';",
-"            $('wzCabTemplate').value = c.name_template || '';",
-"            var sd = src.station_default || {};",
-"            $('wzStationCode').value = sd.station_code_template || '';",
-"            $('wzStationName').value = sd.name_template || '';",
-"            $('wzColumns').value = src.columns && Object.keys(src.columns).length ? JSON.stringify(src.columns, null, 2) : '';",
-"            $('wzPerSheet').value = src.per_sheet ? JSON.stringify(src.per_sheet, null, 2) : '';",
-"            $('wzSkipRows').value = Array.isArray(src.skip_rows) && src.skip_rows.length ? JSON.stringify(src.skip_rows, null, 2) : '';",
-"            data.builds = Array.isArray(src.builds) ? src.builds : data.builds;",
-"            // выставить стиль исходя из per_sheet",
-"            var newStyle = (src.per_sheet && Object.keys(src.per_sheet).length) ? 'koyo' : 'metso';",
-"            setStyle(newStyle);",
-"            // Обновить builds из шаблона, ТОЛЬКО если пользователь ещё не трогал чекбоксы.",
-"            // Иначе кастомный набор кользователя был бы затёрт (см. #8.1.c-bugfix bug 1).",
-"            setBuildsList(src.builds);",
-"            if (buildsDirty) {",
-"              toast('Шаблон применён, но ваш кастомный список «builds» сохранён. Сбросьте чекбоксы вручную, если нужно.');",
-"            } else {",
-"              toast('Поля заполнены из шаблона ' + profileId + '. Допишите свой id и сохраните.');",
-"            }",
+"            var raw = res && res.profile;",
+"            if (!raw) { toast('Профиль не найден', 'error'); return; }",
+"            // #8.1.c.fix-2: deep clone через JSON.parse(JSON.stringify(...)) —",
+"            // не делим ссылки с кэшем и гарантированно копируем ВСЕ nested",
+"            // (match.required_headers, skip_rows, per_sheet.<sheet>.columns и т.п.).",
+"            var src;",
+"            try { src = JSON.parse(JSON.stringify(raw)); }",
+"            catch (e) { toast('Не удалось клонировать шаблон: ' + e.message, 'error'); return; }",
+"            delete src.id;  // id всегда задаёт пользователь, не копируем",
+"            applyTemplateToWizard(src, profileId);",
 "          }).catch(function (err) { toast('Не удалось применить шаблон: ' + err.message, 'error'); });",
 "        });",
+"      }",
+"      function applyTemplateToWizard(src, profileId) {",
+"        // Описание — НЕ перетираем, если пользователь уже что-то ввёл.",
+"        if ($('wzDesc') && !$('wzDesc').value) $('wzDesc').value = src.description || '';",
+"        var m = src.match || {};",
+"        $('wzExt').value = Array.isArray(m.file_extensions) ? m.file_extensions.join(', ') : '';",
+"        $('wzSheetRe').value = m.sheet_name_pattern || '';",
+"        $('wzReqHeaders').value = Array.isArray(m.required_headers) ? m.required_headers.join(', ') : '';",
+"        $('wzReqSheets').value = Array.isArray(m.required_sheets) ? m.required_sheets.join(', ') : '';",
+"        var l = src.layout || {};",
+"        $('wzHeaderRow').value = Number(l.header_row) || 1;",
+"        $('wzDataStart').value = Number(l.data_start_row) || 2;",
+"        $('wzSheetFilter').value = l.sheet_filter || '';",
+"        var c = src.cabinet || {};",
+"        $('wzCabPattern').value = c.pattern || '';",
+"        $('wzCabTemplate').value = c.name_template || '';",
+"        var sd = src.station_default || {};",
+"        $('wzStationCode').value = sd.station_code_template || '';",
+"        $('wzStationName').value = sd.name_template || '';",
+"        // Nested-объекты идут как JSON в textarea — тут deep clone уже сделан,",
+"        // JSON.stringify даст ровно те же ключи/массивы, что и в YAML.",
+"        $('wzColumns').value = src.columns && Object.keys(src.columns).length",
+"          ? JSON.stringify(src.columns, null, 2) : '';",
+"        $('wzPerSheet').value = (src.per_sheet && Object.keys(src.per_sheet).length)",
+"          ? JSON.stringify(src.per_sheet, null, 2) : '';",
+"        $('wzSkipRows').value = Array.isArray(src.skip_rows) && src.skip_rows.length",
+"          ? JSON.stringify(src.skip_rows, null, 2) : '';",
+"        // builds: стиль решает по наличию per_sheet (как в metso_dna_rio /",
+"        // koyo_directlogic_pro).",
+"        var newStyle = (src.per_sheet && Object.keys(src.per_sheet).length) ? 'koyo' : 'metso';",
+"        setStyle(newStyle);",
+"        // Если пользователь уже трогал чекбоксы builds (buildsDirty=true) —",
+"        // setBuildsList НЕ перезатрёт его кастом (см. #8.1.c.fix-patch bug 1).",
+"        setBuildsList(Array.isArray(src.builds) ? src.builds : []);",
+"        if (buildsDirty) {",
+"          toast('Шаблон применён, но ваш кастомный список «builds» сохранён. Сбросьте чекбоксы вручную, если нужно.');",
+"        } else {",
+"          toast('Поля заполнены из шаблона ' + profileId + '. Допишите свой id и сохраните.');",
+"        }",
 "      }",
 "      // ── Sample upload + autodetect + auto-fill columns/per_sheet ──",
 "      var sample = $('wzSample');",
@@ -2561,7 +2576,12 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
         </div>
       </div>
 
-      <div class="settings-card" id="section-cloud">
+      <!-- #8.1.c.fix-2: вся секция с input[type=password] обёрнута в <form>
+           autocomplete="off" + onsubmit="return false" — это убирает
+           предупреждение «[DOM] Password field is not contained in a form»
+           из DevTools (и для статического Add-form, и для динамического
+           списка провайдеров с inline-редактированием). -->
+      <form class="settings-card" id="section-cloud" autocomplete="off" onsubmit="return false;">
         <div class="settings-card__head">
           <div class="settings-card__title">${ICONS.upload}<span>Облачные провайдеры</span></div>
           <span class="settings-hint">OpenAI-совместимый API · подробности — <a href="/docs/CLOUD_PROVIDER.md" style="color:var(--accent)" target="_blank">CLOUD_PROVIDER.md</a></span>
@@ -2602,9 +2622,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
               <button type="button" class="btn btn--accent" id="cfgCloudAddSave">${ICONS.check}<span>Добавить</span></button>
             </div>
           </div>
-          <p class="settings-hint">Ключи хранятся в БД проекта в plaintext (см. <span class="mono">CLOUD_PROVIDER.md</span>). В API возвращаются замаскированными, в логи не пишутся. В чате выбор провайдера — в шапке.</p>
+          <p class="settings-hint">Ключи хранятся в БД проекта в plaintext (см. <span class="mono">CLOUD_PROVIDER.md</span>). В API возвращаются замаскированными, в логи не пишутся. В чате выбор провайдера — в шапке. Принимаются только латинские/ASCII-символы — кириллица в ключе вызовет понятную ошибку.</p>
         </div>
-      </div>
+      </form>
       </div>
 
       <div class="settings-tab-panel" data-settings-panel="services">
@@ -2629,10 +2649,12 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <label class="settings-toggle">
             <input type="checkbox" id="cfgOcrAutoEmpty" />
             <span>Включить автоматический OCR для PDF-страниц без текста</span>
+            <span class="help-tip" tabindex="0" aria-label="Подсказка"><span class="help-tip__icon" aria-hidden="true">?</span><span class="help-tip__bubble" role="tooltip">По умолчанию kb-api сначала пытается извлечь текст из PDF напрямую. Если страница оказалась пустой (например, скан в виде картинки) — на ней запускается OCR через tesseract. Быстро и нужно почти всегда — снимать галочку, только если все ваши PDF гарантированно с цифровым текстом.</span></span>
           </label>
           <label class="settings-toggle">
             <input type="checkbox" id="cfgOcrAll" />
             <span>OCR для всех страниц PDF (медленно)</span>
+            <span class="help-tip" tabindex="0" aria-label="Подсказка"><span class="help-tip__icon" aria-hidden="true">?</span><span class="help-tip__bubble" role="tooltip">Включает OCR даже для страниц, где текст уже извлечён напрямую. Полезно для смешанных PDF, где часть текста встроенная, а часть — картинки (схемы, штампы, рукописные пометки на чертежах АСУ ТП). Замедляет импорт в 2–5 раз. С #8.1.c.fix-2 включён по умолчанию — владелец работает в основном со сканами.</span></span>
           </label>
           <div class="settings-banner" id="cfgOcrBanner"></div>
           <div class="settings-actions">

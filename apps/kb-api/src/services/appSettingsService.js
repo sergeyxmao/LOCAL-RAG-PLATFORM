@@ -476,7 +476,10 @@ export class AppSettingsService {
     const raw = (await this.getRawValue("ocr")) || {};
     return {
       autoOcrEmptyPages: raw.autoOcrEmptyPages !== false,
-      ocrAll: raw.ocrAll === true,
+      // #8.1.c.fix-2: дефолт переключён с false на true. Владелец работает
+      // преимущественно со сканами. Для уже установленных систем — миграция
+      // через runOcrAllDefaultTrueMigration() (см. index.js).
+      ocrAll: raw.ocrAll !== false,
     };
   }
 

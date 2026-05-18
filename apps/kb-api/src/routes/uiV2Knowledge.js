@@ -640,17 +640,10 @@ function renderKnowledgeScript(initialStateJson) {
       function saveJobsPageSizeToStorage(n) {
         try { localStorage.setItem("localrag.jobsFilter.pageSize", String(n)); } catch (err) {}
       }
-      function loadUploadConcurrencyFromStorage() {
-        try {
-          var raw = localStorage.getItem("localrag.upload.concurrency");
-          var n = Number(raw);
-          if (n >= 1 && n <= 3) return n;
-        } catch (err) {}
-        return 1;
-      }
-      function saveUploadConcurrencyToStorage(n) {
-        try { localStorage.setItem("localrag.upload.concurrency", String(n)); } catch (err) {}
-      }
+      // #8.1.c.fix-2: концепция «параллелизм загрузки» из UI Загрузки убрана.
+      // Параллелизм всего pipeline индексации управляется централизованно из
+      // «Настройки → Сервисы → Параллелизм индексации» (через indexingSemaphore).
+      // Очередь регистрации задач на фронте всегда работает по одному файлу.
 
       var state = {
         nodes: [],
@@ -690,8 +683,9 @@ function renderKnowledgeScript(initialStateJson) {
         serverPath: document.getElementById("kbServerPath"),
         serverImportBtn: document.getElementById("kbServerImportBtn"),
         nodeSelect: document.getElementById("kbNodeSelect"),
-        lightModeChk: document.getElementById("kbLightMode"),
-        recursiveChk: document.getElementById("kbRecursive"),
+        // Удалены в #8.1.c.fix-2: lightModeChk, recursiveChk, concurrency selector.
+        // UI всегда передаёт createVisualAssets=true и recursive=true;
+        // параллелизмом управляет «Настройки → Сервисы → Параллелизм индексации».
         jobsList: document.getElementById("kbJobsList"),
         jobsCard: document.getElementById("kbJobsCard"),
         jobsCollapsedRow: document.getElementById("kbJobsCollapsed"),
@@ -1975,14 +1969,11 @@ function renderKnowledgeScript(initialStateJson) {
       }
 
       function readConcurrencyLive() {
-        // Жёсткий приоритет: live-значение из DOM (то, что видит пользователь).
-        // Это лечит расхождения между select.value и localStorage.
-        var concSelect = document.getElementById("kbUploadConcurrency");
-        if (concSelect) {
-          var live = Number(concSelect.value);
-          if (live >= 1 && live <= 3) return live;
-        }
-        return loadUploadConcurrencyFromStorage();
+        // #8.1.c.fix-2: фронт всегда регистрирует задачи последовательно (по одному
+        // файлу), потому что реальный параллелизм управляется на бэкенде через
+        // indexingSemaphore (см. «Настройки → Сервисы»). Возврат 1 — это размер
+        // worker pool на фронте при регистрации очереди, не throughput pipeline.
+        return 1;
       }
 
       function handleFiles(fileList) {
@@ -1997,7 +1988,9 @@ function renderKnowledgeScript(initialStateJson) {
         renderJobs();
 
         var nodeId = (dom.nodeSelect && dom.nodeSelect.value) || state.activeNodeId || "";
-        var createVisualAssets = dom.lightModeChk ? !dom.lightModeChk.checked : false;
+        // #8.1.c.fix-2: всегда true — «лёгкий режим» удалён из UI.
+        // API на бэкенде по-прежнему принимает createVisualAssets=false (для curl).
+        var createVisualAssets = true;
         var items = files.map(function (file) {
           return {
             filename: file.webkitRelativePath || file.relativePath || file.name,
@@ -2109,8 +2102,9 @@ function renderKnowledgeScript(initialStateJson) {
         if (!rawPath) { showToast("Введите путь к папке на сервере", "error"); return; }
         var body = {
           relativeDir: rawPath,
-          recursive: dom.recursiveChk.checked,
-          createVisualAssets: !dom.lightModeChk.checked,
+          // #8.1.c.fix-2: оба параметра жёстко true. Чекбоксы убраны из UI.
+          recursive: true,
+          createVisualAssets: true,
           categories: [],
         };
         var nodeId = dom.nodeSelect.value || state.activeNodeId || "";
@@ -2163,13 +2157,8 @@ function renderKnowledgeScript(initialStateJson) {
         dom.serverImportBtn.addEventListener("click", importServerPath);
         dom.serverPath.addEventListener("keydown", function (e) { if (e.key === "Enter") importServerPath(); });
         dom.nodeSelect.addEventListener("change", function () { /* used during upload */ });
-        var concSelect = document.getElementById("kbUploadConcurrency");
-        if (concSelect) {
-          concSelect.value = String(loadUploadConcurrencyFromStorage());
-          concSelect.addEventListener("change", function () {
-            saveUploadConcurrencyToStorage(Number(concSelect.value) || 1);
-          });
-        }
+        // #8.1.c.fix-2: селектор «Параллелизм загрузки» удалён из UI Загрузки.
+        // Управление переехало в «Настройки → Сервисы → Параллелизм индексации».
 
         dom.jobsToggleBtn.addEventListener("click", function () {
           state.jobsCollapsed = !state.jobsCollapsed;
@@ -2474,19 +2463,6 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
               <div>
                 <button type="button" class="btn btn--accent" id="kbServerImportBtn">${ICONS.upload}<span>Импортировать</span></button>
               </div>
-            </div>
-
-            <div class="kb-upload-options">
-              <label><input type="checkbox" id="kbLightMode" checked /> Лёгкий режим (без превью страниц)</label>
-              <label><input type="checkbox" id="kbRecursive" checked /> Включая вложенные папки</label>
-              <label style="display:inline-flex;align-items:center;gap:6px;">
-                Параллелизм загрузки
-                <select id="kbUploadConcurrency" class="kb-select" style="width:auto;">
-                  <option value="1">1 (по очереди)</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                </select>
-              </label>
             </div>
           </div>
         </div>
