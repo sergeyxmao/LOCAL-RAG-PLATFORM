@@ -141,6 +141,34 @@ function aggregateWarning(warningsMap, code, hint, example) {
   }
 }
 
+// #8.1.e: парсер XLSX знает только семь "встроенных" кодов узлов.
+// Если в `builds` профиля окажется кастомный код (например, из пользовательской
+// записи в таблице graph_node_types) — мы тихо пропускаем его, но добавляем
+// предупреждение в graph_report, чтобы пользователь видел, что код не учитывается.
+const PARSER_SUPPORTED_BUILDS = new Set([
+  "object",
+  "cabinet",
+  "station",
+  "card",
+  "channel",
+  "signal",
+  "device",
+]);
+
+function warnUnknownBuilds(warningsMap, buildsList, contextLabel) {
+  if (!Array.isArray(buildsList)) return;
+  for (const code of buildsList) {
+    if (typeof code !== "string") continue;
+    if (PARSER_SUPPORTED_BUILDS.has(code)) continue;
+    aggregateWarning(
+      warningsMap,
+      "unknown_node_type",
+      "Этот тип узла не поддерживается парсером XLSX. Узлы будут пропущены.",
+      contextLabel ? `${contextLabel}: ${code}` : code
+    );
+  }
+}
+
 export function parseMetsoStyle({ workbook, profile, filePath, signalKindMatcher }) {
   const layout = profile.layout || {};
   const sheetFilter = safeRegex(layout.sheet_filter);
@@ -148,6 +176,7 @@ export function parseMetsoStyle({ workbook, profile, filePath, signalKindMatcher
   const builds = new Set(profile.builds || []);
   const skipRows = Array.isArray(profile.skip_rows) ? profile.skip_rows : [];
   const warnings = new Map();
+  warnUnknownBuilds(warnings, profile.builds, "builds");
   const cabinets = [];
   const stations = [];
   const cards = [];
@@ -396,6 +425,7 @@ export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher 
     const { headerRow, dataRows } = dataRowsFromSheet(sheet, layout);
     const columnIndices = findColumnIndices(headerRow, cols);
     const builds = new Set(sheetCfg.builds || []);
+    warnUnknownBuilds(warnings, sheetCfg.builds, `per_sheet.${sheetName}.builds`);
     const explicitSignalKind = trimOrNull(sheetCfg.signal_kind);
 
     for (const { row, excelRowNumber } of dataRows) {

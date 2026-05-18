@@ -20,6 +20,7 @@ import { GraphService } from "./services/graphService.js";
 import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngestionService.js";
 import { GraphConfigService } from "./services/graphConfigService.js";
 import { GraphPreviewService } from "./services/graphPreviewService.js";
+import { GraphNodeTypeService } from "./services/graphNodeTypeService.js";
 import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
@@ -42,6 +43,7 @@ import { graphRoutes } from "./routes/graph.js";
 import { graphReparseRoutes } from "./routes/graphReparse.js";
 import { graphProfilesRoutes } from "./routes/graphProfiles.js";
 import { graphAliasesRoutes } from "./routes/graphAliases.js";
+import { graphNodeTypeRoutes } from "./routes/graphNodeTypes.js";
 import { parseTagList } from "./utils/tags.js";
 
 async function runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger }) {
@@ -169,6 +171,18 @@ const graphService = new GraphService({
   logger: app.log,
 });
 
+const graphNodeTypeService = new GraphNodeTypeService({
+  postgresProvider,
+  logger: app.log,
+});
+try {
+  await graphNodeTypeService.ensureBuiltinTypes();
+} catch (err) {
+  app.log.error({ err }, "Не удалось инициализировать встроенные типы узлов графа");
+}
+
+graphService.nodeTypeService = graphNodeTypeService;
+
 const graphConfigDir = process.env.CONFIG_DIR || "/app/config";
 const graphConfigs = loadGraphConfigs({ configDir: graphConfigDir, logger: app.log });
 if (Array.isArray(graphConfigs.errors) && graphConfigs.errors.length > 0) {
@@ -272,6 +286,7 @@ app.decorate("graphService", graphService);
 app.decorate("graphIngestionService", graphIngestionService);
 app.decorate("graphConfigService", graphConfigService);
 app.decorate("graphPreviewService", graphPreviewService);
+app.decorate("graphNodeTypeService", graphNodeTypeService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
@@ -291,6 +306,7 @@ await app.register(graphRoutes);
 await app.register(graphReparseRoutes);
 await app.register(graphProfilesRoutes);
 await app.register(graphAliasesRoutes);
+await app.register(graphNodeTypeRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
 

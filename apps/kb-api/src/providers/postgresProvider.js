@@ -179,6 +179,42 @@ export class PostgresProvider {
       FOR EACH ROW
       EXECUTE FUNCTION graph_nodes_set_updated_at()
     `);
+
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS graph_node_types (
+        code VARCHAR(64) PRIMARY KEY,
+        label_ru VARCHAR(128) NOT NULL,
+        description TEXT,
+        icon VARCHAR(16),
+        sort_order INTEGER NOT NULL DEFAULT 100,
+        is_builtin BOOLEAN NOT NULL DEFAULT FALSE,
+        is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_node_types_archived
+      ON graph_node_types (is_archived)
+    `);
+    await this.pool.query(`
+      CREATE OR REPLACE FUNCTION graph_node_types_set_updated_at()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await this.pool.query(`
+      DROP TRIGGER IF EXISTS trg_graph_node_types_set_updated_at ON graph_node_types
+    `);
+    await this.pool.query(`
+      CREATE TRIGGER trg_graph_node_types_set_updated_at
+      BEFORE UPDATE ON graph_node_types
+      FOR EACH ROW
+      EXECUTE FUNCTION graph_node_types_set_updated_at()
+    `);
   }
 
   async createGraphNode(node) {

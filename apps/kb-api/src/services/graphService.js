@@ -352,7 +352,20 @@ export class GraphService {
   }
 
   async getStats() {
-    return this.postgresProvider.getGraphStats();
+    const stats = await this.postgresProvider.getGraphStats();
+    if (this.nodeTypeService && typeof this.nodeTypeService.getLabelsMap === "function") {
+      try {
+        stats.nodeTypeLabels = await this.nodeTypeService.getLabelsMap();
+      } catch (err) {
+        if (this.logger?.warn) {
+          this.logger.warn({ err }, "Не удалось получить лейблы типов узлов для stats");
+        }
+        stats.nodeTypeLabels = {};
+      }
+    } else {
+      stats.nodeTypeLabels = {};
+    }
+    return stats;
   }
 
   async upsertNodeByBusinessKey({

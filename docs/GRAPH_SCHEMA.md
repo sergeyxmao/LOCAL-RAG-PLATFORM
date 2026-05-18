@@ -254,17 +254,30 @@ curl http://localhost:8787/api/v2/graph/stats
 Это **рекомендации**, не enum. Поле `type` — свободная строка,
 поэтому можно создавать свои типы под будущие нужды.
 
-- `system` — система (KS-3, GPA-KC-3);
-- `subsystem` — подсистема (АСУТП, IO-03);
-- `cabinet` — шкаф;
-- `card` — плата;
-- `signal` — сигнал;
-- `loop_tag` — позиция в схеме;
-- `address` — адрес сигнала;
-- `vendor` — производитель;
-- `regulation` — нормативный документ;
-- `object` — объект (ЦСП-3) — для будущего мульти-объектного
-  режима.
+Начиная с #8.1.e канонические типы хранятся в таблице
+`graph_node_types` (`code` PK, `label_ru`, `description`, `icon`,
+`sort_order`, `is_builtin`, `is_archived`), редактируются через
+UI «Настройки → Граф знаний → Типы узлов» и REST API
+`/api/v2/graph/node-types`. Подробности — `docs/GRAPH_NODE_TYPES.md`.
+
+7 встроенных типов (`is_builtin = TRUE`):
+
+- `object` 🏭 — Объект (верхний уровень: установка, цех);
+- `cabinet` 🗄 — Шкаф автоматики;
+- `station` ⚡ — ПЛК (программируемый логический контроллер);
+- `card` 🔌 — Плата (модуль ввода/вывода);
+- `channel` 📡 — Канал на плате;
+- `signal` 〰 — Логический сигнал;
+- `device` 📟 — Полевой прибор.
+
+Их `code` неизменяем, удалить их нельзя; русское название,
+описание, иконку и порядок сортировки можно править. Кастомные
+типы добавляются полноценным CRUD.
+
+`graph_nodes.type` остаётся TEXT-полем без FK на
+`graph_node_types.code` — это сознательный компромисс ради
+гибкости парсера. Семантическая целостность — на уровне
+приложения.
 
 ### Канонические типы связей
 
@@ -381,6 +394,12 @@ FUNCTION`, `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`).
 
 ## История изменений
 
+- 2026-05-18: #8.1.e — таблица `graph_node_types`, CRUD-API
+  `/api/v2/graph/node-types`, UI-подвкладка «Типы узлов»,
+  динамические `builds` в wizard'е профилей с русскими лейблами и
+  иконками, поле `nodeTypeLabels` в `/api/v2/graph/stats`. AJV
+  валидация `builds` в `graph-parsers.yaml` ослаблена с enum до
+  паттерна. Подробности — `docs/GRAPH_NODE_TYPES.md`.
 - 2026-05-17: #8.1.b — парсер XLSX (`docs/GRAPH_INGESTION.md`),
   2 готовых профиля, alias-конфиг, UPSERT по бизнес-ключу,
   endpoint `/api/v2/graph/reparse/:documentId`, колонка
