@@ -1,17 +1,20 @@
 import path from "node:path";
 import XLSX from "xlsx";
 
-function safeRegex(pattern) {
+function safeRegex(pattern, flags) {
   if (!pattern) return null;
   try {
-    return new RegExp(pattern);
+    return new RegExp(pattern, flags);
   } catch {
     return null;
   }
 }
 
 function normalizeHeader(value) {
+  // NFC-нормализация спасает от тонких различий в кириллице между YAML и Excel
+  // (например, разная нормализация одних и тех же символов в разных редакторах).
   return String(value ?? "")
+    .normalize("NFC")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -30,13 +33,13 @@ function rowMatchesSkipCondition(row, condition) {
     case "loop_tag_empty":
       return !trimOrNull(row.loop_tag);
     case "loop_tag_matches": {
-      const re = safeRegex(arg);
+      const re = safeRegex(arg, "i");
       return re ? re.test(String(row.loop_tag ?? "")) : false;
     }
     case "tag_empty":
       return !trimOrNull(row.tag);
     case "description_matches": {
-      const re = safeRegex(arg);
+      const re = safeRegex(arg, "i");
       return re ? re.test(String(row.description ?? "")) : false;
     }
     default:
@@ -381,31 +384,127 @@ export function parseMetsoStyle({ workbook, profile, filePath, signalKindMatcher
   };
 }
 
+// Поля, которые имеют отдельные «обычные» переменные ниже и попадают
+// в attributes явно. Все остальные ключи `columns` рассматриваются как
+// дополнительные опциональные атрибуты сигнала.
+const KOYO_CORE_FIELDS = new Set([
+  "tag",
+  "position",
+  "description",
+  "card_type",
+  "card_slot",
+  "channel_number",
+  "signal_address",
+]);
+
+function deriveCommonTagPrefix({ workbook, perSheet, layout, pattern }) {
+  const re = safeRegex(pattern);
+  if (!re) return null;
+  const prefixes = new Set();
+  for (const sheetName of workbook.SheetNames || []) {
+    const sheetCfg = perSheet[sheetName];
+    if (!sheetCfg) continue;
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const cols = sheetCfg.columns || {};
+    if (!cols.tag) continue;
+    const { headerRow, dataRows } = dataRowsFromSheet(sheet, layout);
+    const columnIndices = findColumnIndices(headerRow, cols);
+    const tagIdx = columnIndices.tag;
+    if (tagIdx < 0) continue;
+    for (const { row } of dataRows) {
+      const tag = trimOrNull(row[tagIdx]);
+      if (!tag) continue;
+      const m = tag.match(re);
+      if (m && m[1]) {
+        prefixes.add(m[1]);
+        if (prefixes.size > 1) return null;
+      }
+    }
+  }
+  if (prefixes.size === 1) {
+    const [only] = prefixes;
+    return only;
+  }
+  return null;
+}
+
 export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher }) {
   const layout = profile.layout || {};
   const perSheet = profile.per_sheet || {};
   const warnings = new Map();
+  const cabinets = [];
   const stations = [];
   const cards = [];
   const channels = [];
   const signals = [];
 
+  warnUnknownBuilds(warnings, profile.builds, "builds");
+
   const filename = path.basename(filePath || "");
   const filenameWithoutExt = filename.replace(/\.[^.]+$/, "");
-  const stationCode = renderTemplate(
-    profile.station_default?.station_code_template || "{filename_without_ext}",
-    { filename_without_ext: filenameWithoutExt }
-  );
+
+  // #8.1.b.fix — определение station_code / cabinet_code в три шага:
+  //   1) общий префикс тегов на всех листах через cabinet.source=tag_prefix;
+  //   2) имя файла без префикса timestamp (`^\d+-`);
+  //   3) имя файла как есть.
+  const cabinetCfg = profile.cabinet || null;
+  const useTagPrefix = cabinetCfg && cabinetCfg.source === "tag_prefix";
+  const tagPrefix = useTagPrefix
+    ? deriveCommonTagPrefix({
+        workbook,
+        perSheet,
+        layout,
+        pattern: cabinetCfg.pattern || "^([A-Za-z]+)_",
+      })
+    : null;
+
+  let stationCode;
+  let cabinetCode = null;
+  if (tagPrefix) {
+    stationCode = tagPrefix;
+    cabinetCode = tagPrefix;
+  } else {
+    const stripped = filenameWithoutExt.replace(/^\d+-/, "");
+    if (stripped && stripped !== filenameWithoutExt) {
+      stationCode = stripped;
+    } else if (profile.station_default?.station_code_template) {
+      stationCode = renderTemplate(profile.station_default.station_code_template, {
+        filename_without_ext: filenameWithoutExt,
+      });
+    } else {
+      stationCode = filenameWithoutExt;
+    }
+  }
+
   const stationName = renderTemplate(
     profile.station_default?.name_template || "ПЛК {station_code}",
     { station_code: stationCode, filename_without_ext: filenameWithoutExt }
   );
+
+  const profileBuilds = new Set(profile.builds || []);
+  const wantCabinet = profileBuilds.has("cabinet") || (cabinetCfg && cabinetCfg.source);
+
+  if (wantCabinet && cabinetCode) {
+    const cabinetName = renderTemplate(
+      cabinetCfg?.name_template || "Шкаф {cabinet_code}",
+      { cabinet_code: cabinetCode }
+    );
+    cabinets.push({
+      type: "cabinet",
+      name: cabinetName,
+      attributes: { cabinet_code: cabinetCode },
+      sourceXlsxSheet: workbook.SheetNames?.[0] ?? "",
+      sourceXlsxRow: 1,
+    });
+  }
 
   if (stationCode) {
     stations.push({
       type: "station",
       name: stationName,
       attributes: { station_code: stationCode },
+      cabinetCabinetCode: cabinetCode,
       sourceXlsxSheet: workbook.SheetNames?.[0] ?? "",
       sourceXlsxRow: 1,
     });
@@ -428,8 +527,62 @@ export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher 
     warnUnknownBuilds(warnings, sheetCfg.builds, `per_sheet.${sheetName}.builds`);
     const explicitSignalKind = trimOrNull(sheetCfg.signal_kind);
 
+    // Заголовки в нормализованной форме — нужны для детекции «прорыва» строки
+    // заголовка в данные, если layout.data_start_row настроен с ошибкой.
+    const headerLabelByField = {};
+    for (const [field, label] of Object.entries(cols)) {
+      headerLabelByField[field] = normalizeHeader(label);
+    }
+
+    // Forward-fill: в реальных «koyo»-таблицах Модуль/Место заполнены только
+    // в первой строке группы; для остальных строк значения нужно тянуть из
+    // предыдущей непустой. Состояние сбрасывается на каждом листе.
+    let lastCardType = null;
+    let lastCardSlot = null;
+
     for (const { row, excelRowNumber } of dataRows) {
       const fields = extractRowFields(row, columnIndices);
+
+      // Header-leak detection: если значения row совпадают с метками
+      // заголовков из YAML — это утечка строки заголовка в данные. Пропускаем
+      // и не обновляем forward-fill состояние, иначе оно «зацепит» мусор.
+      let headerLeakHits = 0;
+      for (const field of ["tag", "card_type", "card_slot", "channel_number"]) {
+        const header = headerLabelByField[field];
+        const value = trimOrNull(fields[field]);
+        if (header && value && normalizeHeader(value) === header) {
+          headerLeakHits += 1;
+        }
+      }
+      if (headerLeakHits >= 2) {
+        aggregateWarning(
+          warnings,
+          "header_row_leak",
+          "Строка похожа на заголовок и пропущена. Проверьте layout.data_start_row.",
+          `${sheetName}:${excelRowNumber}`
+        );
+        continue;
+      }
+
+      // Forward-fill card_type и card_slot из последнего непустого значения
+      // в пределах текущего листа.
+      const rawCardType = trimOrNull(fields.card_type);
+      if (rawCardType !== null) {
+        lastCardType = rawCardType;
+        fields.card_type = rawCardType;
+      } else if (lastCardType !== null) {
+        fields.card_type = lastCardType;
+      }
+      const rawCardSlot = trimOrNull(fields.card_slot);
+      if (rawCardSlot !== null) {
+        lastCardSlot = rawCardSlot;
+        fields.card_slot = rawCardSlot;
+      } else if (lastCardSlot !== null) {
+        fields.card_slot = lastCardSlot;
+      }
+
+      // skip_rows проверяем после forward-fill: пропуск «Резерва» зависит от
+      // description, а оно не подвергается forward-fill.
       const skip = skipRows.some((rule) => rowMatchesSkipCondition(fields, rule.condition));
       if (skip) continue;
 
@@ -503,20 +656,29 @@ export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher 
       }
 
       if (builds.has("signal")) {
+        const attributes = {
+          tag,
+          description,
+          signal_kind: signalKind,
+          signal_kind_raw: signalKindRaw,
+          signal_address: signalAddress,
+          position,
+          card_address: cardAddress,
+          channel: channelNumber,
+          station_code: stationCode,
+        };
+        // Дополнительные опциональные атрибуты сигнала: любая колонка из
+        // sheetCfg.columns, не входящая в KOYO_CORE_FIELDS, попадает в attributes,
+        // только если она не пустая (чтобы не плодить null-ключи).
+        for (const colName of Object.keys(cols)) {
+          if (KOYO_CORE_FIELDS.has(colName)) continue;
+          const val = trimOrNull(fields[colName]);
+          if (val !== null) attributes[colName] = val;
+        }
         signals.push({
           type: "signal",
           name: tag,
-          attributes: {
-            tag,
-            description,
-            signal_kind: signalKind,
-            signal_kind_raw: signalKindRaw,
-            signal_address: signalAddress,
-            position,
-            card_address: cardAddress,
-            channel: channelNumber,
-            station_code: stationCode,
-          },
+          attributes,
           stationCode,
           channelKey: channelRef
             ? `${cardAddress || "*"}::${channelNumber}`
@@ -529,7 +691,7 @@ export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher 
   }
 
   return {
-    cabinets: [],
+    cabinets,
     stations,
     cards,
     channels,
