@@ -75,9 +75,28 @@ profiles:
       header_row: 3
       data_start_row: 4
 
+    # Источник кода шкафа: общий префикс тегов на всех листах до первого «_»
+    # (например, теги SUO_AI_01, SUO_DI_05 дадут cabinet_code="SUO").
+    # Если префиксы не совпадают между листами — узел шкафа не создаётся.
+    cabinet:
+      source: "tag_prefix"
+      pattern: "^([A-Za-z]+)_"
+      name_template: "Шкаф {cabinet_code}"
+
+    # station_code теперь определяется в три шага (см. xlsxParser.parseKoyoStyle):
+    #   1) общий префикс тегов через cabinet.source=tag_prefix;
+    #   2) имя файла без timestamp-префикса (^\d+-);
+    #   3) имя файла как есть.
+    # station_code_template сохранён как опциональный fallback на шаге 3.
     station_default:
-      station_code_template: "{filename_without_ext}"
       name_template: "ПЛК {station_code}"
+
+    builds:
+      - cabinet
+      - station
+      - card
+      - channel
+      - signal
 
     per_sheet:
       AI:
@@ -91,6 +110,12 @@ profiles:
           card_slot: "Место"
           channel_number: "Клемма"
           signal_address: "Память"
+          range_lo_lo: "AI_LoLo"
+          range_lo: "AI_Lo"
+          range_hi: "AI_Hi"
+          range_hi_hi: "AI_HiHi"
+          range_break_addr: "AI_Break"
+          range_eu_addr: "AI_EU"
       DI:
         builds: [ station, card, channel, signal ]
         signal_kind: "DI"
@@ -102,6 +127,8 @@ profiles:
           card_slot: "Место"
           channel_number: "Клемма"
           signal_address: "Память"
+          bit_address: "X"
+          coil_address: "C"
       DO:
         builds: [ station, card, channel, signal ]
         signal_kind: "DO"
@@ -112,6 +139,8 @@ profiles:
           card_slot: "Место"
           channel_number: "Клемма"
           signal_address: "Память"
+          output_address: "Y"
+          coil_address: "C"
       AO:
         builds: [ station, card, channel, signal ]
         signal_kind: "AO"
@@ -122,6 +151,11 @@ profiles:
           card_slot: "Место"
           channel_number: "Клемма"
           signal_address: "Память"
+          cal_4ma_addr: "AI_4ma"
+          cal_20ma_addr: "AI_20ma"
+          pid_cv_addr: "PID_CV"
+          pid_eu_addr: "PID_EU"
+          range_break_addr: "AI_Break"
 
     skip_rows:
       - condition: "description_matches:^Резерв"

@@ -304,7 +304,7 @@ UI «Настройки → Граф знаний → Типы узлов» и R
   "fbc": 2, "ibc": 0, "card_slot": 0
 }
 
-// signal
+// signal (metso-style)
 {
   "signal_kind_raw": "1AI",
   "signal_kind": "AI",
@@ -317,6 +317,45 @@ UI «Настройки → Граф знаний → Типы узлов» и R
 {
   "cabinet_id": "KS-3_IO-06",
   "vendor": "Honeywell"
+}
+```
+
+Для koyo-style сигналов (#8.1.b.fix) могут присутствовать
+дополнительные опциональные поля; пишутся в attributes только
+если соответствующая колонка заполнена:
+
+```json
+// signal (koyo-style AI)
+{
+  "tag": "SUO_AI_01",
+  "description": "Температура подшипника 1",
+  "signal_kind": "AI",
+  "signal_address": "V10000:R",
+  "card_address": "M0",
+  "channel": "0",
+  "station_code": "SUO",
+  "range_lo_lo": "V10100",
+  "range_lo": "V10101",
+  "range_hi": "V10102",
+  "range_hi_hi": "V10103",
+  "range_break_addr": "V10200",
+  "range_eu_addr": "V10300"
+}
+
+// signal (koyo-style DI)
+{
+  "tag": "SUO_DI_05",
+  "signal_address": "B10500.5",
+  "bit_address": "X5",
+  "coil_address": "C5"
+}
+
+// signal (koyo-style DO)
+{
+  "tag": "SUO_DO_01",
+  "signal_address": "B10520.0",
+  "output_address": "Y0",
+  "coil_address": "C100"
 }
 ```
 
@@ -437,6 +476,9 @@ const HIERARCHY_RULES = [
 
 ## История изменений
 
+- 2026-05-19: #8.1.b.fix — расширен список атрибутов сигнала
+  для koyo-style профилей (диапазоны AI, биты DI/DO, coil-адреса,
+  калибровка AO). Подробности — `docs/GRAPH_INGESTION.md`.
 - 2026-05-18: #8.2 — добавлен раздел про HIERARCHY_RULES (см.
   `docs/GRAPH_UI.md`).
 - 2026-05-18: #8.1.e — таблица `graph_node_types`, CRUD-API
