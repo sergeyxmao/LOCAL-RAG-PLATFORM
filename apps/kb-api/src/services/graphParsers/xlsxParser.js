@@ -397,10 +397,18 @@ const KOYO_CORE_FIELDS = new Set([
   "signal_address",
 ]);
 
-function deriveCommonTagPrefix({ workbook, perSheet, layout, pattern }) {
+// Префиксы, совпадающие с именем signal_kind (AI/AO/DI/DO и их варианты),
+// исключаются из подсчёта: они принадлежат самому листу (`AO_00` на листе AO),
+// а не имени шкафа. Без этой фильтрации один лист с нотацией без префикса
+// шкафа ломал бы определение cabinet_code на всём файле.
+const SIGNAL_KIND_LIKE_PREFIXES = new Set([
+  "ai", "ao", "di", "do", "ain", "aout", "din", "dout",
+]);
+
+function deriveMostFrequentTagPrefix({ workbook, perSheet, layout, pattern }) {
   const re = safeRegex(pattern);
   if (!re) return null;
-  const prefixes = new Set();
+  const counts = new Map();
   for (const sheetName of workbook.SheetNames || []) {
     const sheetCfg = perSheet[sheetName];
     if (!sheetCfg) continue;
@@ -416,17 +424,22 @@ function deriveCommonTagPrefix({ workbook, perSheet, layout, pattern }) {
       const tag = trimOrNull(row[tagIdx]);
       if (!tag) continue;
       const m = tag.match(re);
-      if (m && m[1]) {
-        prefixes.add(m[1]);
-        if (prefixes.size > 1) return null;
-      }
+      if (!m || !m[1]) continue;
+      const prefix = m[1];
+      if (SIGNAL_KIND_LIKE_PREFIXES.has(prefix.toLowerCase())) continue;
+      counts.set(prefix, (counts.get(prefix) || 0) + 1);
     }
   }
-  if (prefixes.size === 1) {
-    const [only] = prefixes;
-    return only;
+  if (counts.size === 0) return null;
+  let bestPrefix = null;
+  let bestCount = 0;
+  for (const [prefix, count] of counts) {
+    if (count > bestCount) {
+      bestPrefix = prefix;
+      bestCount = count;
+    }
   }
-  return null;
+  return bestPrefix;
 }
 
 export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher }) {
@@ -444,14 +457,16 @@ export function parseKoyoStyle({ workbook, profile, filePath, signalKindMatcher 
   const filename = path.basename(filePath || "");
   const filenameWithoutExt = filename.replace(/\.[^.]+$/, "");
 
-  // #8.1.b.fix — определение station_code / cabinet_code в три шага:
-  //   1) общий префикс тегов на всех листах через cabinet.source=tag_prefix;
+  // #8.1.b.fix-2 — определение station_code / cabinet_code в три шага:
+  //   1) наиболее частотный префикс тегов среди всех листов через
+  //      cabinet.source=tag_prefix (исключая префиксы, совпадающие с
+  //      signal_kind, чтобы не путать имя шкафа с нотацией листа AO_00);
   //   2) имя файла без префикса timestamp (`^\d+-`);
   //   3) имя файла как есть.
   const cabinetCfg = profile.cabinet || null;
   const useTagPrefix = cabinetCfg && cabinetCfg.source === "tag_prefix";
   const tagPrefix = useTagPrefix
-    ? deriveCommonTagPrefix({
+    ? deriveMostFrequentTagPrefix({
         workbook,
         perSheet,
         layout,
