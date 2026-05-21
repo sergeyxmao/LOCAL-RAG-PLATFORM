@@ -789,7 +789,14 @@ export async function documentRoutes(app) {
         "Qdrant недоступен при удалении документа; продолжаю удаление в Postgres"
       );
     }
-    const removedDocuments = await app.postgresProvider.deleteDocumentsByIds([document.id]);
+    const { removedDocuments, removedGraphNodes } =
+      await app.postgresProvider.deleteDocumentsByIds([document.id]);
+    if (removedGraphNodes > 0) {
+      request.log.info(
+        { documentId: document.id, removedGraphNodes },
+        "Удалены импортные узлы графа при удалении документа"
+      );
+    }
     let removedStoredFile = false;
     const shouldRemoveStoredFile = String(request.query?.removeStoredFile ?? "") === "true";
     const storedRelativePath = String(document.original_file_path || "");
@@ -810,6 +817,7 @@ export async function documentRoutes(app) {
       ok: true,
       document: mapDocumentRow(document),
       removedDocuments,
+      removedGraphNodes,
       removedVectors: qdrantError ? 0 : pointIds.length,
       removedStoredFile,
       qdrantError,
@@ -1016,13 +1024,21 @@ export async function documentRoutes(app) {
     }
 
     await app.qdrantProvider.deletePoints(pointIds);
-    const removedDocuments = await app.postgresProvider.deleteDocumentsByIds(documentIdsToRemove);
+    const { removedDocuments, removedGraphNodes } =
+      await app.postgresProvider.deleteDocumentsByIds(documentIdsToRemove);
+    if (removedGraphNodes > 0) {
+      request.log.info(
+        { documentIds: documentIdsToRemove, removedGraphNodes },
+        "Удалены импортные узлы графа при удалении дублей документов"
+      );
+    }
 
     return {
       ok: true,
       pathPrefix,
       duplicateGroups: groups.length,
       removedDocuments,
+      removedGraphNodes,
       removedVectors: pointIds.length,
       keptDocuments: groups
         .map((group) => ({

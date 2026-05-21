@@ -543,6 +543,22 @@ JSONB).
   `confidence < 0.95` в строке связи появляется индикатор
   «⚠️ Возможно» или «⚠️ Сомнительно». API не менялось.
   Подробности — `docs/GRAPH_UI.md`, раздел «История изменений».
+- ✅ **#8.2.followup-1 (готова 2026-05-21).** Каскадное удаление
+  импортных узлов графа при удалении документа.
+  `DELETE /documents/:id` (и `POST /documents/deduplicate`) теперь
+  в одной транзакции удаляет узлы графа этого документа, у которых
+  `source_document_id = <doc>` И `author LIKE 'import:%'`, ПЕРЕД
+  фактическим `DELETE FROM documents`. Ручные узлы
+  (`author = 'user:manual'`) и узлы других документов не трогаются —
+  их `source_document_id` обнуляется штатным FK `ON DELETE SET
+  NULL`. Рёбра удалённых узлов уходят каскадом по существующему FK
+  `graph_edges.{source,target}_node_id ON DELETE CASCADE`. Структура
+  БД не меняется (FK SET NULL оставлен как страховка). В ответе
+  появилось поле `removedGraphNodes: <number>`. Новый метод
+  `PostgresProvider.deleteImportedGraphNodesByDocumentIds()` +
+  обновлён `deleteDocumentsByIds()` под транзакцию. Подробности —
+  `docs/GRAPH_SCHEMA.md`, раздел «Удаление узлов при удалении
+  документа».
 - ⬜ #8.3 Подключение графа к retrieval/answer.
 
 ## Behavior changes (#8.1.c.fix-2, 2026-05-18)
