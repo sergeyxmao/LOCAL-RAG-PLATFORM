@@ -278,7 +278,13 @@ Phase — единый источник правды для UI. `status` ост�
   card_slot}`. Для `signal`: `{signal_kind, channel, loop_tag,
   device_tag}`. Для `cabinet`: `{cabinet_id, vendor}`;
 - `source_document_id UUID REFERENCES documents(id) ON DELETE SET NULL`
-  — документ-источник;
+  — документ-источник. FK SET NULL — страховка для не-import узлов:
+  при `DELETE /documents/:id` импортные узлы (`author LIKE
+  'import:%'`) удаляются явным `DELETE` в транзакции
+  (`PostgresProvider.deleteImportedGraphNodesByDocumentIds`), а
+  ручные узлы (`user:manual`) сохраняются и теряют только ссылку
+  на исходный документ. Подробности — `docs/GRAPH_SCHEMA.md`,
+  раздел «Удаление узлов при удалении документа»;
 - `source_page_number INTEGER`, `source_xlsx_sheet TEXT`,
   `source_xlsx_row INTEGER` — для трассировки до места в исходных
   данных;
@@ -402,6 +408,14 @@ CRUD через REST API `/api/v2/graph/node-types`:
 
 ## История изменений
 
+- 2026-05-21: #8.2.followup-1 — `DELETE /documents/:id` удаляет
+  импортные узлы графа документа (`graph_nodes.source_document_id =
+  <doc> AND author LIKE 'import:%'`) в одной транзакции до
+  удаления документа. Структура БД не меняется: FK
+  `graph_nodes.source_document_id` остаётся `ON DELETE SET NULL`
+  как страховка для ручных узлов (`user:manual`), которые
+  сохраняются и теряют только ссылку на исходный документ.
+  Подробности — `docs/GRAPH_SCHEMA.md`.
 - 2026-05-18: #8.1.e — новая таблица `graph_node_types` для
   справочника типов узлов графа (CRUD через UI/API,
   bootstrap встроенных типов, `usage_count` через LEFT JOIN на

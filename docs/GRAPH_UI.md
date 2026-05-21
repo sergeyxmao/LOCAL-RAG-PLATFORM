@@ -101,6 +101,16 @@ has_channel → канал» (parent → child, backward).
 документ`, но документ — это RAG-сущность, не часть графа АСУ ТП.
 Удалять документ при удалении сигнала — неправильно.
 
+Помимо ручного hard-delete узлов через UI, есть **автоматическое
+удаление импортных узлов при удалении исходного документа**
+(`DELETE /documents/:id` в БЗ): узлы с
+`source_document_id = <doc>` и `author LIKE 'import:%'` удаляются
+в той же транзакции, что и документ. Рёбра уходят каскадом.
+Ручные узлы (`user:manual`) сохраняются — их
+`source_document_id` обнуляется штатным FK `ON DELETE SET NULL`.
+Подробности — `docs/GRAPH_SCHEMA.md`, раздел «Удаление узлов при
+удалении документа».
+
 ### 4. Soft archive vs hard delete
 
 В графе **сохраняются оба механизма**:
@@ -464,3 +474,15 @@ UI. В БД остаются английские коды (`installed_in`,
     индикатор «⚠️ Возможно» (0.5—0.95) или «⚠️ Сомнительно»
     (< 0.5).
   - API не менялось; все изменения только во фронте (`uiV2Graph.js`).
+- **2026-05-21 (#8.2.followup-1).** Каскадное удаление узлов графа
+  при удалении документа. При `DELETE /documents/:id` (и
+  `POST /documents/deduplicate`) в той же транзакции удаляются
+  импортные узлы графа этого документа — `source_document_id =
+  <doc>` И `author LIKE 'import:%'`. Ручные узлы (`user:manual`)
+  сохраняются, их `source_document_id` обнуляется штатным FK
+  `ON DELETE SET NULL`. Рёбра уходят каскадом по FK. В ответе
+  появилось поле `removedGraphNodes: <number>`. Реализация — в
+  `PostgresProvider.deleteImportedGraphNodesByDocumentIds()` +
+  обновлённом `deleteDocumentsByIds()`. UI «Граф знаний» не
+  менялся; soft-archive (`DELETE /api/v2/graph/nodes/:id`) и
+  ручной hard-delete через UI работают как раньше.

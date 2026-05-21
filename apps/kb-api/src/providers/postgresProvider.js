@@ -3764,20 +3764,62 @@ export class PostgresProvider {
     return result.rows;
   }
 
-  async deleteDocumentsByIds(documentIds) {
+  // Удаляет импортные узлы графа (author LIKE 'import:%'), у которых
+  // source_document_id совпадает с одним из переданных documentIds.
+  // Рёбра удалённых узлов уйдут каскадом через FK
+  // graph_edges.{source,target}_node_id ON DELETE CASCADE.
+  // Ручные узлы (author = 'user:manual' и любой не-import: автор) не трогаем —
+  // их source_document_id обнулится штатным FK ON DELETE SET NULL,
+  // когда документ будет удалён.
+  // Принимает опциональный pg-клиент, чтобы можно было вызывать в общей
+  // транзакции вместе с DELETE FROM documents.
+  async deleteImportedGraphNodesByDocumentIds(documentIds, { client } = {}) {
     if (!Array.isArray(documentIds) || documentIds.length === 0) {
       return 0;
     }
-
-    const result = await this.pool.query(
+    const executor = client ?? this.pool;
+    const result = await executor.query(
       `
-      DELETE FROM documents
-      WHERE id = ANY($1::uuid[])
+      DELETE FROM graph_nodes
+      WHERE source_document_id = ANY($1::uuid[])
+        AND author LIKE 'import:%'
       `,
       [documentIds]
     );
-
     return result.rowCount ?? 0;
+  }
+
+  async deleteDocumentsByIds(documentIds) {
+    if (!Array.isArray(documentIds) || documentIds.length === 0) {
+      return { removedDocuments: 0, removedGraphNodes: 0 };
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const removedGraphNodes = await this.deleteImportedGraphNodesByDocumentIds(
+        documentIds,
+        { client }
+      );
+
+      const result = await client.query(
+        `
+        DELETE FROM documents
+        WHERE id = ANY($1::uuid[])
+        `,
+        [documentIds]
+      );
+      const removedDocuments = result.rowCount ?? 0;
+
+      await client.query("COMMIT");
+      return { removedDocuments, removedGraphNodes };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async clearDocumentContent(documentId) {
