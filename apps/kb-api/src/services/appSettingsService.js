@@ -505,6 +505,28 @@ export class AppSettingsService {
     return next;
   }
 
+  async getGenerationSettings() {
+    const raw = (await this.getRawValue("generation")) || {};
+    const n = Number(raw.maxTokens);
+    const maxTokens = Number.isFinite(n) ? Math.max(256, Math.min(8192, Math.trunc(n))) : 4096;
+    return { maxTokens };
+  }
+
+  async updateGenerationSettings(patch) {
+    const current = await this.getGenerationSettings();
+    let maxTokens = current.maxTokens;
+    if (patch && patch.maxTokens !== undefined) {
+      const n = Number(patch.maxTokens);
+      if (!Number.isFinite(n) || n < 256 || n > 8192) {
+        throw Object.assign(new Error("maxTokens должен быть от 256 до 8192"), { statusCode: 400 });
+      }
+      maxTokens = Math.trunc(n);
+    }
+    const next = { maxTokens };
+    await this.setRawValue("generation", next);
+    return next;
+  }
+
   async updateOcrSettings(patch) {
     const current = await this.getOcrSettings();
     const next = {
@@ -524,7 +546,8 @@ export class AppSettingsService {
     const theme = await this.getTheme();
     const retrieval = await this.getRetrievalPublic();
     const systemPrompt = await this.getSystemPrompt();
-    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt };
+    const generation = await this.getGenerationSettings();
+    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt, generation };
   }
 }
 

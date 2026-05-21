@@ -98,6 +98,22 @@ function mapSessionRow(row) {
   };
 }
 
+function isEmptyReasoningResult(result) {
+  if (!result || result.aborted) return false;
+  const hasContent = typeof result.content === "string" && result.content.trim().length > 0;
+  if (hasContent) return false;
+  return result.finishReason === "length" || result.thinkingMode === "reasoning";
+}
+
+function buildEmptyReasoningMessage(maxTokens) {
+  const limitText = Number.isFinite(maxTokens) ? `${maxTokens}` : "текущий";
+  return (
+    `Модель израсходовала весь лимит токенов на рассуждение (${limitText}) ` +
+    `и не успела сформировать ответ. Увеличьте «Максимальную длину ответа» ` +
+    `в настройках или упростите вопрос.`
+  );
+}
+
 function compactSourceForStorage(source) {
   if (!source || typeof source !== "object") {
     return null;
@@ -500,6 +516,7 @@ export class ChatSessionService {
 
     const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
     const messages = await this.buildCloudMessages({ question, sources, history });
+    const maxTokens = await this.resolveCloudMaxTokens();
 
     try {
       const result = await this.cloudChatProvider.generate({
@@ -507,24 +524,32 @@ export class ChatSessionService {
         model: cloud.model,
         baseUrl: cloud.baseUrl,
         apiKey: cloud.apiKey,
-        maxTokens: 1024,
+        maxTokens,
       });
       const fallbackNote = resolved.fallbackUsed
         ? "Выбранный провайдер удалён — использован провайдер по умолчанию."
         : null;
+      const emptyReasoning = isEmptyReasoningResult(result);
       return {
-        content: result.content,
+        content: emptyReasoning ? buildEmptyReasoningMessage(maxTokens) : result.content,
         sources,
         metadata: {
           provider: resolved.providerKey,
           providerName: cloud.name || "Cloud",
           model: result.model || cloud.model,
-          mode: "llm",
+          mode: emptyReasoning ? "empty-reasoning" : "llm",
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
           tokensIn: result.usage?.promptTokens ?? 0,
           tokensOut: result.usage?.completionTokens ?? 0,
+          ...(emptyReasoning
+            ? {
+                finishReason: result.finishReason || null,
+                thinkingMode: result.thinkingMode || null,
+                maxTokensUsed: maxTokens,
+              }
+            : {}),
           ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
         },
       };
@@ -549,6 +574,18 @@ export class ChatSessionService {
           },
         },
       };
+    }
+  }
+
+  async resolveCloudMaxTokens() {
+    if (!this.appSettingsService || typeof this.appSettingsService.getGenerationSettings !== "function") {
+      return 4096;
+    }
+    try {
+      const { maxTokens } = await this.appSettingsService.getGenerationSettings();
+      return Number.isFinite(maxTokens) ? maxTokens : 4096;
+    } catch (err) {
+      return 4096;
     }
   }
 
@@ -794,6 +831,7 @@ export class ChatSessionService {
     const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
     const tail = history.filter((m) => m.role !== "user" || m.content.trim() !== question);
     const messages = await this.buildCloudMessages({ question, sources, history: tail });
+    const maxTokens = await this.resolveCloudMaxTokens();
 
     try {
       const result = await this.cloudChatProvider.generateStream({
@@ -801,11 +839,23 @@ export class ChatSessionService {
         model: cloud.model,
         baseUrl: cloud.baseUrl,
         apiKey: cloud.apiKey,
-        maxTokens: 1024,
+        maxTokens,
         onToken,
         abortSignal,
       });
-      const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
+      const emptyReasoning = isEmptyReasoningResult(result);
+      let finalContent;
+      let mode;
+      if (result.aborted) {
+        finalContent = result.content || "(прервано пользователем)";
+        mode = "aborted";
+      } else if (emptyReasoning) {
+        finalContent = buildEmptyReasoningMessage(maxTokens);
+        mode = "empty-reasoning";
+      } else {
+        finalContent = result.content || "";
+        mode = "llm";
+      }
       const fallbackNote = resolved.fallbackUsed
         ? "Выбранный провайдер удалён — использован провайдер по умолчанию."
         : null;
@@ -817,13 +867,20 @@ export class ChatSessionService {
           provider: resolved.providerKey,
           providerName: cloud.name || "Cloud",
           model: result.model || cloud.model,
-          mode: result.aborted ? "aborted" : "llm",
+          mode,
           aborted: result.aborted === true,
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
           tokensIn: result.usage?.promptTokens ?? 0,
           tokensOut: result.usage?.completionTokens ?? 0,
+          ...(emptyReasoning
+            ? {
+                finishReason: result.finishReason || null,
+                thinkingMode: result.thinkingMode || null,
+                maxTokensUsed: maxTokens,
+              }
+            : {}),
           ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
         },
       });
