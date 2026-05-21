@@ -5,6 +5,10 @@ import mammoth from "mammoth";
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import xlsx from "xlsx";
 
+import { buildPageTextWithSpacing } from "./pdfTextSpacing.js";
+
+export { buildPageTextWithSpacing, repairGluedSegment } from "./pdfTextSpacing.js";
+
 function normalizeExtractedText(text) {
   return text
     .replace(/\r\n/g, "\n")
@@ -36,11 +40,7 @@ async function extractPdfText(fullPath) {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const textContent = await page.getTextContent();
-    const pageText = textContent.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const pageText = buildPageTextWithSpacing(textContent.items);
 
     if (pageText && pageText.length >= PDF_EMPTY_PAGE_THRESHOLD) {
       pageTexts.push({ page: pageNumber, text: pageText });
