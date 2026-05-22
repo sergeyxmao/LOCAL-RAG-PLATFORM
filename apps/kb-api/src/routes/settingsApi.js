@@ -353,6 +353,116 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get(
+    "/api/v2/settings/generation",
+    {
+      schema: {
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              generation: {
+                type: "object",
+                properties: {
+                  maxTokens: { type: "integer" },
+                },
+                required: ["maxTokens"],
+                additionalProperties: false,
+              },
+            },
+            required: ["ok", "generation"],
+          },
+          500: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              error: { type: "string" },
+            },
+            required: ["ok", "error"],
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const generation = await app.appSettingsService.getGenerationSettings();
+        return { ok: true, generation };
+      } catch (error) {
+        request.log.error({ err: error }, "Не удалось получить настройки генерации");
+        return respondError(reply, 500, error.message || "Не удалось получить настройки генерации");
+      }
+    }
+  );
+
+  app.patch(
+    "/api/v2/settings/generation",
+    {
+      attachValidation: true,
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            maxTokens: { type: "integer", minimum: 256, maximum: 8192 },
+          },
+          additionalProperties: false,
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              generation: {
+                type: "object",
+                properties: {
+                  maxTokens: { type: "integer" },
+                },
+                required: ["maxTokens"],
+                additionalProperties: false,
+              },
+            },
+            required: ["ok", "generation"],
+          },
+          400: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              error: { type: "string" },
+            },
+            required: ["ok", "error"],
+          },
+          500: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              error: { type: "string" },
+            },
+            required: ["ok", "error"],
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (request.validationError) {
+        return respondError(reply, 400, "maxTokens должен быть целым числом от 256 до 8192");
+      }
+      try {
+        const body = request.body ?? {};
+        const generation = await app.appSettingsService.updateGenerationSettings({
+          maxTokens: body.maxTokens,
+        });
+        return { ok: true, generation };
+      } catch (error) {
+        const code = error.statusCode || 500;
+        if (code !== 500) {
+          return respondError(reply, code, error.message);
+        }
+        request.log.error({ err: error }, "Не удалось сохранить настройки генерации");
+        return respondError(reply, 500, error.message || "Не удалось сохранить настройки генерации");
+      }
+    }
+  );
+
   app.patch("/api/v2/settings/ocr", async (request, reply) => {
     try {
       const body = request.body ?? {};

@@ -705,6 +705,9 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         indexingSave: document.getElementById("cfgIndexingSave"),
         indexingBanner: document.getElementById("cfgIndexingBanner"),
         indexingStatus: document.getElementById("cfgIndexingStatus"),
+        generationMaxTokens: document.getElementById("cfgGenerationMaxTokens"),
+        generationSave: document.getElementById("cfgGenerationSave"),
+        generationBanner: document.getElementById("cfgGenerationBanner"),
         servicesRefresh: document.getElementById("cfgServicesRefresh"),
         themeSelect: document.getElementById("cfgThemeDefault"),
         themeSave: document.getElementById("cfgThemeSave"),
@@ -1123,6 +1126,32 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         }).then(function () { dom.indexingSave.disabled = false; });
       }
 
+      function loadGeneration() {
+        if (!dom.generationMaxTokens) return;
+        return api("GET", "/api/v2/settings/generation").then(function (data) {
+          var n = (data.generation && Number(data.generation.maxTokens)) || 4096;
+          dom.generationMaxTokens.value = String(n);
+        }).catch(function (err) {
+          if (dom.generationBanner) setBanner(dom.generationBanner, "Ошибка загрузки: " + err.message, "error");
+        });
+      }
+
+      function saveGeneration() {
+        if (!dom.generationMaxTokens || !dom.generationSave) return;
+        var n = Number(dom.generationMaxTokens.value);
+        if (!Number.isFinite(n) || n < 256 || n > 8192) {
+          setBanner(dom.generationBanner, "Значение должно быть от 256 до 8192", "error");
+          return;
+        }
+        dom.generationSave.disabled = true;
+        api("PATCH", "/api/v2/settings/generation", { maxTokens: Math.trunc(n) }).then(function () {
+          setBanner(dom.generationBanner, "Сохранено. Применяется к новым ответам облачных моделей.", "success");
+          return loadGeneration();
+        }).catch(function (err) {
+          setBanner(dom.generationBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () { dom.generationSave.disabled = false; });
+      }
+
       function loadOcr() {
         if (!dom.ocrAutoEmpty) return;
         return api("GET", "/api/v2/settings/ocr").then(function (data) {
@@ -1537,6 +1566,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         if (dom.diagRun) dom.diagRun.addEventListener("click", runDiagnostics);
         if (dom.ocrSave) dom.ocrSave.addEventListener("click", saveOcr);
         if (dom.indexingSave) dom.indexingSave.addEventListener("click", saveIndexing);
+        if (dom.generationSave) dom.generationSave.addEventListener("click", saveGeneration);
         dom.themeSave.addEventListener("click", saveTheme);
         dom.maintRebuild.addEventListener("click", triggerRebuild);
         dom.maintReset.addEventListener("click", triggerReset);
@@ -1599,6 +1629,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         loadServices();
         loadOcr();
         loadIndexing();
+        loadGeneration();
         loadBackups();
       }
 
@@ -2824,6 +2855,26 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           <p class="settings-hint">Ключи хранятся в БД проекта в plaintext (см. <span class="mono">CLOUD_PROVIDER.md</span>). В API возвращаются замаскированными, в логи не пишутся. В чате выбор провайдера — в шапке. Принимаются только латинские/ASCII-символы — кириллица в ключе вызовет понятную ошибку.</p>
         </div>
       </form>
+
+      <div class="settings-card" id="section-generation">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.settings}<span>Длина ответа модели</span></div>
+          <span class="settings-hint">Применяется к облачным провайдерам</span>
+        </div>
+        <div class="settings-card__body">
+          <div class="settings-row">
+            <div class="settings-field">
+              <label for="cfgGenerationMaxTokens">Максимальная длина ответа модели (токенов)</label>
+              <input class="settings-input" id="cfgGenerationMaxTokens" type="number" min="256" max="8192" step="1" />
+            </div>
+            <div class="settings-field" style="justify-content:end">
+              <button type="button" class="btn btn--accent" id="cfgGenerationSave" style="align-self:end">${ICONS.check}<span>Сохранить</span></button>
+            </div>
+          </div>
+          <div class="settings-banner" id="cfgGenerationBanner"></div>
+          <p class="settings-hint">Сколько токенов модель может потратить на ответ. Для reasoning-моделей (например <span class="mono">deepseek-v4-pro</span>) нужен запас — рассуждение тратит токены из этого лимита, и при низком значении ответ может прийти пустым. Допустимый диапазон <strong>256–8192</strong>, рекомендуется <strong>4096</strong> и выше. Больший лимит — дольше ответ и больше расход токенов облака.</p>
+        </div>
+      </div>
       </div>
 
       <div class="settings-tab-panel" data-settings-panel="services">

@@ -195,7 +195,7 @@ export class CloudChatProvider {
     model,
     baseUrl,
     apiKey,
-    maxTokens = 1024,
+    maxTokens = 4096,
     temperature = 0.2,
     abortSignal,
     timeoutMs,
@@ -257,7 +257,7 @@ export class CloudChatProvider {
           model: String(model).trim(),
           messages,
           temperature,
-          max_tokens: Math.max(1, Math.min(4096, Number(maxTokens) || 1024)),
+          max_tokens: Math.max(1, Math.min(8192, Number(maxTokens) || 4096)),
           stream: false,
         }),
         signal: controller.signal,
@@ -288,6 +288,8 @@ export class CloudChatProvider {
 
     const content = extractContent(payload);
     const thinkingMode = detectThinkingMode(payload);
+    const choice = Array.isArray(payload?.choices) ? payload.choices[0] : null;
+    const finishReason = choice?.finish_reason || choice?.finishReason || null;
     if (!content || !content.trim()) {
       if (thinkingMode) {
         return {
@@ -295,6 +297,7 @@ export class CloudChatProvider {
           usage: extractUsage(payload),
           model: payload?.model || model,
           thinkingMode,
+          finishReason,
         };
       }
       throw new CloudProviderError(
@@ -308,6 +311,7 @@ export class CloudChatProvider {
       usage: extractUsage(payload),
       model: payload?.model || model,
       thinkingMode,
+      finishReason,
     };
   }
 
@@ -316,7 +320,7 @@ export class CloudChatProvider {
     model,
     baseUrl,
     apiKey,
-    maxTokens = 1024,
+    maxTokens = 4096,
     temperature = 0.2,
     onToken,
     abortSignal,
@@ -374,7 +378,7 @@ export class CloudChatProvider {
           model: String(model).trim(),
           messages,
           temperature,
-          max_tokens: Math.max(1, Math.min(4096, Number(maxTokens) || 1024)),
+          max_tokens: Math.max(1, Math.min(8192, Number(maxTokens) || 4096)),
           stream: true,
           stream_options: { include_usage: true },
         }),
@@ -383,7 +387,12 @@ export class CloudChatProvider {
     } catch (error) {
       clearTimeout(timer);
       if (userAborted) {
-        return { content: "", aborted: true, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
+        return {
+          content: "",
+          aborted: true,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          finishReason: null,
+        };
       }
       throw classifyNetworkError(error);
     }
@@ -401,6 +410,7 @@ export class CloudChatProvider {
     let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let detectedModel = model;
     let thinkingMode = null;
+    let finishReason = null;
 
     function parseSseEvent(rawEvent) {
       const dataLines = [];
@@ -432,7 +442,14 @@ export class CloudChatProvider {
           if (!parsed) continue;
           if (parsed.done) {
             clearTimeout(timer);
-            return { content: fullContent, usage, model: detectedModel, thinkingMode, aborted: false };
+            return {
+              content: fullContent,
+              usage,
+              model: detectedModel,
+              thinkingMode,
+              finishReason,
+              aborted: false,
+            };
           }
           const payload = parsed.payload;
           if (payload?.model) detectedModel = payload.model;
@@ -448,6 +465,8 @@ export class CloudChatProvider {
           if (delta.reasoning_content || delta.reasoning) {
             thinkingMode = "reasoning";
           }
+          const chunkFinish = choice?.finish_reason || choice?.finishReason || null;
+          if (chunkFinish) finishReason = chunkFinish;
           if (payload?.usage) {
             const u = payload.usage;
             usage = {
@@ -461,13 +480,27 @@ export class CloudChatProvider {
     } catch (error) {
       clearTimeout(timer);
       if (userAborted || controller.signal.aborted) {
-        return { content: fullContent, usage, model: detectedModel, thinkingMode, aborted: true };
+        return {
+          content: fullContent,
+          usage,
+          model: detectedModel,
+          thinkingMode,
+          finishReason,
+          aborted: true,
+        };
       }
       throw classifyNetworkError(error);
     }
 
     clearTimeout(timer);
-    return { content: fullContent, usage, model: detectedModel, thinkingMode, aborted: userAborted };
+    return {
+      content: fullContent,
+      usage,
+      model: detectedModel,
+      thinkingMode,
+      finishReason,
+      aborted: userAborted,
+    };
   }
 
   async testConnection({ baseUrl, apiKey, model }) {

@@ -195,8 +195,19 @@ Bag-O-Settings для произвольных настроек проекта. 
 - `cloudProvider` → `{ name, baseUrl, apiKey, model, useByDefault }`. См.
   `docs/CLOUD_PROVIDER.md`. **Важно:** `apiKey` хранится в plaintext. В API
   наружу всегда возвращается маска (`sk-•••••a3f9`).
+- `cloudProviders` → `{ providers: [...], defaultProviderId }`. Массив
+  облачных провайдеров (полировка #4). См. `docs/CLOUD_PROVIDER.md`.
 - `theme` → `{ defaultTheme: 'dark' | 'light' | 'system' }`. Применяется как
   серверный дефолт для пользователей без `localStorage.localrag.theme`.
+- `indexing` → `{ concurrency: 1..4 }`. Параллелизм пайплайна индексации.
+  Раздел ниже.
+- `generation` → `{ maxTokens: 256..8192 }`. Максимальная длина ответа
+  облачных моделей (default 4096). Раздел ниже.
+- `ocr` → `{ autoOcrEmptyPages, ocrAll }`. Настройки OCR.
+- `retrieval` → переопределения параметров retrieval (semantic/bm25/fusion/
+  reranking) поверх `config/retrieval.yaml`.
+- `systemPrompt` → `{ template }` или `null`. Кастомный системный промпт.
+- `migrations` → `{ [name]: true }`. Флаги выполненных миграций.
 
 Колонка `chat_sessions.provider`:
 
@@ -258,6 +269,24 @@ Phase — единый источник правды для UI. `status` ост�
   индексации» в Настройки → Сервисы. `setMax(n)` применяется мгновенно.
 - При старте `kb-api` значение читается и передаётся в конструктор
   `IngestionService`.
+
+## app_settings.generation
+
+Ключ `generation` в `app_settings`:
+
+```json
+{ "maxTokens": 4096 }
+```
+
+- `maxTokens` — целое в диапазоне 256..8192 (default 4096). Максимальное
+  число токенов, которые облачная модель тратит на ответ (включая
+  reasoning-токены у моделей с thinking-режимом).
+- Меняется через `PATCH /api/v2/settings/generation` или UI «Длина ответа
+  модели» в Настройки → Модели и облако.
+- Применяется в `chatSessionService` через `resolveCloudMaxTokens()` →
+  передаётся в `cloudChatProvider.generate` и `generateStream`.
+- На локальную Ollama-генерацию не влияет. См. `docs/CLOUD_PROVIDER.md`,
+  раздел «Максимальная длина ответа».
 
 ## Таблицы графа знаний АСУ ТП (#8.1.a)
 
