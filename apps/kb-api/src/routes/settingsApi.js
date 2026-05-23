@@ -540,12 +540,104 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get("/api/v2/settings/reranking", async (request, reply) => {
+    try {
+      const reranking = await app.appSettingsService.getRerankingPublic();
+      const defaults = {
+        localUrl: app.config.reranker?.localUrl || "",
+        jinaModel: app.config.reranker?.jinaModel || "",
+      };
+      return { ok: true, reranking, defaults };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки reranking");
+      return respondError(reply, 500, error.message || "Не удалось получить настройки reranking");
+    }
+  });
+
+  app.patch(
+    "/api/v2/settings/reranking",
+    {
+      attachValidation: true,
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            provider: { type: "string", enum: ["heuristic", "jina", "local"] },
+            jinaApiKey: { type: "string", maxLength: 512 },
+            localUrl: { type: "string", maxLength: 512 },
+            clearJinaApiKey: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (request.validationError) {
+        return respondError(reply, 400, "Некорректные параметры reranking: укажите provider=jina|local|heuristic.");
+      }
+      try {
+        const body = request.body ?? {};
+        const reranking = await app.appSettingsService.updateRerankingSettings(body);
+        return { ok: true, reranking };
+      } catch (error) {
+        const code = error.statusCode || 500;
+        if (code !== 500) {
+          return respondError(reply, code, error.message);
+        }
+        request.log.error({ err: error }, "Не удалось сохранить настройки reranking");
+        return respondError(reply, 500, error.message || "Не удалось сохранить настройки reranking");
+      }
+    }
+  );
+
+  app.get("/api/v2/settings/reranking/status", async (request, reply) => {
+    try {
+      const settings = await app.appSettingsService.getRerankingSettings();
+      const provider = app.rerankerProvider;
+      const localUrl = settings.localUrl || app.config.reranker?.localUrl || "";
+      const local = provider
+        ? await provider.pingLocal(localUrl, 3500)
+        : { ok: false, error: "Reranker provider не инициализирован" };
+      const jinaConfigured = Boolean(settings.jinaApiKey && settings.jinaApiKey.trim());
+      let jina;
+      if (!jinaConfigured) {
+        jina = { ok: false, configured: false, error: "ключ не задан" };
+      } else if (provider) {
+        const result = await provider.pingJina({
+          apiKey: settings.jinaApiKey,
+          url: app.config.reranker?.jinaUrl,
+          model: app.config.reranker?.jinaModel,
+          timeoutMs: 5000,
+        });
+        jina = { configured: true, ...result };
+      } else {
+        jina = { ok: false, configured: true, error: "Reranker provider не инициализирован" };
+      }
+      return {
+        ok: true,
+        provider: settings.provider,
+        localUrl,
+        services: { local, jina },
+      };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось проверить статус reranking");
+      return respondError(reply, 500, error.message || "Не удалось проверить статус reranking");
+    }
+  });
+
   app.get("/api/v2/settings/services", async (request, reply) => {
     const ollamaBase = app.config.models.chat.base_url;
-    const [postgres, qdrant, ollama] = await Promise.all([
+    const rerankingSettings = await app.appSettingsService
+      .getRerankingSettings()
+      .catch(() => ({ provider: "heuristic", localUrl: "", jinaApiKey: "" }));
+    const localRerankerUrl = rerankingSettings.localUrl || app.config.reranker?.localUrl || "";
+    const [postgres, qdrant, ollama, reranker] = await Promise.all([
       checkPostgres(app.postgresProvider),
       checkQdrant(app.qdrantProvider),
       checkOllama(ollamaBase),
+      app.rerankerProvider
+        ? app.rerankerProvider.pingLocal(localRerankerUrl, 3500)
+        : Promise.resolve({ ok: false, error: "Reranker provider не инициализирован" }),
     ]);
     return {
       ok: true,
@@ -554,6 +646,7 @@ export async function settingsApiRoutes(app) {
         postgres: postgres,
         qdrant: qdrant,
         ollama: { ...ollama, baseUrl: ollamaBase },
+        reranker: { ...reranker, baseUrl: localRerankerUrl, provider: rerankingSettings.provider },
       },
     };
   });

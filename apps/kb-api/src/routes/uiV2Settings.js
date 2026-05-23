@@ -659,6 +659,9 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         settings: null,
         models: null,
         retrieval: null,
+        reranking: null,
+        rerankingDefaults: null,
+        rerankingStatus: null,
         cloudDraft: null,
         cloudDirty: false,
         providerEditId: null,
@@ -685,6 +688,17 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         retrievalSave: document.getElementById("retrievalSave"),
         retrievalReset: document.getElementById("retrievalReset"),
         retrievalBanner: document.getElementById("retrievalBanner"),
+        rerankProvider: document.getElementById("cfgRerankProvider"),
+        rerankProviderHint: document.getElementById("cfgRerankProviderHint"),
+        rerankLocalUrl: document.getElementById("cfgRerankLocalUrl"),
+        rerankJinaKey: document.getElementById("cfgRerankJinaKey"),
+        rerankSave: document.getElementById("cfgRerankSave"),
+        rerankCheck: document.getElementById("cfgRerankCheck"),
+        rerankClearKey: document.getElementById("cfgRerankClearJinaKey"),
+        rerankBanner: document.getElementById("rerankBanner"),
+        rerankServiceStatus: document.getElementById("rerankServiceStatus"),
+        rerankStatusHint: document.getElementById("rerankingStatusHint"),
+        rerankPrivacyBanner: document.getElementById("rerankPrivacyBanner"),
         promptTemplate: document.getElementById("cfgPromptTemplate"),
         promptSave: document.getElementById("cfgPromptSave"),
         promptReset: document.getElementById("cfgPromptReset"),
@@ -998,6 +1012,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
           { key: "postgres", label: "PostgreSQL" },
           { key: "qdrant", label: "Qdrant" },
           { key: "ollama", label: "Ollama" },
+          { key: "reranker", label: "Reranker (локальный)" },
         ];
         entries.forEach(function (e) {
           var s = state.services[e.key] || {};
@@ -1051,6 +1066,138 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         }).catch(function (err) {
           setBanner(dom.retrievalBanner, "Не удалось сбросить: " + err.message, "error");
         });
+      }
+
+      function rerankerProviderHint(provider) {
+        if (provider === "jina") return "Jina API: точно, но фрагменты уходят в облако. Требует API-ключ.";
+        if (provider === "local") return "Локальный bge-reranker-base на CPU: приватно, ~0.3–1.5 с на запрос на слабом ноутбуке.";
+        return "Эвристика: без модели — взвешенные суммы fusion/semantic/lexical скоров. Самый быстрый режим. Используется как fallback.";
+      }
+
+      function renderRerankingForm() {
+        if (!dom.rerankProvider) return;
+        var data = state.reranking || {};
+        var provider = data.provider || "heuristic";
+        dom.rerankProvider.value = provider;
+        if (dom.rerankProviderHint) {
+          dom.rerankProviderHint.textContent = rerankerProviderHint(provider);
+        }
+        if (dom.rerankLocalUrl) {
+          dom.rerankLocalUrl.value = data.localUrl || (state.rerankingDefaults && state.rerankingDefaults.localUrl) || "";
+          dom.rerankLocalUrl.placeholder = (state.rerankingDefaults && state.rerankingDefaults.localUrl) || "http://localrag-reranker:8090";
+        }
+        if (dom.rerankJinaKey) {
+          dom.rerankJinaKey.value = data.jinaApiKey || "";
+        }
+        if (dom.rerankPrivacyBanner) {
+          dom.rerankPrivacyBanner.style.display = provider === "jina" ? "" : "none";
+        }
+      }
+
+      function renderRerankingStatus() {
+        if (!dom.rerankServiceStatus) return;
+        var status = state.rerankingStatus;
+        if (!status) {
+          dom.rerankServiceStatus.innerHTML = '<div class="settings-hint">Статус сервисов будет проверен после «Сохранить» или «Проверить доступность».</div>';
+          if (dom.rerankStatusHint) dom.rerankStatusHint.textContent = "статус не проверен";
+          return;
+        }
+        var local = status.services && status.services.local ? status.services.local : { ok: false };
+        var jina = status.services && status.services.jina ? status.services.jina : { ok: false, configured: false };
+        var localBadge = local.ok
+          ? '<span class="service-dot service-dot--ok"></span> Локальный reranker: доступен'
+          : '<span class="service-dot service-dot--fail"></span> Локальный reranker: ' + escapeHtml(local.error || ("HTTP " + (local.status || "?")));
+        var localExtra = local.details
+          ? ' <span class="settings-hint mono">' + escapeHtml(local.details.model || "") + (local.details.modelLoaded ? " (загружена)" : " (модель ещё грузится)") + '</span>'
+          : "";
+        var jinaBadge;
+        if (!jina.configured) {
+          jinaBadge = '<span class="service-dot service-dot--fail"></span> Jina: ключ не задан';
+        } else if (jina.ok) {
+          jinaBadge = '<span class="service-dot service-dot--ok"></span> Jina: ключ принят, сеть доступна';
+        } else {
+          jinaBadge = '<span class="service-dot service-dot--fail"></span> Jina: ' + escapeHtml(jina.error || jina.code || "недоступен");
+        }
+        dom.rerankServiceStatus.innerHTML =
+          '<div class="service-row">' + localBadge + localExtra + '</div>' +
+          '<div class="service-row">' + jinaBadge + '</div>';
+        if (dom.rerankStatusHint) {
+          var current = status.provider || "heuristic";
+          if (current === "local") {
+            dom.rerankStatusHint.textContent = local.ok ? "режим: локальный — доступен" : "режим: локальный — НЕДОСТУПЕН (будет fallback)";
+          } else if (current === "jina") {
+            dom.rerankStatusHint.textContent = jina.ok ? "режим: Jina — доступен" : "режим: Jina — НЕДОСТУПЕН (будет fallback)";
+          } else {
+            dom.rerankStatusHint.textContent = "режим: эвристика";
+          }
+        }
+      }
+
+      function loadReranking() {
+        return api("GET", "/api/v2/settings/reranking").then(function (data) {
+          state.reranking = data.reranking || { provider: "heuristic", localUrl: "", jinaApiKey: "" };
+          state.rerankingDefaults = data.defaults || {};
+          renderRerankingForm();
+        }).catch(function (err) {
+          setBanner(dom.rerankBanner, "Не удалось загрузить настройки reranking: " + err.message, "error");
+        });
+      }
+
+      function checkRerankingStatus() {
+        return api("GET", "/api/v2/settings/reranking/status").then(function (data) {
+          state.rerankingStatus = data;
+          renderRerankingStatus();
+        }).catch(function (err) {
+          state.rerankingStatus = null;
+          if (dom.rerankServiceStatus) {
+            dom.rerankServiceStatus.innerHTML = '<div class="kb-doc-error">Не удалось проверить статус: ' + escapeHtml(err.message) + '</div>';
+          }
+        });
+      }
+
+      function saveReranking() {
+        if (!dom.rerankProvider) return;
+        var payload = {
+          provider: dom.rerankProvider.value,
+          localUrl: dom.rerankLocalUrl ? dom.rerankLocalUrl.value : "",
+        };
+        var rawKey = dom.rerankJinaKey ? dom.rerankJinaKey.value : "";
+        if (rawKey && rawKey.indexOf("•••••") === -1 && rawKey.trim() !== "") {
+          payload.jinaApiKey = rawKey;
+        }
+        if (dom.rerankSave) dom.rerankSave.disabled = true;
+        setBanner(dom.rerankBanner, "Сохранение…", "success");
+        api("PATCH", "/api/v2/settings/reranking", payload).then(function (data) {
+          state.reranking = data.reranking;
+          renderRerankingForm();
+          setBanner(dom.rerankBanner, "Настройки reranking сохранены.", "success");
+          return checkRerankingStatus();
+        }).catch(function (err) {
+          setBanner(dom.rerankBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () {
+          if (dom.rerankSave) dom.rerankSave.disabled = false;
+        });
+      }
+
+      function clearJinaKey() {
+        if (!window.confirm("Удалить сохранённый Jina-ключ?")) return;
+        api("PATCH", "/api/v2/settings/reranking", { clearJinaApiKey: true }).then(function (data) {
+          state.reranking = data.reranking;
+          renderRerankingForm();
+          setBanner(dom.rerankBanner, "Ключ Jina удалён.", "success");
+          return checkRerankingStatus();
+        }).catch(function (err) {
+          setBanner(dom.rerankBanner, "Не удалось удалить ключ: " + err.message, "error");
+        });
+      }
+
+      function onRerankProviderChange() {
+        if (dom.rerankProviderHint) {
+          dom.rerankProviderHint.textContent = rerankerProviderHint(dom.rerankProvider.value);
+        }
+        if (dom.rerankPrivacyBanner) {
+          dom.rerankPrivacyBanner.style.display = dom.rerankProvider.value === "jina" ? "" : "none";
+        }
       }
 
       function saveSystemPrompt() {
@@ -1581,6 +1728,10 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         });
         if (dom.retrievalSave) dom.retrievalSave.addEventListener("click", saveRetrieval);
         if (dom.retrievalReset) dom.retrievalReset.addEventListener("click", resetRetrieval);
+        if (dom.rerankSave) dom.rerankSave.addEventListener("click", saveReranking);
+        if (dom.rerankCheck) dom.rerankCheck.addEventListener("click", checkRerankingStatus);
+        if (dom.rerankClearKey) dom.rerankClearKey.addEventListener("click", clearJinaKey);
+        if (dom.rerankProvider) dom.rerankProvider.addEventListener("change", onRerankProviderChange);
         if (dom.promptSave) dom.promptSave.addEventListener("click", saveSystemPrompt);
         if (dom.promptReset) dom.promptReset.addEventListener("click", confirmResetSystemPrompt);
         if (dom.promptTemplate) dom.promptTemplate.addEventListener("input", validateSystemPromptTextarea);
@@ -1630,6 +1781,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         loadOcr();
         loadIndexing();
         loadGeneration();
+        loadReranking().then(checkRerankingStatus);
         loadBackups();
       }
 
@@ -3058,6 +3210,52 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
           </div>
           <div class="settings-banner" id="retrievalBanner"></div>
           <p class="settings-hint">Значения из YAML — базовые. Изменения в UI сохраняются в БД и переопределяют файл. Применяются к следующему запросу.</p>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-reranking">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.search}<span>Reranking — модель оценки релевантности</span></div>
+          <span class="settings-hint" id="rerankingStatusHint">проверка…</span>
+        </div>
+        <div class="settings-card__body">
+          <p class="settings-hint">
+            Reranker переоценивает кандидатов после semantic+BM25 и возвращает наиболее релевантные.
+            Если выбранный режим недоступен (нет ключа, сервис лежит, сеть упала) — автоматически
+            используется эвристика, и это видно в бейдже под ответом.
+          </p>
+          <div class="settings-row settings-row--triple">
+            <div class="settings-field">
+              <label for="cfgRerankProvider">Режим reranking</label>
+              <select class="settings-select" id="cfgRerankProvider">
+                <option value="heuristic">Эвристика (без модели, быстро)</option>
+                <option value="local">Локальный bge-reranker (приватно, на CPU)</option>
+                <option value="jina">Jina API (облако, требует ключ)</option>
+              </select>
+              <span class="settings-hint" id="cfgRerankProviderHint"></span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgRerankLocalUrl">URL локального reranker-сервиса</label>
+              <input type="text" class="settings-input" id="cfgRerankLocalUrl" placeholder="http://localrag-reranker:8090" autocomplete="off" />
+              <span class="settings-hint">Дефолт берётся из <span class="mono">RERANKER_LOCAL_URL</span>.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgRerankJinaKey">API-ключ Jina</label>
+              <input type="password" class="settings-input" id="cfgRerankJinaKey" placeholder="jina_..." autocomplete="off" />
+              <span class="settings-hint">Используется только в режиме «Jina». Хранится в БД, при чтении маскируется.</span>
+            </div>
+          </div>
+          <div class="settings-banner settings-banner--warn" id="rerankPrivacyBanner" style="display:none;">
+            ⚠️ Режим «Jina» отправляет тексты найденных фрагментов в облачный API. В режимах
+            «Локальный» и «Эвристика» документы наружу НЕ отправляются.
+          </div>
+          <div id="rerankServiceStatus" style="display:flex;flex-direction:column;gap:6px;"></div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="cfgRerankSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--ghost" id="cfgRerankCheck">Проверить доступность</button>
+            <button type="button" class="btn btn--ghost" id="cfgRerankClearJinaKey">Удалить ключ Jina</button>
+          </div>
+          <div class="settings-banner" id="rerankBanner"></div>
         </div>
       </div>
       </div>

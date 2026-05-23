@@ -121,4 +121,16 @@ export const appConfig = {
   models: modelsConfig,
   retrieval: retrievalConfig,
   ingestion: ingestionConfig,
+  reranker: {
+    // Дефолтный URL локального reranker-сервиса. Используется, если в UI
+    // настройки «Поиск → reranker» поле «URL локального сервиса» пустое.
+    localUrl: process.env.RERANKER_LOCAL_URL || "http://localrag-reranker:8090",
+    // Таймаут на сетевой вызов внешнего reranker'а (jina/local). При
+    // превышении — graceful fallback на эвристику, поиск не падает.
+    timeoutMs: Number(process.env.RERANKER_TIMEOUT_MS || 8000),
+    // Эндпоинт облачного Jina по умолчанию.
+    jinaUrl: process.env.RERANKER_JINA_URL || "https://api.jina.ai/v1/rerank",
+    // Имя модели, которое мы просим у Jina (используется только в режиме jina).
+    jinaModel: process.env.RERANKER_JINA_MODEL || "jina-reranker-v2-base-multilingual",
+  },
 };

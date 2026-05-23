@@ -19,6 +19,23 @@ const DEFAULT_THEME = {
   defaultTheme: "dark",
 };
 
+const RERANKING_PROVIDERS = new Set(["heuristic", "jina", "local"]);
+const DEFAULT_RERANKING = {
+  provider: "heuristic",
+  jinaApiKey: "",
+  localUrl: "",
+};
+
+function sanitizeRerankingSettings(raw) {
+  const safe = raw && typeof raw === "object" ? raw : {};
+  const provider = String(safe.provider || DEFAULT_RERANKING.provider).toLowerCase();
+  return {
+    provider: RERANKING_PROVIDERS.has(provider) ? provider : DEFAULT_RERANKING.provider,
+    jinaApiKey: typeof safe.jinaApiKey === "string" ? safe.jinaApiKey : "",
+    localUrl: String(safe.localUrl || "").trim().replace(/\/+$/, ""),
+  };
+}
+
 const MASK_MARKER = "•••••";
 
 function maskApiKey(rawKey) {
@@ -540,6 +557,48 @@ export class AppSettingsService {
     return next;
   }
 
+  async getRerankingSettings() {
+    const raw = (await this.getRawValue("reranking")) || DEFAULT_RERANKING;
+    return sanitizeRerankingSettings(raw);
+  }
+
+  async getRerankingPublic() {
+    const full = await this.getRerankingSettings();
+    return {
+      provider: full.provider,
+      localUrl: full.localUrl,
+      jinaApiKey: full.jinaApiKey ? maskApiKey(full.jinaApiKey) : "",
+      jinaConfigured: Boolean(full.jinaApiKey && full.jinaApiKey.trim()),
+    };
+  }
+
+  async updateRerankingSettings(patch) {
+    const current = await this.getRerankingSettings();
+    const next = { ...current };
+    if (patch && patch.provider !== undefined) {
+      const provider = String(patch.provider || "").toLowerCase();
+      if (!RERANKING_PROVIDERS.has(provider)) {
+        throw Object.assign(
+          new Error("Неизвестный провайдер reranking. Допустимо: jina, local, heuristic."),
+          { statusCode: 400 }
+        );
+      }
+      next.provider = provider;
+    }
+    if (patch && patch.localUrl !== undefined) {
+      next.localUrl = String(patch.localUrl || "").trim().replace(/\/+$/, "");
+    }
+    if (patch && patch.jinaApiKey !== undefined && !isMaskOrEmpty(patch.jinaApiKey)) {
+      next.jinaApiKey = String(patch.jinaApiKey);
+    }
+    if (patch && patch.clearJinaApiKey === true) {
+      next.jinaApiKey = "";
+    }
+    const cleaned = sanitizeRerankingSettings(next);
+    await this.setRawValue("reranking", cleaned);
+    return this.getRerankingPublic();
+  }
+
   async getAllPublic() {
     const cloudProvider = await this.getCloudProviderPublic();
     const cloudProviders = await this.getCloudProvidersPublic();
@@ -547,7 +606,8 @@ export class AppSettingsService {
     const retrieval = await this.getRetrievalPublic();
     const systemPrompt = await this.getSystemPrompt();
     const generation = await this.getGenerationSettings();
-    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt, generation };
+    const reranking = await this.getRerankingPublic();
+    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt, generation, reranking };
   }
 }
 
