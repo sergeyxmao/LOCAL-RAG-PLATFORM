@@ -49,6 +49,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      RERANKER_LOCAL_URL: ${RERANKER_LOCAL_URL:-http://localrag-reranker:8090}
     ports:
       - "${KB_API_PORT}:8787"
     depends_on:
@@ -57,6 +59,35 @@ services:
     volumes:
       - ../config:/app/config
       - ../data:/app/data
+    networks:
+      - localrag-net
+
+  reranker:
+    # Опциональный локальный reranker-сервис (bge-reranker-base, CPU).
+    # Если контейнер не поднят, kb-api автоматически делает fallback на
+    # эвристику или облачный Jina (см. docs/RERANKER_SERVICE.md).
+    build:
+      context: ../apps/reranker-service
+    container_name: localrag-reranker
+    restart: unless-stopped
+    environment:
+      MODEL: ${RERANKER_MODEL:-BAAI/bge-reranker-base}
+      DEVICE: ${RERANKER_DEVICE:-cpu}
+      MAX_LENGTH: ${RERANKER_MAX_LENGTH:-512}
+      HOST: 0.0.0.0
+      PORT: 8090
+    ports:
+      - "${RERANKER_PORT:-8090}:8090"
+    volumes:
+      - ../workspace/reranker_cache:/data/hf-cache
+    mem_limit: 2g
+    mem_reservation: 768m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     networks:
       - localrag-net
 

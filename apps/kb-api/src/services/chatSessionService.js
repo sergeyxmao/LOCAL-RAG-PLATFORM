@@ -370,6 +370,7 @@ export class ChatSessionService {
             filters,
             durationMs: Date.now() - startedAt,
             searchMode: "pages",
+            reranking: result?.reranking || null,
           },
         };
       } catch (error) {
@@ -404,6 +405,7 @@ export class ChatSessionService {
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
+          reranking: result?.reranking || null,
         },
       };
     } catch (error) {
@@ -495,9 +497,11 @@ export class ChatSessionService {
     }
 
     let sources = [];
+    let rerankingInfo = null;
     try {
       const hybrid = await this.searchService.hybridSearch(question, options);
       sources = Array.isArray(hybrid?.items) ? hybrid.items : [];
+      rerankingInfo = hybrid?.reranking || null;
     } catch (error) {
       return {
         content: `Не удалось выполнить поиск перед обращением к облаку: ${this.describeError(error)}`,
@@ -551,6 +555,7 @@ export class ChatSessionService {
               }
             : {}),
           ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
+          reranking: rerankingInfo,
         },
       };
     } catch (error) {
@@ -572,6 +577,7 @@ export class ChatSessionService {
             code: isCloudErr ? error.code : "server_error",
             message: isCloudErr ? error.userMessage : String(error?.message ?? error),
           },
+          reranking: rerankingInfo,
         },
       };
     }
@@ -682,9 +688,11 @@ export class ChatSessionService {
 
     const { options, filters } = this.buildSearchOptions(session);
     let sources = [];
+    let rerankingInfo = null;
     try {
       const hybrid = await this.searchService.hybridSearch(trimmed, options);
       sources = Array.isArray(hybrid?.items) ? hybrid.items : [];
+      rerankingInfo = hybrid?.reranking || null;
     } catch (error) {
       const message = `Не удалось выполнить поиск: ${this.describeError(error)}`;
       const assistant = await this.insertMessage(sessionId, {
@@ -707,9 +715,9 @@ export class ChatSessionService {
     if (typeof onSources === "function") onSources(sources);
 
     if (isCloudProvider(session.provider)) {
-      return this.streamCloudAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal });
+      return this.streamCloudAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking: rerankingInfo });
     }
-    return this.streamLocalAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal });
+    return this.streamLocalAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking: rerankingInfo });
   }
 
   async streamPagesAnswer(session, question, userMessage, { onSources, onDone, onError }) {
@@ -725,7 +733,14 @@ export class ChatSessionService {
         role: "assistant",
         content,
         sources: items,
-        metadata: { provider: "local", mode, filters, durationMs: Date.now() - startedAt, searchMode: "pages" },
+        metadata: {
+          provider: "local",
+          mode,
+          filters,
+          durationMs: Date.now() - startedAt,
+          searchMode: "pages",
+          reranking: result?.reranking || null,
+        },
       });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
       return assistant;
@@ -743,7 +758,7 @@ export class ChatSessionService {
     }
   }
 
-  async streamLocalAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal }) {
+  async streamLocalAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking = null }) {
     const startedAt = Date.now();
     if (!this.chatProvider || typeof this.chatProvider.generateStream !== "function") {
       const message = "Стриминг локального ИИ недоступен.";
@@ -764,7 +779,7 @@ export class ChatSessionService {
         role: "assistant",
         content: fallback.answer,
         sources,
-        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: fallback.mode, filters, durationMs: Date.now() - startedAt, searchMode: "answer" },
+        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: fallback.mode, filters, durationMs: Date.now() - startedAt, searchMode: "answer", reranking },
       });
       if (typeof onToken === "function") onToken(fallback.answer);
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -787,6 +802,7 @@ export class ChatSessionService {
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
+          reranking,
         },
       });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -797,7 +813,7 @@ export class ChatSessionService {
         role: "assistant",
         content: message,
         sources,
-        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "local_error", message: String(error?.message ?? error) } },
+        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "local_error", message: String(error?.message ?? error) }, reranking },
       });
       if (typeof onError === "function") onError({ code: "local_error", message });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -805,7 +821,7 @@ export class ChatSessionService {
     }
   }
 
-  async streamCloudAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal }) {
+  async streamCloudAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking = null }) {
     const startedAt = Date.now();
     const resolved = await this.resolveCloudForSession(session);
     const cloud = resolved.provider;
@@ -882,6 +898,7 @@ export class ChatSessionService {
               }
             : {}),
           ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
+          reranking,
         },
       });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -902,6 +919,7 @@ export class ChatSessionService {
           filters,
           durationMs: Date.now() - startedAt,
           error: { code, message },
+          reranking,
         },
       });
       if (typeof onError === "function") onError({ code, message });

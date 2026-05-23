@@ -441,6 +441,23 @@ function renderChatCss() {
       flex-wrap: wrap;
     }
     .msg__meta .mono { font-family: "JetBrains Mono", monospace; }
+    .msg__rerank {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      line-height: 1.6;
+      cursor: help;
+    }
+    .msg__rerank--warn {
+      color: #B45309;
+      background: rgba(245, 158, 11, 0.10);
+      border-color: rgba(245, 158, 11, 0.35);
+    }
 
     .typing-dots {
       display: inline-flex;
@@ -1717,6 +1734,33 @@ function renderChatScript(initialStateJson) {
         }
       }
 
+      function formatRerankingBadge(info) {
+        if (!info || typeof info !== "object") return "";
+        if (info.enabled === false) return "";
+        var mode = info.mode || info.provider || "heuristic";
+        var label = "";
+        var title = "";
+        if (mode === "jina") {
+          label = "reranking: Jina";
+          title = "Облачный Jina API. Тексты найденных фрагментов отправлены в облако.";
+        } else if (mode === "local") {
+          label = "reranking: локальный (" + escapeHtml(info.model || "bge-reranker-base") + ")";
+          title = "Локальный reranker-сервис. Документы наружу не отправлялись.";
+        } else if (mode === "heuristic-fallback") {
+          label = "reranking: эвристика (запасной)";
+          title = "Выбранный режим (" + escapeHtml(info.failedProvider || info.provider || "?") + ") недоступен. Использован запасной режим. Причина: " + escapeHtml(info.fallbackReason || "—");
+        } else if (mode === "heuristic") {
+          label = "reranking: эвристика";
+          title = "Режим без модели — взвешенные суммы fusion/semantic/lexical скоров.";
+        } else if (mode === "disabled") {
+          return "";
+        } else {
+          label = "reranking: " + escapeHtml(mode);
+        }
+        var cls = mode === "heuristic-fallback" ? "msg__rerank msg__rerank--warn" : "msg__rerank";
+        return '<span class="' + cls + '" title="' + title + '">' + label + '</span>';
+      }
+
       function renderMessage(message, opts) {
         opts = opts || {};
         var isUser = message.role === "user";
@@ -1747,6 +1791,8 @@ function renderChatScript(initialStateJson) {
           if (typeof meta.durationMs === "number") {
             metaParts.push('<span class="mono">' + Math.round(meta.durationMs) + ' мс</span>');
           }
+          var rerankBadge = formatRerankingBadge(meta.reranking);
+          if (rerankBadge) metaParts.push(rerankBadge);
           if (meta.error && meta.error.code) {
             var showSwitch = meta.provider === "cloud" && meta.error.code !== "no_credentials";
             errorHtml = '<div class="msg__error">' +

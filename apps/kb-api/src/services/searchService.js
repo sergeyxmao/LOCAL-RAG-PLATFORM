@@ -5,11 +5,22 @@ import {
 } from "../utils/tags.js";
 
 export class SearchService {
-  constructor({ embeddingProvider, qdrantProvider, retrievalConfig, appSettingsService = null }) {
+  constructor({
+    embeddingProvider,
+    qdrantProvider,
+    retrievalConfig,
+    appSettingsService = null,
+    rerankerProvider = null,
+    rerankerConfig = null,
+    logger = null,
+  }) {
     this.embeddingProvider = embeddingProvider;
     this.qdrantProvider = qdrantProvider;
     this._retrievalDefaults = retrievalConfig;
     this.appSettingsService = appSettingsService;
+    this.rerankerProvider = rerankerProvider;
+    this.rerankerConfig = rerankerConfig;
+    this.logger = logger;
   }
 
   get retrievalConfig() {
@@ -498,7 +509,36 @@ export class SearchService {
     });
   }
 
-  rerankItems(query, items, finalTopK) {
+  rerankWithHeuristic(query, items, finalTopK) {
+    return items
+      .map((item) => ({
+        ...item,
+        rerank_score: this.computeRerankScore(query, item),
+      }))
+      .sort((a, b) => b.rerank_score - a.rerank_score)
+      .slice(0, finalTopK);
+  }
+
+  async resolveRerankingSettings() {
+    if (!this.appSettingsService || typeof this.appSettingsService.getRerankingSettings !== "function") {
+      return { provider: "heuristic", jinaApiKey: "", localUrl: "" };
+    }
+    try {
+      return await this.appSettingsService.getRerankingSettings();
+    } catch (err) {
+      this.logger?.warn?.({ err: err?.message || err }, "Не удалось получить настройки reranking, используем heuristic");
+      return { provider: "heuristic", jinaApiKey: "", localUrl: "" };
+    }
+  }
+
+  documentTextForReranker(item) {
+    const title = String(item?.title ?? "").trim();
+    const body = String(item?.text_with_context ?? item?.text ?? "").trim();
+    if (title && body) return `${title}\n\n${body}`;
+    return body || title || "";
+  }
+
+  async rerankItems(query, items, finalTopK) {
     const enabled = this.retrievalConfig.reranking?.enabled ?? false;
     if (!enabled) {
       return {
@@ -510,19 +550,108 @@ export class SearchService {
       };
     }
 
-    const reranked = items
-      .map((item) => ({
-        ...item,
-        rerank_score: this.computeRerankScore(query, item),
+    if (!items || items.length === 0) {
+      return {
+        items: [],
+        reranking: { enabled: true, mode: "heuristic" },
+      };
+    }
+
+    const settings = await this.resolveRerankingSettings();
+    const provider = settings.provider || "heuristic";
+
+    if (provider === "heuristic" || !this.rerankerProvider) {
+      return {
+        items: this.rerankWithHeuristic(query, items, finalTopK),
+        reranking: {
+          enabled: true,
+          mode: "heuristic",
+          provider: "heuristic",
+        },
+      };
+    }
+
+    const documents = items.map((item) => this.documentTextForReranker(item));
+    let scores = null;
+    let fallbackReason = null;
+    let failedProvider = null;
+
+    try {
+      if (provider === "jina") {
+        if (!settings.jinaApiKey || !settings.jinaApiKey.trim()) {
+          throw new Error("Не задан API-ключ Jina");
+        }
+        scores = await this.rerankerProvider.rerankJina({
+          query,
+          documents,
+          topN: items.length,
+          apiKey: settings.jinaApiKey,
+          model: this.rerankerConfig?.jinaModel,
+          url: this.rerankerConfig?.jinaUrl,
+          timeoutMs: this.rerankerConfig?.timeoutMs,
+        });
+      } else if (provider === "local") {
+        const url = settings.localUrl || this.rerankerConfig?.localUrl;
+        scores = await this.rerankerProvider.rerankLocal({
+          query,
+          documents,
+          topN: items.length,
+          url,
+          timeoutMs: this.rerankerConfig?.timeoutMs,
+        });
+      }
+    } catch (error) {
+      failedProvider = provider;
+      fallbackReason = error?.message || String(error);
+      const errCode = error?.code || "unknown";
+      this.logger?.warn?.(
+        { provider, code: errCode, err: fallbackReason },
+        "Reranker недоступен, делаем fallback на эвристику"
+      );
+    }
+
+    if (!scores || scores.length === 0) {
+      const reranked = this.rerankWithHeuristic(query, items, finalTopK);
+      return {
+        items: reranked,
+        reranking: {
+          enabled: true,
+          provider,
+          mode: fallbackReason ? "heuristic-fallback" : "heuristic",
+          model: provider === "local"
+            ? "BAAI/bge-reranker-base"
+            : provider === "jina"
+              ? this.rerankerConfig?.jinaModel || "jina-reranker-v2-base-multilingual"
+              : null,
+          ...(fallbackReason
+            ? { fallbackReason, failedProvider: failedProvider || provider }
+            : {}),
+        },
+      };
+    }
+
+    const ranked = scores
+      .map(({ index, score }) => ({
+        item: items[index],
+        rerank_score: score,
       }))
+      .filter((entry) => entry.item)
       .sort((a, b) => b.rerank_score - a.rerank_score)
-      .slice(0, finalTopK);
+      .slice(0, finalTopK)
+      .map((entry) => ({
+        ...entry.item,
+        rerank_score: entry.rerank_score,
+      }));
 
     return {
-      items: reranked,
+      items: ranked,
       reranking: {
         enabled: true,
-        mode: this.retrievalConfig.reranking?.mode ?? "heuristic",
+        provider,
+        mode: provider,
+        model: provider === "local"
+          ? "BAAI/bge-reranker-base"
+          : this.rerankerConfig?.jinaModel || "jina-reranker-v2-base-multilingual",
       },
     };
   }
@@ -647,10 +776,11 @@ export class SearchService {
 
     const relevantItems = this.filterItemsByQueryRelevance(query, fusedItems);
 
-    const reranked = this.rerankItems(query, relevantItems, finalTopK);
+    const reranked = await this.rerankItems(query, relevantItems, finalTopK);
 
     return {
       items: reranked.items.map((item) => this.enrichResult(item)),
+      reranking: reranked.reranking,
       debug: {
         semantic_count: semanticItems.length,
         lexical_count: lexicalItems.length,

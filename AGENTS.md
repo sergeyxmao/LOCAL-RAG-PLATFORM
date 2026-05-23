@@ -50,6 +50,10 @@
 - `PostgreSQL` для метаданных, статусов задач и журналов
 - `Qdrant` для векторного поиска
 - `ingestion-worker` пока как каркас, основная логика сейчас в `kb-api`
+- `reranker-service` (контейнер `localrag-reranker`) — опциональный локальный
+  cross-encoder reranker (`BAAI/bge-reranker-base`). Если не поднят — kb-api
+  делает fallback на эвристику или на облачный Jina. Подробности в
+  `docs/RERANKER_SERVICE.md`.
 
 ## Текущая рабочая конфигурация
 
@@ -58,6 +62,11 @@
 - Платформа: Windows + Docker Desktop + WSL2
 - Основной порт `kb-api`: `http://localhost:8787`
 - Open WebUI: `http://localhost:3000`
+- Reranker (опционально): `http://localhost:8090` (`localrag-reranker`)
+- Reranking имеет три режима (`jina` / `local` / `heuristic`), переключается
+  в «Настройки → Поиск». При недоступности выбранного режима — автоматический
+  fallback на эвристику, фактический режим виден в бейдже под ответом чата
+  и в логах `localrag-kb-api`.
 
 ## Что уже реализовано
 

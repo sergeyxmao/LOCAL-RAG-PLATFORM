@@ -7,6 +7,7 @@ import { QdrantProvider } from "./providers/qdrantProvider.js";
 import { OllamaEmbeddingProvider } from "./providers/ollamaEmbeddingProvider.js";
 import { OllamaChatProvider } from "./providers/ollamaChatProvider.js";
 import { CloudChatProvider } from "./providers/cloudChatProvider.js";
+import { RerankerProvider } from "./providers/rerankerProvider.js";
 import { ExtractorService } from "./services/extractorService.js";
 import { IngestionService } from "./services/ingestionService.js";
 import { SearchService } from "./services/searchService.js";
@@ -249,11 +250,21 @@ const diagnosticsService = new DiagnosticsService({
 await runTagsNormalizationMigration({ postgresProvider, qdrantProvider, appSettingsService, logger: app.log });
 await runOcrAllDefaultTrueMigration({ appSettingsService, logger: app.log });
 
+const rerankerProvider = new RerankerProvider({
+  defaultLocalUrl: appConfig.reranker.localUrl,
+  defaultJinaUrl: appConfig.reranker.jinaUrl,
+  defaultJinaModel: appConfig.reranker.jinaModel,
+  defaultTimeoutMs: appConfig.reranker.timeoutMs,
+});
+
 const searchService = new SearchService({
   embeddingProvider,
   qdrantProvider,
   retrievalConfig: appConfig.retrieval,
   appSettingsService,
+  rerankerProvider,
+  rerankerConfig: appConfig.reranker,
+  logger: app.log,
 });
 qdrantProvider.postgresProvider = postgresProvider;
 
@@ -296,6 +307,7 @@ app.decorate("diagnosticsService", diagnosticsService);
 app.decorate("ocrService", ocrService);
 app.decorate("indexingSemaphore", indexingSemaphore);
 app.decorate("cloudChatProvider", cloudChatProvider);
+app.decorate("rerankerProvider", rerankerProvider);
 app.decorate("backupService", backupService);
 app.decorate("graphService", graphService);
 app.decorate("graphIngestionService", graphIngestionService);
