@@ -972,7 +972,7 @@ export async function documentRoutes(app) {
         nodeIds,
         primaryNodeId,
         force: true,
-        createVisualAssets: false,
+        createVisualAssets: true,
       });
     });
 
@@ -980,7 +980,8 @@ export async function documentRoutes(app) {
     return {
       ok: true,
       queued: true,
-      message: "Документ поставлен в очередь на повторную индексацию (включая OCR, если включён).",
+      message:
+        "Документ поставлен в очередь на повторную индексацию в полном режиме (с постраничными визуальными ассетами, включая OCR, если включён).",
     };
   });
 

@@ -344,7 +344,7 @@ export async function jobRoutes(app) {
         relativePath: job.original_file_path,
         categories,
         force: false,
-        createVisualAssets: false,
+        createVisualAssets: true,
       });
     });
 
