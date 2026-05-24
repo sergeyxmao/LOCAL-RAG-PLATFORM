@@ -51,6 +51,7 @@ services:
       - .env
     environment:
       RERANKER_LOCAL_URL: ${RERANKER_LOCAL_URL:-http://localrag-reranker:8090}
+      RERANKER_TIMEOUT_MS: ${RERANKER_TIMEOUT_MS:-45000}
     ports:
       - "${KB_API_PORT}:8787"
     depends_on:

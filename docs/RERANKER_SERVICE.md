@@ -18,6 +18,11 @@
 - По умолчанию: `BAAI/bge-reranker-base` (~278 М параметров, CPU-friendly).
 - На более мощном железе можно поменять на `BAAI/bge-reranker-v2-m3` без
   правок кода — через env-переменную `MODEL` контейнера (см. `infra/.env.example`).
+- Альтернатива на CPU слабого ноута — `Qwen/Qwen3-Reranker-0.6B`
+  (cross-encoder, ~600 М параметров). По релевантности на русско-английских
+  технических текстах обычно даёт лучший top-1, но на CPU тяжелее bge:
+  ожидайте 25–40 с на запрос с пулом 10–20 кандидатов. Требует увеличенного
+  таймаута `RERANKER_TIMEOUT_MS` (см. ниже).
 - Модель скачивается при первом старте и кэшируется в volume
   `workspace/reranker_cache:/data/hf-cache` — повторные старты быстрые.
 
@@ -75,11 +80,12 @@
 
 | Переменная             | Дефолт                       | Назначение                                      |
 | ---------------------- | ---------------------------- | ----------------------------------------------- |
-| `MODEL`                | `BAAI/bge-reranker-base`     | Имя модели для `sentence-transformers`          |
+| `MODEL`                | `BAAI/bge-reranker-base`     | Имя модели для `sentence-transformers`. Альтернатива: `Qwen/Qwen3-Reranker-0.6B`. |
 | `DEVICE`               | `cpu`                        | `cpu` / `cuda` / `mps` — без правки кода        |
 | `MAX_LENGTH`           | `512`                        | Максимум токенов на пару query/doc              |
 | `RERANKER_PORT`        | `8090`                       | Внешний порт хоста                              |
 | `RERANKER_LOCAL_URL`   | `http://localrag-reranker:8090` | URL, по которому kb-api ходит на reranker     |
+| `RERANKER_TIMEOUT_MS`  | `45000`                      | Таймаут HTTP-запроса kb-api к reranker'у (мс). Должен покрывать реальное время инференса на текущем железе, иначе сработает fallback на эвристику. |
 
 Ограничения в `infra/docker-compose.yml`:
 
@@ -90,13 +96,36 @@
 
 ## Ограничения по железу
 
-- **Слабый ноутбук (8 ГБ RAM, CPU без AVX-512):** `bge-reranker-base` на CPU
-  обрабатывает 6–12 кандидатов за ~0.3–1.5 с. Для большего пула (например 30)
-  ожидайте 3–5 секунд.
-- **Память:** модель + рантайм занимают ~1.2–1.6 ГБ RSS. `mem_limit: 2g`
-  оставляет запас.
+- **Слабый ноутбук (8 ГБ RAM, CPU без AVX-512):**
+  - `bge-reranker-base` на CPU реально обрабатывает пул 10–20 кандидатов за
+    15–30 с (не 0.3–1.5 с — старая оценка была для тёплого процессора и
+    пула 6–12). Поэтому таймаут kb-api поднят до 45 с (`RERANKER_TIMEOUT_MS`).
+  - `Qwen/Qwen3-Reranker-0.6B` на том же CPU — 25–40 с.
+- **Память:** модель + рантайм занимают ~1.2–1.6 ГБ RSS для bge, ~2.5–3 ГБ
+  для Qwen3-Reranker-0.6B. Для Qwen3 поднимите `mem_limit` в
+  `infra/docker-compose.yml` до 3–4 ГБ.
 - **Диск:** кэш модели ~700 МБ для `bge-reranker-base`, ~2.3 ГБ для
-  `bge-reranker-v2-m3`.
+  `bge-reranker-v2-m3`, ~1.2 ГБ для `Qwen/Qwen3-Reranker-0.6B`.
+
+## Таймаут kb-api → reranker
+
+На слабом CPU инференс cross-encoder'а на 10–20 парах query/doc легко
+занимает 15–30 с. Если таймаут kb-api меньше — клиент рвёт соединение
+ещё до того, как сервис успевает ответить, и сработает fallback на
+эвристику. По логам это видно так:
+
+- в kb-api — `Reranker не ответил вовремя` / `code=timeout`;
+- в reranker-сервисе — `Batches: 100%` приходит уже после того, как
+  клиент отключился (запрос всё равно досчитывается).
+
+Дефолт `RERANKER_TIMEOUT_MS=45000` мс — настраивается через env, не
+требует правки кода. На GPU/быстром CPU значение можно снизить до
+5000–8000.
+
+> ⚠️ Логика fallback на эвристику в `searchService.rerankItems` намеренно
+> сохранена: она нужна на случай реальной недоступности reranker-сервиса
+> (контейнер не поднят, OOM, ошибка модели). Меняется только таймаут —
+> чтобы fallback не срабатывал ложно из-за медленного CPU.
 
 ## Как запустить только reranker
 
@@ -121,13 +150,39 @@ curl -s -X POST http://localhost:8090/rerank \
 ## Как сменить модель
 
 1. Остановить контейнер: `docker compose stop reranker`.
-2. В `infra/.env` задать `RERANKER_MODEL=BAAI/bge-reranker-v2-m3`
-   (или прокинуть `MODEL=...` напрямую).
+2. В `infra/.env` задать `RERANKER_MODEL=<HF-идентификатор>`
+   (или прокинуть `MODEL=...` напрямую). Варианты:
+   - `BAAI/bge-reranker-base` — дефолт, легче всех.
+   - `BAAI/bge-reranker-v2-m3` — точнее, тяжелее (~2.3 ГБ).
+   - `Qwen/Qwen3-Reranker-0.6B` — точнее на технических русско-английских
+     запросах, но на CPU слабого ноута 25–40 с на запрос. Убедитесь, что
+     `RERANKER_TIMEOUT_MS` ≥ 45000.
 3. Поднять заново: `docker compose up -d reranker`.
-4. Первый запрос подождёт скачивания (~2.3 ГБ для v2-m3).
+4. Первый запрос подождёт скачивания модели (~700 МБ – 2.3 ГБ в зависимости
+   от выбора). Прогресс виден в `docker logs -f localrag-reranker`.
 
 Код kb-api не зависит от имени модели — он отображает в бейдже то, что
 вернёт `/health` или то, что записано в настройках.
+
+### Пример переключения на Qwen3-Reranker-0.6B
+
+```bash
+# infra/.env
+RERANKER_MODEL=Qwen/Qwen3-Reranker-0.6B
+RERANKER_TIMEOUT_MS=45000   # обязательно: на CPU 25–40 с
+```
+
+```bash
+cd infra
+docker compose stop reranker kb-api
+docker compose up -d reranker kb-api
+docker logs -f localrag-reranker   # дождаться "model loaded in ..."
+curl http://localhost:8090/health  # status: ok, model: Qwen/Qwen3-Reranker-0.6B
+```
+
+Затем в `/ui/consult` выбрать провайдера reranking «локальный» и задать
+вопрос — бейдж под ответом должен показать «reranking: локальный
+(Qwen/Qwen3-Reranker-0.6B)», без пометки «(запасной)».
 
 ## Что делать, если контейнер не нужен
 
@@ -142,3 +197,7 @@ curl -s -X POST http://localhost:8090/rerank \
 - 2026-05-23 — создан документ: описание сервиса `localrag-reranker`,
   модели `BAAI/bge-reranker-base`, эндпоинтов `/health` и `/rerank`,
   переменных окружения, ограничений по RAM/CPU.
+- 2026-05-24 — дефолтный таймаут kb-api → reranker поднят с 8 с до 45 с
+  (env `RERANKER_TIMEOUT_MS`), чтобы bge/Qwen3 на CPU слабого ноута не
+  падали ложно в эвристический fallback. Описан переход на
+  `Qwen/Qwen3-Reranker-0.6B` через env без правок кода.
