@@ -29,9 +29,9 @@ function ensureDocuments(documents) {
   return documents.map((doc) => (doc === null || doc === undefined ? "" : String(doc)));
 }
 
-async function postJson(url, { headers = {}, body, timeoutMs = 8000, signal } = {}) {
+async function postJson(url, { headers = {}, body, timeoutMs = 45000, signal } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(500, Number(timeoutMs) || 8000));
+  const timer = setTimeout(() => controller.abort(), Math.max(500, Number(timeoutMs) || 45000));
   const cleanup = () => clearTimeout(timer);
 
   if (signal) {
@@ -100,7 +100,7 @@ function parseResults(data, documentsLength) {
 }
 
 export class RerankerProvider {
-  constructor({ defaultLocalUrl = "http://localrag-reranker:8090", defaultJinaUrl = "https://api.jina.ai/v1/rerank", defaultJinaModel = "jina-reranker-v2-base-multilingual", defaultTimeoutMs = 8000 } = {}) {
+  constructor({ defaultLocalUrl = "http://localrag-reranker:8090", defaultJinaUrl = "https://api.jina.ai/v1/rerank", defaultJinaModel = "jina-reranker-v2-base-multilingual", defaultTimeoutMs = 45000 } = {}) {
     this.defaultLocalUrl = defaultLocalUrl;
     this.defaultJinaUrl = defaultJinaUrl;
     this.defaultJinaModel = defaultJinaModel;

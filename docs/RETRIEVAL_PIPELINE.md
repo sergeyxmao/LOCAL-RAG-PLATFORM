@@ -18,7 +18,7 @@ question -> embedding -> semantic search in Qdrant -> lexical search in PostgreS
 | Режим       | Что делает                                                                                    | Приватность                                                          | Скорость              |
 | ----------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------- |
 | `heuristic` | Локальная арифметика — взвешенные суммы fusion/semantic/lexical скоров (`computeRerankScore`) | Документы наружу НЕ отправляются                                     | очень быстрый         |
-| `local`     | Локальный reranker-сервис `apps/reranker-service` (`BAAI/bge-reranker-base` на CPU)           | Документы наружу НЕ отправляются                                     | ~0.3–1.5 с на запрос  |
+| `local`     | Локальный reranker-сервис `apps/reranker-service` (`BAAI/bge-reranker-base` или `Qwen/Qwen3-Reranker-0.6B` на CPU) | Документы наружу НЕ отправляются                                     | 15–40 с на CPU слабого ноута, ~100 мс на GPU |
 | `jina`      | Облачный Jina API (`jina-reranker-v2-base-multilingual`)                                      | ⚠️ Тексты найденных фрагментов отправляются в облако Jina по HTTPS  | зависит от сети       |
 
 `enabled` и `candidate_pool` для всех режимов лежат в `retrieval.reranking.*`
@@ -72,7 +72,15 @@ docker-сети (см. `docs/RERANKER_SERVICE.md`).
 - `config/retrieval.yaml` — дефолты (`reranking.enabled`, `reranking.candidate_pool`).
 - Переменные окружения:
   - `RERANKER_LOCAL_URL` — URL локального сервиса (дефолт `http://localrag-reranker:8090`).
-  - `RERANKER_TIMEOUT_MS` — таймаут на сетевой вызов (дефолт 8000).
+  - `RERANKER_TIMEOUT_MS` — таймаут на сетевой вызов (дефолт `45000`).
+    Локальный cross-encoder на CPU слабого ноута считает один запрос
+    15–40 с (см. `docs/RERANKER_SERVICE.md`), поэтому таймаут поднят с
+    исходных 8 с до 45 с — иначе fallback на эвристику срабатывает ложно
+    по каждому запросу, и качество реранкинга деградирует до
+    лексического совпадения. На GPU/быстром CPU значение можно снизить
+    до 5000–8000.
+  - `RERANKER_MODEL` — `BAAI/bge-reranker-base` по умолчанию; альтернатива
+    `Qwen/Qwen3-Reranker-0.6B` (тяжелее, но точнее).
   - `RERANKER_JINA_URL` — `https://api.jina.ai/v1/rerank` по умолчанию.
   - `RERANKER_JINA_MODEL` — `jina-reranker-v2-base-multilingual` по умолчанию.
 - В БД (`app_settings`, ключ `reranking`) — provider, URL локального сервиса,
@@ -84,3 +92,6 @@ docker-сети (см. `docs/RERANKER_SERVICE.md`).
 
 - 2026-05-23 — добавлено описание трёх режимов reranking (jina/local/heuristic),
   fallback-логика, формат `/rerank`, индикация фактического режима в ответе.
+- 2026-05-24 — отмечено, что локальный reranker на CPU требует увеличенного
+  таймаута (`RERANKER_TIMEOUT_MS=45000` по умолчанию). Добавлен
+  `Qwen/Qwen3-Reranker-0.6B` как опциональная модель через env.
