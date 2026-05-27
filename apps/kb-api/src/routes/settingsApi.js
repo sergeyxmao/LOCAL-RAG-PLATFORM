@@ -625,6 +625,68 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  app.get("/api/v2/settings/hyde", async (request, reply) => {
+    try {
+      const hyde = await app.appSettingsService.getHydePublic();
+      return { ok: true, hyde };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки HyDE");
+      return respondError(reply, 500, error.message || "Не удалось получить настройки HyDE");
+    }
+  });
+
+  app.patch(
+    "/api/v2/settings/hyde",
+    {
+      attachValidation: true,
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            providerId: { type: "string", maxLength: 128 },
+            model: { type: "string", maxLength: 256 },
+            maxTokens: { type: "integer", minimum: 50, maximum: 2000 },
+            timeoutMs: { type: "integer", minimum: 2000, maximum: 60000 },
+            prompt: { type: "string", maxLength: 8000 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (request.validationError) {
+        return respondError(
+          reply,
+          400,
+          "Некорректные параметры HyDE: проверьте границы maxTokens (50-2000), timeoutMs (2000-60000)."
+        );
+      }
+      try {
+        const body = request.body ?? {};
+        const hyde = await app.appSettingsService.updateHydeSettings(body);
+        return { ok: true, hyde };
+      } catch (error) {
+        const code = error.statusCode || 500;
+        if (code !== 500) {
+          return respondError(reply, code, error.message);
+        }
+        request.log.error({ err: error }, "Не удалось сохранить настройки HyDE");
+        return respondError(reply, 500, error.message || "Не удалось сохранить настройки HyDE");
+      }
+    }
+  );
+
+  app.delete("/api/v2/settings/hyde/prompt", async (request, reply) => {
+    try {
+      const hyde = await app.appSettingsService.resetHydePrompt();
+      return { ok: true, hyde };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сбросить промпт HyDE");
+      return respondError(reply, 500, error.message || "Не удалось сбросить промпт HyDE");
+    }
+  });
+
   app.get("/api/v2/settings/services", async (request, reply) => {
     const ollamaBase = app.config.models.chat.base_url;
     const rerankingSettings = await app.appSettingsService

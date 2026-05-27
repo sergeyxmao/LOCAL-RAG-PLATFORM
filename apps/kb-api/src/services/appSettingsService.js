@@ -26,6 +26,41 @@ const DEFAULT_RERANKING = {
   localUrl: "",
 };
 
+const DEFAULT_HYDE_PROMPT = `Ты помогаешь поисковой системе по технической документации.
+Получив вопрос пользователя, сгенерируй ОДИН развёрнутый абзац (200-400 слов) в стиле документации того предмета, о котором задан вопрос — как если бы это был фрагмент реального документа, где даётся ответ на этот вопрос.
+Используй терминологию и стиль, характерные для соответствующей области (если вопрос про оборудование — технические параметры и обозначения; если про процессы — этапы и роли; если про правила — формулировки нормативного типа; и т.д.). Старайся имитировать, как мог бы быть написан ответ в реальном документе.
+Не отвечай пользователю напрямую и не давай советов — просто напиши гипотетический параграф документа. Без преамбулы, без оговорок, без markdown — только сам параграф сплошным текстом.`;
+
+const DEFAULT_HYDE = {
+  enabled: false,
+  providerId: "",
+  model: "",
+  maxTokens: 400,
+  timeoutMs: 15000,
+  prompt: DEFAULT_HYDE_PROMPT,
+};
+
+function sanitizeHydeSettings(raw) {
+  const safe = raw && typeof raw === "object" ? raw : {};
+  const maxTokensRaw = Number(safe.maxTokens);
+  const timeoutRaw = Number(safe.timeoutMs);
+  const prompt = typeof safe.prompt === "string" && safe.prompt.trim()
+    ? safe.prompt
+    : DEFAULT_HYDE_PROMPT;
+  return {
+    enabled: safe.enabled === true,
+    providerId: typeof safe.providerId === "string" ? safe.providerId.trim() : "",
+    model: typeof safe.model === "string" ? safe.model.trim() : "",
+    maxTokens: Number.isFinite(maxTokensRaw)
+      ? Math.max(50, Math.min(2000, Math.trunc(maxTokensRaw)))
+      : DEFAULT_HYDE.maxTokens,
+    timeoutMs: Number.isFinite(timeoutRaw)
+      ? Math.max(2000, Math.min(60000, Math.trunc(timeoutRaw)))
+      : DEFAULT_HYDE.timeoutMs,
+    prompt,
+  };
+}
+
 function sanitizeRerankingSettings(raw) {
   const safe = raw && typeof raw === "object" ? raw : {};
   const provider = String(safe.provider || DEFAULT_RERANKING.provider).toLowerCase();
@@ -562,6 +597,67 @@ export class AppSettingsService {
     return sanitizeRerankingSettings(raw);
   }
 
+  async getHydeSettings() {
+    const raw = (await this.getRawValue("hyde")) || DEFAULT_HYDE;
+    return sanitizeHydeSettings(raw);
+  }
+
+  async getHydePublic() {
+    const full = await this.getHydeSettings();
+    return {
+      enabled: full.enabled,
+      providerId: full.providerId,
+      model: full.model,
+      maxTokens: full.maxTokens,
+      timeoutMs: full.timeoutMs,
+      prompt: full.prompt,
+      defaultPrompt: DEFAULT_HYDE_PROMPT,
+      isCustomPrompt: full.prompt !== DEFAULT_HYDE_PROMPT,
+    };
+  }
+
+  async updateHydeSettings(patch) {
+    const current = await this.getHydeSettings();
+    const next = { ...current };
+    if (patch && patch.enabled !== undefined) {
+      next.enabled = patch.enabled === true;
+    }
+    if (patch && patch.providerId !== undefined) {
+      next.providerId = String(patch.providerId || "").trim();
+    }
+    if (patch && patch.model !== undefined) {
+      next.model = String(patch.model || "").trim();
+    }
+    if (patch && patch.maxTokens !== undefined) {
+      const n = Number(patch.maxTokens);
+      if (!Number.isFinite(n) || n < 50 || n > 2000) {
+        throw Object.assign(new Error("maxTokens должен быть от 50 до 2000"), { statusCode: 400 });
+      }
+      next.maxTokens = Math.trunc(n);
+    }
+    if (patch && patch.timeoutMs !== undefined) {
+      const n = Number(patch.timeoutMs);
+      if (!Number.isFinite(n) || n < 2000 || n > 60000) {
+        throw Object.assign(new Error("timeoutMs должен быть от 2000 до 60000"), { statusCode: 400 });
+      }
+      next.timeoutMs = Math.trunc(n);
+    }
+    if (patch && typeof patch.prompt === "string") {
+      const trimmed = patch.prompt.trim();
+      next.prompt = trimmed.length > 0 ? patch.prompt : DEFAULT_HYDE_PROMPT;
+    }
+    const cleaned = sanitizeHydeSettings(next);
+    await this.setRawValue("hyde", cleaned);
+    return this.getHydePublic();
+  }
+
+  async resetHydePrompt() {
+    const current = await this.getHydeSettings();
+    const next = { ...current, prompt: DEFAULT_HYDE_PROMPT };
+    await this.setRawValue("hyde", sanitizeHydeSettings(next));
+    return this.getHydePublic();
+  }
+
   async getRerankingPublic() {
     const full = await this.getRerankingSettings();
     return {
@@ -607,7 +703,8 @@ export class AppSettingsService {
     const systemPrompt = await this.getSystemPrompt();
     const generation = await this.getGenerationSettings();
     const reranking = await this.getRerankingPublic();
-    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt, generation, reranking };
+    const hyde = await this.getHydePublic();
+    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt, generation, reranking, hyde };
   }
 }
 

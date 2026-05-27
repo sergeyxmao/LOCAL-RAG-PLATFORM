@@ -121,6 +121,9 @@ export const appConfig = {
   models: modelsConfig,
   retrieval: retrievalConfig,
   ingestion: ingestionConfig,
+  cloudChat: {
+    timeoutMs: Number(process.env.CLOUD_CHAT_TIMEOUT_MS || 180000),
+  },
   reranker: {
     // Дефолтный URL локального reranker-сервиса. Используется, если в UI
     // настройки «Поиск → reranker» поле «URL локального сервиса» пустое.

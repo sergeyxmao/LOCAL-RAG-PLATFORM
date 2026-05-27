@@ -167,6 +167,7 @@ export class AnswerService {
     });
     const sources = hybrid.items;
     const rerankingInfo = hybrid.reranking || null;
+    const hydeInfo = hybrid.hyde || null;
 
     if (sources.length === 0) {
       const fallback = this.buildFallbackAnswer(question, sources, {
@@ -189,6 +190,7 @@ export class AnswerService {
         sources,
         mode: fallback.mode,
         reranking: rerankingInfo,
+        hyde: hydeInfo,
       };
     }
 
@@ -234,6 +236,7 @@ export class AnswerService {
       sources,
       mode,
       reranking: rerankingInfo,
+      hyde: hydeInfo,
     };
   }
 }

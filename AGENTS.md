@@ -75,6 +75,8 @@
 - Chunking документов
 - Индексация в PostgreSQL + Qdrant
 - Semantic + lexical поиск
+- Reranking (heuristic / локальный bge-reranker / Jina) — `docs/RETRIEVAL_PIPELINE.md`, `docs/RERANKER_SERVICE.md`
+- HyDE (Hypothetical Document Embeddings) — опциональный слой перед semantic-поиском, лечит vocabulary mismatch на расплывчатых запросах. По умолчанию выключен. `docs/HYDE_RETRIEVAL.md`
 - Ответы по найденным источникам
 - Поиск по PDF-страницам
 - Классификация страниц PDF:

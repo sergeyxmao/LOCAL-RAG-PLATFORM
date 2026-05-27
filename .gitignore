@@ -16,3 +16,8 @@ data/
 # Claude local cache
 .claude/
 
+# Временные JSON-дампы в корне (curl-тесты, разовая разведка)
+/count.json
+/q.json
+/*.tmp.json
+
