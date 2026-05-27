@@ -5,6 +5,7 @@ import { appConfig } from "./config.js";
 import { PostgresProvider } from "./providers/postgresProvider.js";
 import { QdrantProvider } from "./providers/qdrantProvider.js";
 import { OllamaEmbeddingProvider } from "./providers/ollamaEmbeddingProvider.js";
+import { GigachatEmbeddingProvider } from "./providers/gigachatEmbeddingProvider.js";
 import { OllamaChatProvider } from "./providers/ollamaChatProvider.js";
 import { CloudChatProvider } from "./providers/cloudChatProvider.js";
 import { RerankerProvider } from "./providers/rerankerProvider.js";
@@ -17,6 +18,7 @@ import { ChatSessionService } from "./services/chatSessionService.js";
 import { AppSettingsService } from "./services/appSettingsService.js";
 import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
+import { HydeService } from "./services/hydeService.js";
 import { GraphService } from "./services/graphService.js";
 import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngestionService.js";
 import { GraphConfigService } from "./services/graphConfigService.js";
@@ -137,13 +139,34 @@ const qdrantProvider = new QdrantProvider({
   url: appConfig.qdrantUrl,
   collectionName: appConfig.qdrantCollection,
 });
-const embeddingProvider = new OllamaEmbeddingProvider({
-  baseUrl: appConfig.models.embedding.base_url,
-  model: appConfig.models.embedding.model,
-  batchSize: Number(appConfig.models.embedding.batch_size || 8),
-  maxInputChars: Number(appConfig.models.embedding.max_input_chars || 400),
-  unloadModels: [appConfig.models.chat.model],
-});
+const embeddingProvider = (() => {
+  const provider = String(appConfig.models.embedding.provider || "ollama").toLowerCase();
+  if (provider === "gigachat" || provider === "sber") {
+    return new GigachatEmbeddingProvider({
+      authKey: process.env.GIGACHAT_AUTH_KEY,
+      scope: process.env.GIGACHAT_SCOPE || "GIGACHAT_API_PERS",
+      model: appConfig.models.embedding.model || "Embeddings",
+      oauthUrl:
+        process.env.GIGACHAT_OAUTH_URL ||
+        "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+      apiUrl:
+        process.env.GIGACHAT_EMBEDDINGS_URL ||
+        "https://gigachat.devices.sberbank.ru/api/v1/embeddings",
+      verifySsl: String(process.env.GIGACHAT_VERIFY_SSL ?? "true").toLowerCase() !== "false",
+      caBundlePath: process.env.GIGACHAT_CA_BUNDLE || "",
+      batchSize: Number(appConfig.models.embedding.batch_size || 32),
+      maxInputChars: Number(appConfig.models.embedding.max_input_chars || 2500),
+      requestTimeoutMs: Number(process.env.GIGACHAT_TIMEOUT_MS || 60000),
+    });
+  }
+  return new OllamaEmbeddingProvider({
+    baseUrl: appConfig.models.embedding.base_url,
+    model: appConfig.models.embedding.model,
+    batchSize: Number(appConfig.models.embedding.batch_size || 8),
+    maxInputChars: Number(appConfig.models.embedding.max_input_chars || 400),
+    unloadModels: [appConfig.models.chat.model],
+  });
+})();
 const chatProvider = new OllamaChatProvider({
   baseUrl: appConfig.models.chat.base_url,
   model: appConfig.models.chat.model,
@@ -257,6 +280,16 @@ const rerankerProvider = new RerankerProvider({
   defaultTimeoutMs: appConfig.reranker.timeoutMs,
 });
 
+const cloudChatProvider = new CloudChatProvider({
+  defaultTimeoutMs: appConfig.cloudChat.timeoutMs,
+});
+
+const hydeService = new HydeService({
+  cloudChatProvider,
+  appSettingsService,
+  logger: app.log,
+});
+
 const searchService = new SearchService({
   embeddingProvider,
   qdrantProvider,
@@ -264,6 +297,7 @@ const searchService = new SearchService({
   appSettingsService,
   rerankerProvider,
   rerankerConfig: appConfig.reranker,
+  hydeService,
   logger: app.log,
 });
 qdrantProvider.postgresProvider = postgresProvider;
@@ -274,7 +308,6 @@ const answerService = new AnswerService({
   postgresProvider,
   modelsConfig: appConfig.models,
 });
-const cloudChatProvider = new CloudChatProvider();
 const backupService = new BackupService({
   postgresConfig: appConfig.postgres,
   backupRoot: `${appConfig.dataRoot}/backups`,
@@ -308,6 +341,7 @@ app.decorate("ocrService", ocrService);
 app.decorate("indexingSemaphore", indexingSemaphore);
 app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("rerankerProvider", rerankerProvider);
+app.decorate("hydeService", hydeService);
 app.decorate("backupService", backupService);
 app.decorate("graphService", graphService);
 app.decorate("graphIngestionService", graphIngestionService);

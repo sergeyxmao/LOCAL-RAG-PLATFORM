@@ -4,6 +4,7 @@ chat:
   base_url: http://host.docker.internal:11434
 
 embedding:
-  provider: ollama
-  model: qwen3-embedding:0.6b
-  base_url: http://host.docker.internal:11434
+  provider: gigachat
+  model: Embeddings
+  batch_size: 32
+  max_input_chars: 900

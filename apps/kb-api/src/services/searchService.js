@@ -12,6 +12,7 @@ export class SearchService {
     appSettingsService = null,
     rerankerProvider = null,
     rerankerConfig = null,
+    hydeService = null,
     logger = null,
   }) {
     this.embeddingProvider = embeddingProvider;
@@ -20,6 +21,7 @@ export class SearchService {
     this.appSettingsService = appSettingsService;
     this.rerankerProvider = rerankerProvider;
     this.rerankerConfig = rerankerConfig;
+    this.hydeService = hydeService;
     this.logger = logger;
   }
 
@@ -708,8 +710,26 @@ export class SearchService {
     });
 
     let semanticError = null;
+    let hydeInfo = null;
+    let semanticQuery = query;
+    if (this.hydeService) {
+      try {
+        const hydeResult = await this.hydeService.generate(query);
+        hydeInfo = hydeResult || null;
+        if (hydeResult && hydeResult.used && hydeResult.query) {
+          semanticQuery = hydeResult.query;
+        }
+      } catch (err) {
+        this.logger?.warn?.(
+          { err: err?.message || err },
+          "HyDE: непредвиденная ошибка, fallback на сырой query"
+        );
+        hydeInfo = { used: false, reason: "error", error: err?.message || String(err) };
+      }
+    }
+
     const [rawSemanticItems, rawLexicalItems] = await Promise.all([
-      this.semanticSearch(query, semanticTopK, { filter: qdrantFilter }).catch((error) => {
+      this.semanticSearch(semanticQuery, semanticTopK, { filter: qdrantFilter }).catch((error) => {
         semanticError = error;
         return [];
       }),
@@ -781,6 +801,7 @@ export class SearchService {
     return {
       items: reranked.items.map((item) => this.enrichResult(item)),
       reranking: reranked.reranking,
+      hyde: hydeInfo,
       debug: {
         semantic_count: semanticItems.length,
         lexical_count: lexicalItems.length,
@@ -800,6 +821,7 @@ export class SearchService {
         qdrant_filter: qdrantFilter ?? null,
         semantic_error: semanticError?.message ?? null,
         reranking: reranked.reranking,
+        hyde: hydeInfo,
       },
     };
   }

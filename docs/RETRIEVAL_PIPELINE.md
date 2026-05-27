@@ -1,14 +1,41 @@
 # Retrieval Pipeline
 
-question -> embedding -> semantic search in Qdrant -> lexical search in PostgreSQL -> fusion -> reranking -> answer
+question -> [HyDE] -> embedding -> semantic search in Qdrant -> lexical search in PostgreSQL -> fusion -> reranking -> answer
 
 ## Текущая реализация
 
-- semantic retrieval — `Qdrant` (`kb-api` → `OllamaEmbeddingProvider` → Qdrant);
-- lexical retrieval — PostgreSQL full-text search + точное подстрочное совпадение;
+- HyDE (опционально) — облачный LLM генерирует гипотетический параграф документа по вопросу пользователя; эмбеддинг считается по нему, а не по сырому вопросу. По умолчанию выключен. Подробно: [HYDE_RETRIEVAL.md](HYDE_RETRIEVAL.md).
+- semantic retrieval — `Qdrant` (`kb-api` → embedding-провайдер → Qdrant);
+- lexical retrieval — PostgreSQL full-text search + точное подстрочное совпадение (BM25);
 - fusion — Reciprocal Rank Fusion (RRF);
 - CSV/XLSX строки индексируются отдельными чанками для поиска тегов/параметров;
 - reranking — переключаемый, три режима (см. ниже).
+
+**Важно:** HyDE влияет ТОЛЬКО на semantic-этап. BM25 всегда идёт по сырому вопросу — точные термины и идентификаторы не должны размываться гипотетическим параграфом.
+
+## HyDE — гипотетический параграф перед semantic-поиском
+
+См. подробное описание: [HYDE_RETRIEVAL.md](HYDE_RETRIEVAL.md).
+
+Включается в UI «Настройки → HyDE». Использует один из настроенных облачных провайдеров (`cloudProviders[].id` через поле `providerId`). Промпт хранится в `app_settings.hyde.prompt`, редактируется отдельно от главного системного промпта.
+
+Видимость в чате — бейдж под ответом: `HyDE: использован (модель, Nмс)` / `HyDE: fallback (причина)` / отсутствует, если выключен.
+
+Структура `result.hyde`:
+```js
+{
+  used: true,                   // сработал ли HyDE
+  query: "<гипотетический параграф>",  // или сырой вопрос, если used=false
+  originalQuery: "<вопрос пользователя>",
+  latencyMs: 2300,
+  model: "deepseek-v4-flash",
+  providerId: "...",
+  providerName: "DeepSeek",
+  // при used=false:
+  reason: "disabled" | "no_provider" | "no_model" | "no_prompt" | "short_response" | "error",
+  error: "..."                  // только при reason=error
+}
+```
 
 ## Три режима reranking
 
@@ -95,3 +122,8 @@ docker-сети (см. `docs/RERANKER_SERVICE.md`).
 - 2026-05-24 — отмечено, что локальный reranker на CPU требует увеличенного
   таймаута (`RERANKER_TIMEOUT_MS=45000` по умолчанию). Добавлен
   `Qwen/Qwen3-Reranker-0.6B` как опциональная модель через env.
+- 2026-05-27 — добавлен слой HyDE (Hypothetical Document Embeddings) перед
+  semantic-поиском. Опциональный, по умолчанию выключен. Использует один
+  из настроенных облачных провайдеров. Промпт хранится в БД и редактируется
+  через UI «Настройки → HyDE». Видим в чате бейджем под ответом. Подробно
+  в [HYDE_RETRIEVAL.md](HYDE_RETRIEVAL.md).

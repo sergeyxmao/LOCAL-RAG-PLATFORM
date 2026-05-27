@@ -662,6 +662,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         reranking: null,
         rerankingDefaults: null,
         rerankingStatus: null,
+        hyde: null,
         cloudDraft: null,
         cloudDirty: false,
         providerEditId: null,
@@ -699,6 +700,17 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         rerankServiceStatus: document.getElementById("rerankServiceStatus"),
         rerankStatusHint: document.getElementById("rerankingStatusHint"),
         rerankPrivacyBanner: document.getElementById("rerankPrivacyBanner"),
+        hydeEnabled: document.getElementById("cfgHydeEnabled"),
+        hydeProviderId: document.getElementById("cfgHydeProviderId"),
+        hydeModel: document.getElementById("cfgHydeModel"),
+        hydeMaxTokens: document.getElementById("cfgHydeMaxTokens"),
+        hydeTimeoutMs: document.getElementById("cfgHydeTimeoutMs"),
+        hydePrompt: document.getElementById("cfgHydePrompt"),
+        hydePromptStatus: document.getElementById("cfgHydePromptStatus"),
+        hydeStatus: document.getElementById("hydeStatus"),
+        hydeSave: document.getElementById("cfgHydeSave"),
+        hydePromptReset: document.getElementById("cfgHydePromptReset"),
+        hydeBanner: document.getElementById("hydeBanner"),
         promptTemplate: document.getElementById("cfgPromptTemplate"),
         promptSave: document.getElementById("cfgPromptSave"),
         promptReset: document.getElementById("cfgPromptReset"),
@@ -966,6 +978,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
             '</div>';
         }).join("");
         dom.cloudList.innerHTML = html;
+        renderHydeProvidersDropdown();
       }
 
       function renderProviderEditForm(p) {
@@ -1198,6 +1211,95 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         if (dom.rerankPrivacyBanner) {
           dom.rerankPrivacyBanner.style.display = dom.rerankProvider.value === "jina" ? "" : "none";
         }
+      }
+
+      function renderHydeProvidersDropdown() {
+        if (!dom.hydeProviderId) return;
+        var providers = (state.settings && state.settings.cloudProviders && state.settings.cloudProviders.providers) || [];
+        var current = state.hyde && state.hyde.providerId ? state.hyde.providerId : "";
+        var options = ['<option value="">— не выбран —</option>'];
+        providers.forEach(function (p) {
+          var label = (p.name || "(без названия)") + (p.model ? " · " + p.model : "");
+          options.push('<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>');
+        });
+        dom.hydeProviderId.innerHTML = options.join("");
+        dom.hydeProviderId.value = current;
+      }
+
+      function renderHyde() {
+        if (!dom.hydeEnabled || !state.hyde) return;
+        var h = state.hyde;
+        dom.hydeEnabled.checked = h.enabled === true;
+        renderHydeProvidersDropdown();
+        if (dom.hydeModel) dom.hydeModel.value = h.model || "";
+        if (dom.hydeMaxTokens) dom.hydeMaxTokens.value = h.maxTokens || 400;
+        if (dom.hydeTimeoutMs) dom.hydeTimeoutMs.value = h.timeoutMs || 15000;
+        if (dom.hydePrompt && dom.hydePrompt.value !== h.prompt) {
+          dom.hydePrompt.value = h.prompt || "";
+        }
+        if (dom.hydePromptStatus) {
+          dom.hydePromptStatus.textContent = h.isCustomPrompt
+            ? "переопределён"
+            : "значение по умолчанию";
+        }
+        if (dom.hydeStatus) {
+          dom.hydeStatus.textContent = h.enabled ? "включён" : "выкл";
+        }
+      }
+
+      function loadHyde() {
+        return api("GET", "/api/v2/settings/hyde").then(function (data) {
+          state.hyde = data.hyde || null;
+          renderHyde();
+        }).catch(function (err) {
+          if (dom.hydeBanner) setBanner(dom.hydeBanner, "Не удалось загрузить настройки HyDE: " + err.message, "error");
+        });
+      }
+
+      function saveHyde() {
+        if (!dom.hydeEnabled) return;
+        var payload = {
+          enabled: dom.hydeEnabled.checked === true,
+          providerId: dom.hydeProviderId ? dom.hydeProviderId.value : "",
+          model: dom.hydeModel ? dom.hydeModel.value : "",
+          maxTokens: dom.hydeMaxTokens ? Number(dom.hydeMaxTokens.value) : 400,
+          timeoutMs: dom.hydeTimeoutMs ? Number(dom.hydeTimeoutMs.value) : 15000,
+          prompt: dom.hydePrompt ? dom.hydePrompt.value : "",
+        };
+        if (payload.enabled && !payload.providerId) {
+          setBanner(dom.hydeBanner, "Выберите облачного провайдера для HyDE.", "error");
+          return;
+        }
+        if (dom.hydeSave) dom.hydeSave.disabled = true;
+        setBanner(dom.hydeBanner, "Сохранение…", "success");
+        api("PATCH", "/api/v2/settings/hyde", payload).then(function (data) {
+          state.hyde = data.hyde;
+          renderHyde();
+          setBanner(dom.hydeBanner, "Настройки HyDE сохранены.", "success");
+        }).catch(function (err) {
+          setBanner(dom.hydeBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () {
+          if (dom.hydeSave) dom.hydeSave.disabled = false;
+        });
+      }
+
+      function resetHydePrompt() {
+        if (state.hyde && !state.hyde.isCustomPrompt) {
+          api("DELETE", "/api/v2/settings/hyde/prompt").then(function (data) {
+            state.hyde = data.hyde;
+            renderHyde();
+            setBanner(dom.hydeBanner, "Промпт уже соответствует значению по умолчанию.", "success");
+          });
+          return;
+        }
+        if (!window.confirm("Восстановить универсальный промпт HyDE? Все ваши изменения будут потеряны.")) return;
+        api("DELETE", "/api/v2/settings/hyde/prompt").then(function (data) {
+          state.hyde = data.hyde;
+          renderHyde();
+          setBanner(dom.hydeBanner, "Промпт HyDE сброшен к универсальному.", "success");
+        }).catch(function (err) {
+          setBanner(dom.hydeBanner, "Не удалось сбросить: " + err.message, "error");
+        });
       }
 
       function saveSystemPrompt() {
@@ -1735,6 +1837,8 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         if (dom.promptSave) dom.promptSave.addEventListener("click", saveSystemPrompt);
         if (dom.promptReset) dom.promptReset.addEventListener("click", confirmResetSystemPrompt);
         if (dom.promptTemplate) dom.promptTemplate.addEventListener("input", validateSystemPromptTextarea);
+        if (dom.hydeSave) dom.hydeSave.addEventListener("click", saveHyde);
+        if (dom.hydePromptReset) dom.hydePromptReset.addEventListener("click", resetHydePrompt);
       }
 
       function setActiveSettingsTab(name) {
@@ -1782,6 +1886,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         loadIndexing();
         loadGeneration();
         loadReranking().then(checkRerankingStatus);
+        loadHyde();
         loadBackups();
       }
 
@@ -3256,6 +3361,67 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <button type="button" class="btn btn--ghost" id="cfgRerankClearJinaKey">Удалить ключ Jina</button>
           </div>
           <div class="settings-banner" id="rerankBanner"></div>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-hyde">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.search}<span>HyDE — гипотетический ответ перед поиском</span></div>
+          <span class="settings-hint" id="hydeStatus">выкл</span>
+        </div>
+        <div class="settings-card__body">
+          <p class="settings-hint">
+            HyDE (Hypothetical Document Embeddings): перед semantic-поиском по вашему вопросу
+            генерируется гипотетический параграф документа, и эмбеддинг считается по нему,
+            а не по сырому вопросу. Лечит «промах слов» — когда в техдоке термины написаны
+            не так, как формулирует пользователь. BM25-поиск по-прежнему идёт по сырому
+            вопросу. На каждый запрос — один доп. вызов облачной модели (рекомендуем «flash»),
+            +2-5 секунд к ответу. По умолчанию выключен — включайте под конкретные сложные
+            запросы. При ошибке/таймауте автоматически делается fallback на сырой вопрос,
+            это видно в бейдже «HyDE: fallback» под ответом.
+          </p>
+          <div class="settings-row settings-row--triple">
+            <div class="settings-field">
+              <label class="settings-toggle" for="cfgHydeEnabled">
+                <input type="checkbox" id="cfgHydeEnabled" /> HyDE включён
+              </label>
+              <span class="settings-hint">Если выключен — semantic-поиск идёт по сырому вопросу, как раньше.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgHydeProviderId">Провайдер для HyDE</label>
+              <select class="settings-select" id="cfgHydeProviderId">
+                <option value="">— не выбран —</option>
+              </select>
+              <span class="settings-hint">Любой из «Облачные провайдеры». Рекомендуем быстрый (flash/turbo), не reasoning.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgHydeModel">Модель (опционально)</label>
+              <input type="text" class="settings-input settings-input--mono" id="cfgHydeModel" placeholder="по умолчанию — модель провайдера" autocomplete="off" />
+              <span class="settings-hint">Перебивает модель провайдера. Оставьте пустым, чтобы взять из настроек провайдера.</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-field">
+              <label for="cfgHydeMaxTokens">maxTokens</label>
+              <input type="number" class="settings-input" id="cfgHydeMaxTokens" min="50" max="2000" />
+              <span class="settings-hint">Длина гипотетического параграфа. Рекомендуем 300-500.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgHydeTimeoutMs">timeoutMs</label>
+              <input type="number" class="settings-input" id="cfgHydeTimeoutMs" min="2000" max="60000" />
+              <span class="settings-hint">Таймаут на HyDE-вызов. По истечении — fallback на сырой вопрос.</span>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label for="cfgHydePrompt">Промпт HyDE</label>
+            <textarea class="settings-input settings-input--mono" id="cfgHydePrompt" rows="10"></textarea>
+            <span class="settings-hint" id="cfgHydePromptStatus">значение по умолчанию</span>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="cfgHydeSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--ghost" id="cfgHydePromptReset">Сбросить промпт к универсальному</button>
+          </div>
+          <div class="settings-banner" id="hydeBanner"></div>
         </div>
       </div>
       </div>

@@ -458,6 +458,28 @@ function renderChatCss() {
       background: rgba(245, 158, 11, 0.10);
       border-color: rgba(245, 158, 11, 0.35);
     }
+    .msg__hyde {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      line-height: 1.6;
+      cursor: help;
+    }
+    .msg__hyde--used {
+      color: #1D4ED8;
+      background: rgba(59, 130, 246, 0.10);
+      border-color: rgba(59, 130, 246, 0.35);
+    }
+    .msg__hyde--warn {
+      color: #B45309;
+      background: rgba(245, 158, 11, 0.10);
+      border-color: rgba(245, 158, 11, 0.35);
+    }
 
     .typing-dots {
       display: inline-flex;
@@ -1761,6 +1783,54 @@ function renderChatScript(initialStateJson) {
         return '<span class="' + cls + '" title="' + title + '">' + label + '</span>';
       }
 
+      function formatHydeBadge(info) {
+        if (!info || typeof info !== "object") return "";
+        var label = "";
+        var title = "";
+        var cls = "msg__hyde";
+        if (info.used === true) {
+          var ms = typeof info.latencyMs === "number" ? Math.round(info.latencyMs) + " мс" : "";
+          var modelLabel = info.model ? escapeHtml(info.model) : "";
+          var parts = ["HyDE: использован"];
+          if (modelLabel) parts.push(modelLabel);
+          if (ms) parts.push(ms);
+          label = parts.join(" · ");
+          title = "Перед поиском сгенерирован гипотетический параграф документа (" +
+            (modelLabel || "облачная модель") + "), эмбеддинг считался по нему. " +
+            "Это улучшает semantic-поиск на расплывчатых запросах. BM25 шёл по сырому вопросу.";
+          cls += " msg__hyde--used";
+        } else {
+          var reason = info.reason || "";
+          if (reason === "disabled") {
+            return "";
+          } else if (reason === "no_provider") {
+            label = "HyDE: fallback (провайдер не настроен)";
+            title = "HyDE включён, но облачный провайдер для HyDE не выбран или у него нет ключа. Поиск выполнен по сырому запросу.";
+            cls += " msg__hyde--warn";
+          } else if (reason === "no_model") {
+            label = "HyDE: fallback (нет модели)";
+            title = "HyDE включён, но в настройках не указана модель. Поиск выполнен по сырому запросу.";
+            cls += " msg__hyde--warn";
+          } else if (reason === "no_prompt") {
+            label = "HyDE: fallback (пустой промпт)";
+            title = "HyDE включён, но промпт пуст. Поиск выполнен по сырому запросу.";
+            cls += " msg__hyde--warn";
+          } else if (reason === "short_response") {
+            label = "HyDE: fallback (короткий ответ)";
+            title = "Модель вернула слишком короткий гипотетический параграф (<50 символов). Поиск выполнен по сырому запросу.";
+            cls += " msg__hyde--warn";
+          } else if (reason === "error") {
+            label = "HyDE: fallback (ошибка)";
+            title = "Ошибка при генерации гипотетического параграфа: " + escapeHtml(info.error || "—") +
+              ". Поиск выполнен по сырому запросу.";
+            cls += " msg__hyde--warn";
+          } else {
+            return "";
+          }
+        }
+        return '<span class="' + cls + '" title="' + title + '">' + label + '</span>';
+      }
+
       function renderMessage(message, opts) {
         opts = opts || {};
         var isUser = message.role === "user";
@@ -1793,6 +1863,8 @@ function renderChatScript(initialStateJson) {
           }
           var rerankBadge = formatRerankingBadge(meta.reranking);
           if (rerankBadge) metaParts.push(rerankBadge);
+          var hydeBadge = formatHydeBadge(meta.hyde);
+          if (hydeBadge) metaParts.push(hydeBadge);
           if (meta.error && meta.error.code) {
             var showSwitch = meta.provider === "cloud" && meta.error.code !== "no_credentials";
             errorHtml = '<div class="msg__error">' +
