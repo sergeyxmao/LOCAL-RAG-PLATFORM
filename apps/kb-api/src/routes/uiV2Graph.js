@@ -700,7 +700,8 @@ function renderGraphPageHtml() {
           <div class="tree-loading">Загрузка дерева…</div>
         </div>
         <div class="graph-pane__footer">
-          <button class="graph-btn graph-btn--primary" id="btnCreateNode">+ Создать узел</button>
+          <button class="graph-btn graph-btn--primary" id="btnRecordCase">📝 Записать случай</button>
+          <button class="graph-btn" id="btnCreateNode">+ Создать узел</button>
         </div>
       </div>
       <div class="graph-pane" id="rightPane">
@@ -741,6 +742,7 @@ function renderGraphPageScript() {
   var elCard = document.getElementById("cardContainer");
   var elClearSearch = document.getElementById("btnClearSearch");
   var elBtnCreate = document.getElementById("btnCreateNode");
+  var elBtnRecordCase = document.getElementById("btnRecordCase");
 
   var visNetwork = null;
   var visLoadPromise = null;
@@ -852,7 +854,10 @@ function renderGraphPageScript() {
     "has_channel":   { label_ru: "Содержит канал",  icon: "🔗" },
     "connected_to":  { label_ru: "Подключён к",     icon: "🔌" },
     "measures":      { label_ru: "Измеряет",        icon: "🌡" },
-    "described_in":  { label_ru: "Описан в",        icon: "📄" }
+    "described_in":  { label_ru: "Описан в",        icon: "📄" },
+    "relates_to":    { label_ru: "Относится к",     icon: "🧩" },
+    "resolves":      { label_ru: "Устраняет",       icon: "🛠" },
+    "located_at":    { label_ru: "Находится на",    icon: "📍" }
   };
 
   function relationLabel(code) {
@@ -1991,10 +1996,194 @@ function renderGraphPageScript() {
     });
   }
 
+  // ================== Память инженера: «Записать случай» ==================
+  // Автокомплит, отфильтрованный по типу узла (equipment / object).
+  // Использует существующий generic-список узлов с фильтром по type
+  // и nameSearch. Позволяет ввести новое имя (тогда hidden id пустой).
+  function setupTypedAutocomplete(inputId, hiddenInputId, dropdownId, type) {
+    var input = document.getElementById(inputId);
+    var hidden = document.getElementById(hiddenInputId);
+    var dropdown = document.getElementById(dropdownId);
+    var timer = null;
+
+    input.addEventListener("input", function() {
+      hidden.value = "";
+      clearTimeout(timer);
+      var q = input.value.trim();
+      if (q.length < 2) { dropdown.style.display = "none"; return; }
+      timer = setTimeout(function() {
+        apiGet("/api/v2/graph/nodes?type=" + encodeURIComponent(type) +
+          "&nameSearch=" + encodeURIComponent(q) + "&limit=10").then(function(data) {
+          var results = data.items || [];
+          if (results.length === 0) { dropdown.style.display = "none"; return; }
+          dropdown.innerHTML = "";
+          for (var i = 0; i < results.length; i++) {
+            (function(n) {
+              var tInfo = getTypeLabel(n.type);
+              var item = el("div", { className: "ac-item" }, tInfo.icon + " " + n.name);
+              item.addEventListener("click", function() {
+                input.value = n.name;
+                hidden.value = n.id;
+                dropdown.style.display = "none";
+              });
+              dropdown.appendChild(item);
+            })(results[i]);
+          }
+          dropdown.style.display = "";
+        }).catch(function() { dropdown.style.display = "none"; });
+      }, 250);
+    });
+    input.addEventListener("blur", function() {
+      setTimeout(function() { dropdown.style.display = "none"; }, 200);
+    });
+  }
+
+  function todayIso() {
+    var d = new Date();
+    var pad = function(n) { return n < 10 ? "0" + n : "" + n; };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function openRecordCaseModal() {
+    var tipEquip = "Что обслуживали: датчик, насос, кабель, автомат. Если такое оборудование уже есть в памяти — выберите из подсказки, иначе будет создано новое.";
+    var tipObject = "Где находится оборудование: установка, площадка, объект. Опционально.";
+    var tipFault = "Что произошло: суть неисправности или отказа. Обязательное поле.";
+    var tipSolution = "Что сделали для устранения. Опционально — если решение пока неизвестно.";
+    var html = '<h3 class="graph-modal__title">📝 Записать случай</h3>' +
+      '<div class="graph-modal__row ac-wrap">' +
+        '<label class="graph-modal__label">Оборудование <span style="color:var(--danger);">*</span>' +
+          '<span class="hint" data-tip="' + escAttr(tipEquip) + '">?</span>' +
+        '</label>' +
+        '<input class="graph-modal__input" id="caseEquip" placeholder="например: Метран-150"/>' +
+        '<input type="hidden" id="caseEquipId" value="">' +
+        '<div class="ac-dropdown" id="caseEquipAc" style="display:none;"></div>' +
+      '</div>' +
+      '<div class="graph-modal__row">' +
+        '<label class="graph-modal__label">Модель (опционально)</label>' +
+        '<input class="graph-modal__input" id="caseEquipModel" placeholder="например: Метран-150-CG"/>' +
+      '</div>' +
+      '<div class="graph-modal__row">' +
+        '<label class="graph-modal__label">Место (опционально)</label>' +
+        '<input class="graph-modal__input" id="caseEquipLocation" placeholder="например: насосная №2"/>' +
+      '</div>' +
+      '<div class="graph-modal__row ac-wrap">' +
+        '<label class="graph-modal__label">Объект / площадка (опционально)' +
+          '<span class="hint" data-tip="' + escAttr(tipObject) + '">?</span>' +
+        '</label>' +
+        '<input class="graph-modal__input" id="caseObject" placeholder="например: КНС-6 ЦППД-4"/>' +
+        '<input type="hidden" id="caseObjectId" value="">' +
+        '<div class="ac-dropdown" id="caseObjectAc" style="display:none;"></div>' +
+      '</div>' +
+      '<div class="graph-modal__row">' +
+        '<label class="graph-modal__label">Что произошло <span style="color:var(--danger);">*</span>' +
+          '<span class="hint" data-tip="' + escAttr(tipFault) + '">?</span>' +
+        '</label>' +
+        '<textarea class="graph-modal__textarea" id="caseFault" placeholder="например: дрейф нуля"></textarea>' +
+      '</div>' +
+      '<div class="graph-modal__row">' +
+        '<label class="graph-modal__label">Что сделали (опционально)' +
+          '<span class="hint" data-tip="' + escAttr(tipSolution) + '">?</span>' +
+        '</label>' +
+        '<textarea class="graph-modal__textarea" id="caseSolution" placeholder="например: продувка импульсной линии"></textarea>' +
+      '</div>' +
+      '<div class="graph-modal__row">' +
+        '<label class="graph-modal__label">Дата</label>' +
+        '<input class="graph-modal__input" type="date" id="caseDate" value="' + escAttr(todayIso()) + '"/>' +
+      '</div>' +
+      '<div class="graph-modal__row">' +
+        '<label class="graph-modal__label">Связанный документ (опционально)</label>' +
+        '<select class="graph-modal__select" id="caseDocument"><option value="">— без документа —</option></select>' +
+      '</div>' +
+      '<div class="graph-modal__error" id="caseError" style="display:none;"></div>' +
+      '<div class="graph-modal__actions">' +
+        '<button class="graph-btn" id="caseCancel">Отмена</button>' +
+        '<button class="graph-btn graph-btn--primary" id="caseSave">Записать</button>' +
+      '</div>';
+    openModal(html, { onMount: function() {
+      setupTypedAutocomplete("caseEquip", "caseEquipId", "caseEquipAc", "equipment");
+      setupTypedAutocomplete("caseObject", "caseObjectId", "caseObjectAc", "object");
+      loadDocumentsIntoSelect("caseDocument");
+      document.getElementById("caseCancel").addEventListener("click", closeModal);
+      document.getElementById("caseSave").addEventListener("click", submitRecordCase);
+    }});
+  }
+
+  function loadDocumentsIntoSelect(selectId) {
+    var sel = document.getElementById(selectId);
+    if (!sel) return;
+    // Эндпоинт /documents отвечает { items: [...] } без поля ok,
+    // поэтому используем обычный fetch, а не apiGet.
+    fetch("/documents?limit=200").then(function(r) { return r.json(); }).then(function(data) {
+      var items = (data && data.items) || [];
+      for (var i = 0; i < items.length; i++) {
+        var doc = items[i];
+        var title = doc.title || doc.original_file_name || ("Документ " + doc.id);
+        var opt = document.createElement("option");
+        opt.value = doc.id;
+        opt.textContent = title;
+        sel.appendChild(opt);
+      }
+    }).catch(function() { /* документы опциональны — молча игнорируем */ });
+  }
+
+  async function submitRecordCase() {
+    var errEl = document.getElementById("caseError");
+    errEl.style.display = "none";
+    var saveBtn = document.getElementById("caseSave");
+
+    var equipId = document.getElementById("caseEquipId").value;
+    var equipName = document.getElementById("caseEquip").value.trim();
+    var faultText = document.getElementById("caseFault").value.trim();
+
+    if (!equipId && !equipName) {
+      showModalError(errEl, "Укажите оборудование"); return;
+    }
+    if (!faultText) {
+      showModalError(errEl, "Заполните «Что произошло»"); return;
+    }
+
+    var body = { faultText: faultText };
+    if (equipId) body.equipmentId = equipId; else body.equipmentName = equipName;
+    var model = document.getElementById("caseEquipModel").value.trim();
+    if (model) body.equipmentModel = model;
+    var location = document.getElementById("caseEquipLocation").value.trim();
+    if (location) body.equipmentLocation = location;
+    var objectId = document.getElementById("caseObjectId").value;
+    var objectName = document.getElementById("caseObject").value.trim();
+    if (objectId) body.objectId = objectId; else if (objectName) body.objectName = objectName;
+    var solutionText = document.getElementById("caseSolution").value.trim();
+    if (solutionText) body.solutionText = solutionText;
+    var date = document.getElementById("caseDate").value;
+    if (date) body.date = date;
+    var documentId = document.getElementById("caseDocument").value;
+    if (documentId) body.documentId = documentId;
+
+    saveBtn.disabled = true;
+    var origText = saveBtn.textContent;
+    saveBtn.textContent = "Сохранение…";
+    try {
+      var res = await apiPost("/api/v2/graph/case", body);
+      var parts = [];
+      if (res.created && res.created.equipment) parts.push("оборудование");
+      parts.push("неисправность");
+      if (res.created && res.created.solution) parts.push("решение");
+      if (res.created && res.created.object) parts.push("объект");
+      toast("Создано: " + parts.join(" / "), "success");
+      closeModal();
+      await loadRoots();
+      if (res.nodes && res.nodes.fault) selectNode(res.nodes.fault.id);
+    } catch (err) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = origText;
+      showModalError(errEl, err.message);
+    }
+  }
+
   // ================== Init ==================
   function init() {
     setupSearch();
     elBtnCreate.addEventListener("click", openCreateNodeModal);
+    elBtnRecordCase.addEventListener("click", openRecordCaseModal);
     loadRoots();
   }
   init();

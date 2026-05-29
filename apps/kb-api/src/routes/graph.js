@@ -549,6 +549,77 @@ export async function graphRoutes(app) {
     }
   );
 
+  app.post(
+    "/api/v2/graph/case",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["faultText"],
+          properties: {
+            equipmentId: { type: "string", format: "uuid", nullable: true },
+            equipmentName: { type: "string", maxLength: 512, nullable: true },
+            equipmentModel: { type: "string", maxLength: 512, nullable: true },
+            equipmentLocation: { type: "string", maxLength: 512, nullable: true },
+            objectId: { type: "string", format: "uuid", nullable: true },
+            objectName: { type: "string", maxLength: 512, nullable: true },
+            faultText: { type: "string", minLength: 1, maxLength: 8192 },
+            solutionText: { type: "string", maxLength: 8192, nullable: true },
+            date: { type: "string", maxLength: 32, nullable: true },
+            documentId: { type: "string", format: "uuid", nullable: true },
+          },
+          additionalProperties: false,
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              ok: { type: "boolean" },
+              nodes: {
+                type: "object",
+                properties: {
+                  equipment: NODE_RESPONSE_SCHEMA,
+                  object: NODE_RESPONSE_SCHEMA,
+                  fault: NODE_RESPONSE_SCHEMA,
+                  solution: NODE_RESPONSE_SCHEMA,
+                },
+                additionalProperties: true,
+              },
+              edges: { type: "array", items: EDGE_RESPONSE_SCHEMA },
+              created: {
+                type: "object",
+                properties: {
+                  equipment: { type: "boolean" },
+                  object: { type: "boolean" },
+                  fault: { type: "boolean" },
+                  solution: { type: "boolean" },
+                },
+                additionalProperties: true,
+              },
+            },
+            additionalProperties: true,
+          },
+          400: ERROR_RESPONSE_SCHEMA,
+          500: ERROR_RESPONSE_SCHEMA,
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const result = await app.graphService.recordCase(request.body ?? {});
+        return reply.send({ ok: true, ...result });
+      } catch (err) {
+        request.log.error({ err }, "Не удалось записать случай в память инженера");
+        const code = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
+        return respondError(
+          reply,
+          code,
+          err.message || "Не удалось записать случай"
+        );
+      }
+    }
+  );
+
   app.get(
     "/api/v2/graph/stats",
     {

@@ -174,6 +174,7 @@ curl http://localhost:8787/api/v2/graph/stats
 | Метод | Путь | Описание |
 |---|---|---|
 | POST | `/api/v2/graph/nodes` | Создать узел |
+| POST | `/api/v2/graph/case` | Записать случай (память инженера): атомарно создаёт/находит узлы `equipment`/`fault`/`solution`/`object` и связи между ними. См. `docs/ENGINEER_MEMORY.md` |
 | GET | `/api/v2/graph/nodes/:id` | Получить узел |
 | GET | `/api/v2/graph/nodes` | Список с фильтрами (`type`, `author`, `isArchived`, `sourceDocumentId`, `nameSearch`, `limit`, `offset`) |
 | PATCH | `/api/v2/graph/nodes/:id` | Обновить узел (любые поля кроме `id`, `createdAt`) |
@@ -260,7 +261,9 @@ curl http://localhost:8787/api/v2/graph/stats
 UI «Настройки → Граф знаний → Типы узлов» и REST API
 `/api/v2/graph/node-types`. Подробности — `docs/GRAPH_NODE_TYPES.md`.
 
-7 встроенных типов (`is_builtin = TRUE`):
+10 встроенных типов (`is_builtin = TRUE`).
+
+Слой сигналов АСУ ТП (7):
 
 - `object` 🏭 — Объект (верхний уровень: установка, цех);
 - `cabinet` 🗄 — Шкаф автоматики;
@@ -269,6 +272,14 @@ UI «Настройки → Граф знаний → Типы узлов» и R
 - `channel` 📡 — Канал на плате;
 - `signal` 〰 — Логический сигнал;
 - `device` 📟 — Полевой прибор.
+
+Слой «Память инженера» (3, Этап 1 — ручная запись случаев,
+`docs/ENGINEER_MEMORY.md`):
+
+- `equipment` 🔧 — Оборудование (зонтичный тип: датчик, насос,
+  кабель, автомат, клеммник; не путать с узким `device`);
+- `fault` ⚠️ — Неисправность;
+- `solution` ✅ — Решение.
 
 Их `code` неизменяем, удалить их нельзя; русское название,
 описание, иконку и порядок сортировки можно править. Кастомные
@@ -292,6 +303,22 @@ UI «Настройки → Граф знаний → Типы узлов» и R
   (`attributes.page_number`, `attributes.section`);
 - `supplies` — A supplies B (источник питания / сигнал);
 - `regulates` — регулятор A regulates параметр B.
+
+Связи слоя «Память инженера»:
+
+- `relates_to` — `fault` relates_to `equipment` (неисправность
+  относится к оборудованию);
+- `resolves` — `solution` resolves `fault` (решение устраняет
+  неисправность);
+- `located_at` — `equipment` located_at `object` (оборудование
+  находится на объекте).
+
+Связь записанного случая с документом-источником **не** делается
+ребром (`graph_edges.target_node_id` ссылается только на
+`graph_nodes`, а документ живёт в таблице `documents`). Вместо
+этого у создаваемых узлов проставляется поле
+`source_document_id` — там же штатно отрабатывает удаление
+документа (FK).
 
 ### Примеры `attributes` для узлов
 
