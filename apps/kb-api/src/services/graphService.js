@@ -22,6 +22,26 @@ function normalizeAuthor(value) {
   return text || "user:manual";
 }
 
+const NAME_MAX = 80;
+
+// Краткая суть случая для поля name: первые ~80 символов текста,
+// схлопнутые пробелы. Полный текст уходит в description.
+function shortName(text) {
+  const clean = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (clean.length <= NAME_MAX) return clean;
+  return clean.slice(0, NAME_MAX).trim() + "…";
+}
+
+// Дата случая хранится атрибутом (вариант А: тип event отложен).
+// Принимаем строку формата YYYY-MM-DD; при невалидном значении — null.
+function normalizeCaseDate(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  return text;
+}
+
 function normalizeAttributes(value) {
   if (value === null || value === undefined) return {};
   if (typeof value !== "object" || Array.isArray(value)) return {};
@@ -440,6 +460,79 @@ export class GraphService {
       frontier = newFrontier;
     }
     return collected;
+  }
+
+  // ================== Память инженера: запись случая ==================
+  // Композитный атомарный метод: за один сабмит фиксирует случай
+  // (оборудование + неисправность + опционально решение и объект)
+  // и связи между ними. Вся работа — в одной транзакции внутри
+  // postgresProvider.recordCaseTx; при ошибке выполняется полный откат.
+  async recordCase(input = {}) {
+    const equipmentId =
+      input.equipmentId === undefined || input.equipmentId === null
+        ? null
+        : String(input.equipmentId).trim();
+    if (equipmentId && !isUuid(equipmentId)) {
+      throw serviceError("Некорректный идентификатор оборудования", 400);
+    }
+    const equipmentName = String(input.equipmentName ?? "").trim();
+    if (!equipmentId && !equipmentName) {
+      throw serviceError("Не указано оборудование", 400);
+    }
+
+    const faultText = String(input.faultText ?? "").trim();
+    if (!faultText) {
+      throw serviceError("Не указано, что произошло (faultText)", 400);
+    }
+
+    const objectId =
+      input.objectId === undefined || input.objectId === null
+        ? null
+        : String(input.objectId).trim();
+    if (objectId && !isUuid(objectId)) {
+      throw serviceError("Некорректный идентификатор объекта", 400);
+    }
+    const objectName = String(input.objectName ?? "").trim();
+
+    const documentId =
+      input.documentId === undefined || input.documentId === null
+        ? null
+        : String(input.documentId).trim();
+    if (documentId && !isUuid(documentId)) {
+      throw serviceError("Некорректный идентификатор документа", 400);
+    }
+
+    const solutionText = String(input.solutionText ?? "").trim();
+    const equipmentModel = String(input.equipmentModel ?? "").trim();
+    const equipmentLocation = String(input.equipmentLocation ?? "").trim();
+    const date = normalizeCaseDate(input.date);
+
+    const payload = {
+      equipmentId: equipmentId || null,
+      equipmentName: equipmentName || null,
+      equipmentModel: equipmentModel || null,
+      equipmentLocation: equipmentLocation || null,
+      objectId: objectId || null,
+      objectName: objectName || null,
+      faultName: shortName(faultText),
+      faultText,
+      solutionName: solutionText ? shortName(solutionText) : null,
+      solutionText: solutionText || null,
+      date,
+      documentId: documentId || null,
+    };
+
+    const result = await this.postgresProvider.recordCaseTx(payload);
+
+    const nodes = {};
+    for (const key of Object.keys(result.nodes)) {
+      nodes[key] = mapNodeRow(result.nodes[key]);
+    }
+    return {
+      nodes,
+      edges: result.edges.map(mapEdgeRow),
+      created: result.created,
+    };
   }
 
   async getStats() {

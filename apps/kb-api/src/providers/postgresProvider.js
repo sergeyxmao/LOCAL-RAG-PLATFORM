@@ -600,6 +600,240 @@ export class PostgresProvider {
     return result.rows.length > 0;
   }
 
+  // ================== Память инженера: запись случая ==================
+  // Атомарно (в одной транзакции) создаёт/находит узлы оборудования,
+  // объекта, неисправности и решения, а также связи между ними.
+  // Никаких ALTER/CREATE — только INSERT/SELECT в существующих таблицах.
+  // При любой ошибке транзакция откатывается целиком.
+  async recordCaseTx(payload) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const createNode = async (node) => {
+        const res = await client.query(
+          `
+          INSERT INTO graph_nodes (
+            type, name, description, attributes,
+            source_document_id, confidence, author
+          )
+          VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7)
+          RETURNING *
+          `,
+          [
+            node.type,
+            node.name,
+            node.description ?? null,
+            JSON.stringify(node.attributes ?? {}),
+            node.sourceDocumentId ?? null,
+            node.confidence ?? 1.0,
+            node.author ?? "user:manual",
+          ]
+        );
+        return res.rows[0];
+      };
+
+      // Поиск существующего неархивного узла заданного типа по имени (ILIKE).
+      const findNodeByName = async (type, name) => {
+        const res = await client.query(
+          `
+          SELECT * FROM graph_nodes
+          WHERE type = $1 AND name ILIKE $2 AND is_archived = FALSE
+          ORDER BY created_at ASC
+          LIMIT 1
+          `,
+          [type, name]
+        );
+        return res.rows[0] ?? null;
+      };
+
+      const getNodeById = async (id) => {
+        const res = await client.query(
+          `SELECT * FROM graph_nodes WHERE id = $1 LIMIT 1`,
+          [id]
+        );
+        return res.rows[0] ?? null;
+      };
+
+      // Идемпотентное ребро: ON CONFLICT DO NOTHING (уникальный индекс
+      // source+target+relation). Возвращает существующее ребро, если оно
+      // уже было.
+      const createEdge = async (edge) => {
+        const res = await client.query(
+          `
+          INSERT INTO graph_edges (
+            source_node_id, target_node_id, relation,
+            attributes, confidence, author
+          )
+          VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+          ON CONFLICT (source_node_id, target_node_id, relation) DO NOTHING
+          RETURNING *
+          `,
+          [
+            edge.sourceNodeId,
+            edge.targetNodeId,
+            edge.relation,
+            JSON.stringify(edge.attributes ?? {}),
+            edge.confidence ?? 1.0,
+            edge.author ?? "user:manual",
+          ]
+        );
+        if (res.rows[0]) return res.rows[0];
+        const existing = await client.query(
+          `
+          SELECT * FROM graph_edges
+          WHERE source_node_id = $1 AND target_node_id = $2 AND relation = $3
+          LIMIT 1
+          `,
+          [edge.sourceNodeId, edge.targetNodeId, edge.relation]
+        );
+        return existing.rows[0] ?? null;
+      };
+
+      const author = "user:manual";
+      const confidence = 1.0;
+      const documentId = payload.documentId ?? null;
+      const date = payload.date ?? null;
+
+      const nodes = {};
+      const edges = [];
+      const createdFlags = {
+        equipment: false,
+        object: false,
+        fault: true,
+        solution: false,
+      };
+
+      // --- Оборудование ---
+      let equipment = null;
+      if (payload.equipmentId) {
+        equipment = await getNodeById(payload.equipmentId);
+        if (!equipment) {
+          throw Object.assign(
+            providerError("EQUIPMENT_NOT_FOUND", "Указанное оборудование не найдено"),
+            { statusCode: 404 }
+          );
+        }
+      } else {
+        equipment = await findNodeByName("equipment", payload.equipmentName);
+        if (!equipment) {
+          const attrs = {};
+          if (payload.equipmentModel) attrs.model = payload.equipmentModel;
+          if (payload.equipmentLocation) attrs.location = payload.equipmentLocation;
+          equipment = await createNode({
+            type: "equipment",
+            name: payload.equipmentName,
+            description: null,
+            attributes: attrs,
+            sourceDocumentId: documentId,
+            confidence,
+            author,
+          });
+          createdFlags.equipment = true;
+        }
+      }
+      nodes.equipment = equipment;
+
+      // --- Объект / площадка (опционально) ---
+      let object = null;
+      if (payload.objectId) {
+        object = await getNodeById(payload.objectId);
+        if (!object) {
+          throw Object.assign(
+            providerError("OBJECT_NOT_FOUND", "Указанный объект не найден"),
+            { statusCode: 404 }
+          );
+        }
+      } else if (payload.objectName) {
+        object = await findNodeByName("object", payload.objectName);
+        if (!object) {
+          object = await createNode({
+            type: "object",
+            name: payload.objectName,
+            description: null,
+            attributes: {},
+            sourceDocumentId: documentId,
+            confidence,
+            author,
+          });
+          createdFlags.object = true;
+        }
+      }
+      if (object) {
+        nodes.object = object;
+        const locatedEdge = await createEdge({
+          sourceNodeId: equipment.id,
+          targetNodeId: object.id,
+          relation: "located_at",
+          confidence,
+          author,
+        });
+        if (locatedEdge) edges.push(locatedEdge);
+      }
+
+      // --- Неисправность ---
+      const faultAttrs = {};
+      if (date) faultAttrs.date = date;
+      const fault = await createNode({
+        type: "fault",
+        name: payload.faultName,
+        description: payload.faultText,
+        attributes: faultAttrs,
+        sourceDocumentId: documentId,
+        confidence,
+        author,
+      });
+      nodes.fault = fault;
+
+      const relatesEdge = await createEdge({
+        sourceNodeId: fault.id,
+        targetNodeId: equipment.id,
+        relation: "relates_to",
+        confidence,
+        author,
+      });
+      if (relatesEdge) edges.push(relatesEdge);
+
+      // --- Решение (опционально) ---
+      if (payload.solutionText) {
+        const solutionAttrs = {};
+        if (date) solutionAttrs.date = date;
+        const solution = await createNode({
+          type: "solution",
+          name: payload.solutionName,
+          description: payload.solutionText,
+          attributes: solutionAttrs,
+          sourceDocumentId: documentId,
+          confidence,
+          author,
+        });
+        nodes.solution = solution;
+        createdFlags.solution = true;
+
+        const resolvesEdge = await createEdge({
+          sourceNodeId: solution.id,
+          targetNodeId: fault.id,
+          relation: "resolves",
+          confidence,
+          author,
+        });
+        if (resolvesEdge) edges.push(resolvesEdge);
+      }
+
+      await client.query("COMMIT");
+      return { nodes, edges, created: createdFlags };
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        // игнорируем ошибку отката — пробрасываем исходную
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   // Жёсткое удаление одного узла без потомков. Связи к узлу
   // удаляются автоматически через ON DELETE CASCADE.
   // Возвращает количество удалённых узлов (0 или 1).
