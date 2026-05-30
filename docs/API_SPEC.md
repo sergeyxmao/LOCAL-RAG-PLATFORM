@@ -55,6 +55,9 @@
 - POST /api/v2/settings/cloudProvider/test
 - PATCH /api/v2/settings/theme
 - GET /api/v2/settings/services
+- GET /api/v2/settings/contextual-enrichment
+- PATCH /api/v2/settings/contextual-enrichment
+- DELETE /api/v2/settings/contextual-enrichment/prompt/:which
 - POST /documents/deduplicate
 - POST /documents/upload
 - POST /documents/ingest-file
@@ -350,6 +353,15 @@ curl -X DELETE http://localhost:8787/api/v2/chat/sessions/<id>
   «плашку», а не как fetch-исключение.
 - `PATCH /api/v2/settings/theme` — обновить тему по умолчанию.
 - `GET /api/v2/settings/services` — статус Postgres, Qdrant, Ollama, kb-api.
+- `GET /api/v2/settings/contextual-enrichment` — настройки контекстного
+  обогащения чанков (Слой 2) + дефолтные промпты `contextPrompt`/`metaPrompt`.
+- `PATCH /api/v2/settings/contextual-enrichment` — обновить. AJV-схема (все
+  поля опциональны): `enabled` boolean; `providerId` string ≤128; `model`
+  string ≤256; `maxTokens` int 200–4000; `timeoutMs` int 5000–120000;
+  `contextPrompt`/`metaPrompt` string ≤8000.
+- `DELETE /api/v2/settings/contextual-enrichment/prompt/:which` — сбросить один
+  промпт к дефолту. `:which` ∈ `context` | `meta`.
+  Подробно: [CONTEXTUAL_ENRICHMENT.md](CONTEXTUAL_ENRICHMENT.md).
 
 Примеры:
 

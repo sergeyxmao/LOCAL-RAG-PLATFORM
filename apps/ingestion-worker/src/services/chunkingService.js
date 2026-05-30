@@ -1,9 +1,12 @@
-import { sentenceChunker } from "../chunkers/sentenceChunker.js";
+import { structuralChunker } from "../chunkers/sentenceChunker.js";
 
 export function buildChunks({ text, title, categories = [], chunkingConfig = {} }) {
-  const rawChunks = sentenceChunker(text, {
-    maxTokens: chunkingConfig.max_tokens ?? 450,
+  // Слой 1: текстовые документы режутся структурно (по абзацам), целевой
+  // размер — text_max_tokens. PDF-путь в этом сервисе не используется.
+  const rawChunks = structuralChunker(text, {
+    maxTokens: chunkingConfig.text_max_tokens ?? 220,
     overlapSentences: chunkingConfig.overlap_sentences ?? 2,
+    minTokens: chunkingConfig.text_min_tokens ?? null,
   });
 
   return rawChunks.map((chunkText, index) => {

@@ -1,10 +1,23 @@
 chunking:
   strategy: sentence
   max_tokens: 450
+  # Слой 1 (структурный чанкинг текстовых документов docx/txt/md).
+  # Текст режется по границам абзацев (\n\n; одиночный \n — вторичная граница),
+  # целевой размер чанка — text_max_tokens, между чанками — overlap_sentences.
+  # PDF-путь использует max_tokens и НЕ затрагивается структурной нарезкой.
+  text_max_tokens: 220
   overlap_sentences: 2
+  # Нижний порог: очень короткие соседние блоки (1–2 предложения) объединяются
+  # до этого размера, чтобы не плодить чанки в несколько слов.
+  text_min_tokens: 60
 
+# Слой 2 (контекстное обогащение чанков, Contextual Retrieval).
+# enabled здесь — глобальный мастер-выключатель. Чтобы обогащение работало,
+# он должен быть true И в UI «Настройки → Контекстное обогащение» должен быть
+# включён per-instance тумблер (app_settings.contextual_enrichment.enabled,
+# по умолчанию false). Все промпты и параметры редактируются в UI.
 contextual_enrichment:
-  enabled: false
+  enabled: true
 
 visual_assets:
   enabled: true

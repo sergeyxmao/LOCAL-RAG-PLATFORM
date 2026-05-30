@@ -69,7 +69,12 @@ const ingestionConfig = readYamlFile(path.join(configDir, "ingestion.yaml"), {
   chunking: {
     strategy: "sentence",
     max_tokens: 450,
+    text_max_tokens: 220,
+    text_min_tokens: 60,
     overlap_sentences: 2,
+  },
+  contextual_enrichment: {
+    enabled: true,
   },
   visual_assets: {
     enabled: true,

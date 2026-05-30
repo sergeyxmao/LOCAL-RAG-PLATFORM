@@ -82,6 +82,15 @@ export class PostgresProvider {
       WHERE phase IS NULL
     `);
 
+    // Слой 2: контекстное обогащение чанков. Неразрушающий идемпотентный DDL —
+    // существующие данные не трогаются, чанки без контекста сосуществуют с новыми.
+    await this.pool.query(`
+      ALTER TABLE document_chunks
+      ADD COLUMN IF NOT EXISTS chunk_context TEXT,
+      ADD COLUMN IF NOT EXISTS chunk_tags JSONB,
+      ADD COLUMN IF NOT EXISTS chunk_summary TEXT
+    `);
+
     await this.ensureKnowledgeNodeSchema();
     await this.ensureChatSessionSchema();
     await this.ensureAppSettingsSchema();
@@ -4373,6 +4382,9 @@ export class PostgresProvider {
           c.text,
           c.context,
           c.text_with_context,
+          c.chunk_context,
+          c.chunk_tags,
+          c.chunk_summary,
           d.categories,
           d.original_file_path AS source_path,
           c.source_url,
@@ -4421,6 +4433,9 @@ export class PostgresProvider {
           a.text_excerpt AS text,
           a.title AS context,
           concat_ws(E'\n\n', a.title, a.text_content) AS text_with_context,
+          NULL::text AS chunk_context,
+          NULL::jsonb AS chunk_tags,
+          NULL::text AS chunk_summary,
           d.categories,
           d.original_file_path AS source_path,
           NULL::text AS source_url,
@@ -4469,6 +4484,9 @@ export class PostgresProvider {
           text,
           context,
           text_with_context,
+          chunk_context,
+          chunk_tags,
+          chunk_summary,
           categories,
           source_path,
           source_url,
@@ -4500,6 +4518,9 @@ export class PostgresProvider {
           text,
           context,
           text_with_context,
+          chunk_context,
+          chunk_tags,
+          chunk_summary,
           categories,
           source_path,
           source_url,
@@ -4572,9 +4593,12 @@ export class PostgresProvider {
           token_estimate,
           categories,
           source_url,
-          file_url
+          file_url,
+          chunk_context,
+          chunk_tags,
+          chunk_summary
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11::jsonb, $12)
         RETURNING *
         `,
         [
@@ -4587,6 +4611,9 @@ export class PostgresProvider {
           JSON.stringify(chunk.categories ?? []),
           chunk.sourceUrl ?? null,
           chunk.fileUrl ?? null,
+          chunk.chunkContext ?? null,
+          chunk.chunkTags ? JSON.stringify(chunk.chunkTags) : null,
+          chunk.chunkSummary ?? null,
         ]
       );
 

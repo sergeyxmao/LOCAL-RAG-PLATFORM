@@ -435,7 +435,35 @@ CRUD через REST API `/api/v2/graph/node-types`:
 
 Подробности — `docs/GRAPH_INGESTION.md`.
 
+## Колонки контекстного обогащения (document_chunks) — Слой 2
+
+Неразрушающий идемпотентный DDL в `ensureRuntimeSchema`:
+
+```sql
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_context TEXT;
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_tags JSONB;
+ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_summary TEXT;
+```
+
+| Колонка | Тип | Назначение |
+|---|---|---|
+| `chunk_context` | TEXT | LLM-контекст «где фрагмент и о чём». Идёт в индекс через `text_with_context`. |
+| `chunk_tags` | JSONB | Массив тегов (≤10, каждый с `#`). Только метаданные — в поиск НЕ идут. |
+| `chunk_summary` | TEXT | Краткое описание фрагмента (≤300 симв.). Только метаданные. |
+
+Заполняются при импорте/переимпорте текстовых документов, если включено
+контекстное обогащение (Слой 2). Существующие чанки и чанки без обогащения
+имеют здесь `NULL` и сосуществуют с обогащёнными — переэмбеддинг не нужен.
+Текст чанка (`text`) хранится дословно и обогащением не меняется. PDF-чанки не
+затрагиваются. Подробности — [CONTEXTUAL_ENRICHMENT.md](CONTEXTUAL_ENRICHMENT.md).
+
 ## История изменений
+
+- 2026-05-30: Слой 2 — контекстное обогащение чанков. Новые колонки
+  `document_chunks.chunk_context`, `chunk_tags`, `chunk_summary`
+  (идемпотентный `ADD COLUMN IF NOT EXISTS`). Настройки/промпты в
+  `app_settings.contextual_enrichment`, редактируются в UI. Подробности —
+  `docs/CONTEXTUAL_ENRICHMENT.md`.
 
 - 2026-05-21: #8.2.followup-1 — `DELETE /documents/:id` удаляет
   импортные узлы графа документа (`graph_nodes.source_document_id =
