@@ -687,6 +687,103 @@ export async function settingsApiRoutes(app) {
     }
   });
 
+  // --- Контекстное обогащение чанков (Слой 2) ---
+  app.get("/api/v2/settings/contextual-enrichment", async (request, reply) => {
+    try {
+      const contextualEnrichment = await app.appSettingsService.getContextualEnrichmentPublic();
+      return { ok: true, contextualEnrichment };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки контекстного обогащения");
+      return respondError(
+        reply,
+        500,
+        error.message || "Не удалось получить настройки контекстного обогащения"
+      );
+    }
+  });
+
+  app.patch(
+    "/api/v2/settings/contextual-enrichment",
+    {
+      attachValidation: true,
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            providerId: { type: "string", maxLength: 128 },
+            model: { type: "string", maxLength: 256 },
+            maxTokens: { type: "integer", minimum: 200, maximum: 4000 },
+            timeoutMs: { type: "integer", minimum: 5000, maximum: 120000 },
+            contextPrompt: { type: "string", maxLength: 8000 },
+            metaPrompt: { type: "string", maxLength: 8000 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (request.validationError) {
+        return respondError(
+          reply,
+          400,
+          "Некорректные параметры обогащения: проверьте границы maxTokens (200-4000), timeoutMs (5000-120000)."
+        );
+      }
+      try {
+        const body = request.body ?? {};
+        const contextualEnrichment =
+          await app.appSettingsService.updateContextualEnrichmentSettings(body);
+        return { ok: true, contextualEnrichment };
+      } catch (error) {
+        const code = error.statusCode || 500;
+        if (code !== 500) {
+          return respondError(reply, code, error.message);
+        }
+        request.log.error({ err: error }, "Не удалось сохранить настройки контекстного обогащения");
+        return respondError(
+          reply,
+          500,
+          error.message || "Не удалось сохранить настройки контекстного обогащения"
+        );
+      }
+    }
+  );
+
+  app.delete(
+    "/api/v2/settings/contextual-enrichment/prompt/:which",
+    {
+      attachValidation: true,
+      schema: {
+        params: {
+          type: "object",
+          properties: {
+            which: { type: "string", enum: ["context", "meta"] },
+          },
+          required: ["which"],
+        },
+      },
+    },
+    async (request, reply) => {
+      if (request.validationError) {
+        return respondError(reply, 400, "Укажите промпт для сброса: context | meta.");
+      }
+      try {
+        const which = request.params.which;
+        const contextualEnrichment =
+          await app.appSettingsService.resetContextualEnrichmentPrompt(which);
+        return { ok: true, contextualEnrichment };
+      } catch (error) {
+        const code = error.statusCode || 500;
+        if (code !== 500) {
+          return respondError(reply, code, error.message);
+        }
+        request.log.error({ err: error }, "Не удалось сбросить промпт обогащения");
+        return respondError(reply, 500, error.message || "Не удалось сбросить промпт обогащения");
+      }
+    }
+  );
+
   app.get("/api/v2/settings/services", async (request, reply) => {
     const ollamaBase = app.config.models.chat.base_url;
     const rerankingSettings = await app.appSettingsService

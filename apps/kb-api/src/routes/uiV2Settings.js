@@ -268,6 +268,22 @@ function renderSettingsCss() {
       margin: 0;
     }
     .settings-hint .mono { font-family: "JetBrains Mono", monospace; }
+    .settings-help {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      margin-left: 4px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: help;
+      vertical-align: middle;
+    }
+    .settings-help:hover { color: var(--text); border-color: var(--text-muted); }
 
     .settings-banner {
       padding: 10px 12px;
@@ -663,6 +679,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         rerankingDefaults: null,
         rerankingStatus: null,
         hyde: null,
+        enrichment: null,
         cloudDraft: null,
         cloudDirty: false,
         providerEditId: null,
@@ -711,6 +728,20 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         hydeSave: document.getElementById("cfgHydeSave"),
         hydePromptReset: document.getElementById("cfgHydePromptReset"),
         hydeBanner: document.getElementById("hydeBanner"),
+        ceEnabled: document.getElementById("cfgCeEnabled"),
+        ceProviderId: document.getElementById("cfgCeProviderId"),
+        ceModel: document.getElementById("cfgCeModel"),
+        ceMaxTokens: document.getElementById("cfgCeMaxTokens"),
+        ceTimeoutMs: document.getElementById("cfgCeTimeoutMs"),
+        ceContextPrompt: document.getElementById("cfgCeContextPrompt"),
+        ceContextPromptStatus: document.getElementById("cfgCeContextPromptStatus"),
+        ceMetaPrompt: document.getElementById("cfgCeMetaPrompt"),
+        ceMetaPromptStatus: document.getElementById("cfgCeMetaPromptStatus"),
+        ceStatus: document.getElementById("ceStatus"),
+        ceSave: document.getElementById("cfgCeSave"),
+        ceContextPromptReset: document.getElementById("cfgCeContextPromptReset"),
+        ceMetaPromptReset: document.getElementById("cfgCeMetaPromptReset"),
+        ceBanner: document.getElementById("ceBanner"),
         promptTemplate: document.getElementById("cfgPromptTemplate"),
         promptSave: document.getElementById("cfgPromptSave"),
         promptReset: document.getElementById("cfgPromptReset"),
@@ -979,6 +1010,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         }).join("");
         dom.cloudList.innerHTML = html;
         renderHydeProvidersDropdown();
+        renderCeProvidersDropdown();
       }
 
       function renderProviderEditForm(p) {
@@ -1299,6 +1331,96 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
           setBanner(dom.hydeBanner, "Промпт HyDE сброшен к универсальному.", "success");
         }).catch(function (err) {
           setBanner(dom.hydeBanner, "Не удалось сбросить: " + err.message, "error");
+        });
+      }
+
+      // --- Контекстное обогащение чанков (Слой 2) ---
+      function renderCeProvidersDropdown() {
+        if (!dom.ceProviderId) return;
+        var providers = (state.settings && state.settings.cloudProviders && state.settings.cloudProviders.providers) || [];
+        var current = state.enrichment && state.enrichment.providerId ? state.enrichment.providerId : "";
+        var options = ['<option value="">— не выбран —</option>'];
+        providers.forEach(function (p) {
+          var label = (p.name || "(без названия)") + (p.model ? " · " + p.model : "");
+          options.push('<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>');
+        });
+        dom.ceProviderId.innerHTML = options.join("");
+        dom.ceProviderId.value = current;
+      }
+
+      function renderEnrichment() {
+        if (!dom.ceEnabled || !state.enrichment) return;
+        var e = state.enrichment;
+        dom.ceEnabled.checked = e.enabled === true;
+        renderCeProvidersDropdown();
+        if (dom.ceModel) dom.ceModel.value = e.model || "";
+        if (dom.ceMaxTokens) dom.ceMaxTokens.value = e.maxTokens || 1500;
+        if (dom.ceTimeoutMs) dom.ceTimeoutMs.value = e.timeoutMs || 30000;
+        if (dom.ceContextPrompt && dom.ceContextPrompt.value !== e.contextPrompt) {
+          dom.ceContextPrompt.value = e.contextPrompt || "";
+        }
+        if (dom.ceMetaPrompt && dom.ceMetaPrompt.value !== e.metaPrompt) {
+          dom.ceMetaPrompt.value = e.metaPrompt || "";
+        }
+        if (dom.ceContextPromptStatus) {
+          dom.ceContextPromptStatus.textContent = e.isCustomContextPrompt
+            ? "изменён вами" : "значение по умолчанию";
+        }
+        if (dom.ceMetaPromptStatus) {
+          dom.ceMetaPromptStatus.textContent = e.isCustomMetaPrompt
+            ? "изменён вами" : "значение по умолчанию";
+        }
+        if (dom.ceStatus) {
+          dom.ceStatus.textContent = e.enabled ? "включено" : "выкл";
+        }
+      }
+
+      function loadEnrichment() {
+        return api("GET", "/api/v2/settings/contextual-enrichment").then(function (data) {
+          state.enrichment = data.contextualEnrichment || null;
+          renderEnrichment();
+        }).catch(function (err) {
+          if (dom.ceBanner) setBanner(dom.ceBanner, "Не удалось загрузить настройки обогащения: " + err.message, "error");
+        });
+      }
+
+      function saveEnrichment() {
+        if (!dom.ceEnabled) return;
+        var payload = {
+          enabled: dom.ceEnabled.checked === true,
+          providerId: dom.ceProviderId ? dom.ceProviderId.value : "",
+          model: dom.ceModel ? dom.ceModel.value : "",
+          maxTokens: dom.ceMaxTokens ? Number(dom.ceMaxTokens.value) : 1500,
+          timeoutMs: dom.ceTimeoutMs ? Number(dom.ceTimeoutMs.value) : 30000,
+          contextPrompt: dom.ceContextPrompt ? dom.ceContextPrompt.value : "",
+          metaPrompt: dom.ceMetaPrompt ? dom.ceMetaPrompt.value : "",
+        };
+        if (payload.enabled && !payload.providerId) {
+          setBanner(dom.ceBanner, "Выберите облачного провайдера для обогащения.", "error");
+          return;
+        }
+        if (dom.ceSave) dom.ceSave.disabled = true;
+        setBanner(dom.ceBanner, "Сохранение…", "success");
+        api("PATCH", "/api/v2/settings/contextual-enrichment", payload).then(function (data) {
+          state.enrichment = data.contextualEnrichment;
+          renderEnrichment();
+          setBanner(dom.ceBanner, "Настройки обогащения сохранены. Применятся при следующем импорте/переимпорте.", "success");
+        }).catch(function (err) {
+          setBanner(dom.ceBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () {
+          if (dom.ceSave) dom.ceSave.disabled = false;
+        });
+      }
+
+      function resetEnrichmentPrompt(which) {
+        var label = which === "context" ? "промпт контекста" : "промпт тегов/описания";
+        if (!window.confirm("Восстановить " + label + " к универсальному? Ваши изменения будут потеряны.")) return;
+        api("DELETE", "/api/v2/settings/contextual-enrichment/prompt/" + which).then(function (data) {
+          state.enrichment = data.contextualEnrichment;
+          renderEnrichment();
+          setBanner(dom.ceBanner, "Промпт сброшен к универсальному.", "success");
+        }).catch(function (err) {
+          setBanner(dom.ceBanner, "Не удалось сбросить: " + err.message, "error");
         });
       }
 
@@ -1839,6 +1961,9 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         if (dom.promptTemplate) dom.promptTemplate.addEventListener("input", validateSystemPromptTextarea);
         if (dom.hydeSave) dom.hydeSave.addEventListener("click", saveHyde);
         if (dom.hydePromptReset) dom.hydePromptReset.addEventListener("click", resetHydePrompt);
+        if (dom.ceSave) dom.ceSave.addEventListener("click", saveEnrichment);
+        if (dom.ceContextPromptReset) dom.ceContextPromptReset.addEventListener("click", function () { resetEnrichmentPrompt("context"); });
+        if (dom.ceMetaPromptReset) dom.ceMetaPromptReset.addEventListener("click", function () { resetEnrichmentPrompt("meta"); });
       }
 
       function setActiveSettingsTab(name) {
@@ -1887,6 +2012,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         loadGeneration();
         loadReranking().then(checkRerankingStatus);
         loadHyde();
+        loadEnrichment();
         loadBackups();
       }
 
@@ -3413,8 +3539,9 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             </div>
           </div>
           <div class="settings-field">
-            <label for="cfgHydePrompt">Промпт HyDE</label>
+            <label for="cfgHydePrompt">Промпт HyDE <span class="settings-help" title="Это один из трёх промптов системы. HyDE — срабатывает ПРИ ВОПРОСЕ пользователя: переписывает запрос в гипотетический параграф документа для semantic-поиска. Не путать с промптами контекстного обогащения, которые срабатывают при импорте документа.">?</span></label>
             <textarea class="settings-input settings-input--mono" id="cfgHydePrompt" rows="10"></textarea>
+            <span class="settings-hint">Срабатывает при вопросе пользователя — переписывает запрос для поиска (не при импорте).</span>
             <span class="settings-hint" id="cfgHydePromptStatus">значение по умолчанию</span>
           </div>
           <div class="settings-actions">
@@ -3422,6 +3549,75 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <button type="button" class="btn btn--ghost" id="cfgHydePromptReset">Сбросить промпт к универсальному</button>
           </div>
           <div class="settings-banner" id="hydeBanner"></div>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-contextual-enrichment">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.fileText}<span>Контекстное обогащение чанков (Слой 2)</span></div>
+          <span class="settings-hint" id="ceStatus">выкл</span>
+        </div>
+        <div class="settings-card__body">
+          <p class="settings-hint">
+            При импорте текстового документа (docx/txt/md) каждый фрагмент обогащается
+            облачным LLM: к нему добавляется краткий контекст «где в документе и о чём»,
+            теги и краткое описание. В поиск (semantic + BM25) идёт только <b>контекст + текст</b>;
+            теги и описание — лишь метаданные для отображения. Текст фрагмента НЕ переписывается.
+            Срабатывает ТОЛЬКО при импорте/переимпорте текстовых документов (PDF не затрагивается).
+            +1 вызов облачной модели на каждый фрагмент. При ошибке/таймауте/без провайдера —
+            фрагмент индексируется без обогащения (graceful fallback). По умолчанию выключено.
+          </p>
+          <div class="settings-row settings-row--triple">
+            <div class="settings-field">
+              <label class="settings-toggle" for="cfgCeEnabled">
+                <input type="checkbox" id="cfgCeEnabled" /> Обогащение включено
+                <span class="settings-help" title="Включает контекстное обогащение фрагментов при импорте. Если выключено — фрагменты индексируются как раньше, без контекста и тегов.">?</span>
+              </label>
+              <span class="settings-hint">Срабатывает при импорте/переимпорте текстовых документов.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgCeProviderId">Провайдер для обогащения <span class="settings-help" title="Какой облачный провайдер (из «Облачные провайдеры») использовать для генерации контекста и тегов при импорте.">?</span></label>
+              <select class="settings-select" id="cfgCeProviderId">
+                <option value="">— не выбран —</option>
+              </select>
+              <span class="settings-hint">Рекомендуем быстрый (flash/turbo), не reasoning — вызов идёт на каждый фрагмент.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgCeModel">Модель (опционально) <span class="settings-help" title="Перебивает модель провайдера. Оставьте пустым — возьмётся модель из настроек провайдера.">?</span></label>
+              <input type="text" class="settings-input settings-input--mono" id="cfgCeModel" placeholder="по умолчанию — модель провайдера" autocomplete="off" />
+              <span class="settings-hint">Оставьте пустым, чтобы взять модель из настроек провайдера.</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-field">
+              <label for="cfgCeMaxTokens">maxTokens <span class="settings-help" title="Максимальная длина ответа модели на один фрагмент (контекст + теги + описание в JSON). Рекомендуем 800–1500.">?</span></label>
+              <input type="number" class="settings-input" id="cfgCeMaxTokens" min="200" max="4000" />
+              <span class="settings-hint">Длина ответа модели на фрагмент. Рекомендуем 800–1500.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgCeTimeoutMs">timeoutMs <span class="settings-help" title="Таймаут на один вызов обогащения. По истечении — фрагмент индексируется без обогащения (fallback), импорт не падает.">?</span></label>
+              <input type="number" class="settings-input" id="cfgCeTimeoutMs" min="5000" max="120000" />
+              <span class="settings-hint">Таймаут на вызов. По истечении — fallback без обогащения.</span>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label for="cfgCeContextPrompt">Промпт контекста <span class="settings-help" title="Один из трёх промптов системы. ПРОМПТ КОНТЕКСТА — срабатывает ПРИ ИМПОРТЕ документа: добавляет к фрагменту краткий контекст (где в документе и о чём). Идёт в поиск вместе с текстом. Не путать с HyDE (срабатывает при вопросе) и промптом тегов/описания.">?</span></label>
+            <textarea class="settings-input settings-input--mono" id="cfgCeContextPrompt" rows="8"></textarea>
+            <span class="settings-hint">Срабатывает при импорте документа — добавляет контекст к фрагментам (идёт в поиск).</span>
+            <span class="settings-hint" id="cfgCeContextPromptStatus">значение по умолчанию</span>
+          </div>
+          <div class="settings-field">
+            <label for="cfgCeMetaPrompt">Промпт тегов/описания <span class="settings-help" title="Один из трёх промптов системы. ПРОМПТ ТЕГОВ/ОПИСАНИЯ — срабатывает ПРИ ИМПОРТЕ: генерирует теги и краткое описание фрагмента. Это только метаданные для отображения/фильтров — в поиск (вектор и BM25) НЕ идут. Не путать с HyDE и промптом контекста.">?</span></label>
+            <textarea class="settings-input settings-input--mono" id="cfgCeMetaPrompt" rows="6"></textarea>
+            <span class="settings-hint">Срабатывает при импорте — генерирует теги и описание (метаданные, в поиск не идут).</span>
+            <span class="settings-hint" id="cfgCeMetaPromptStatus">значение по умолчанию</span>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="cfgCeSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--ghost" id="cfgCeContextPromptReset">Сбросить промпт контекста</button>
+            <button type="button" class="btn btn--ghost" id="cfgCeMetaPromptReset">Сбросить промпт тегов/описания</button>
+          </div>
+          <div class="settings-banner" id="ceBanner"></div>
         </div>
       </div>
       </div>

@@ -40,6 +40,55 @@ const DEFAULT_HYDE = {
   prompt: DEFAULT_HYDE_PROMPT,
 };
 
+// --- Контекстное обогащение чанков (Слой 2). Промпты доменно-агностичны. ---
+const DEFAULT_ENRICHMENT_CONTEXT_PROMPT = `Ты помогаешь поисковой системе индексировать документы.
+Дай краткий контекст (1–2 предложения): где в документе находится приведённый фрагмент и о чём он.
+Если во фрагменте есть точные обозначения, коды, идентификаторы, номера, даты, серийные номера, адреса — приведи их в контексте ДОСЛОВНО, не искажая и не сокращая.
+Не пересказывай весь документ и не выдумывай деталей, которых нет во фрагменте или общем содержании.
+Пиши на языке документа. Это значение пойдёт в поле "context".`;
+
+const DEFAULT_ENRICHMENT_META_PROMPT = `Дополнительно сгенерируй для этого же фрагмента метаданные:
+"tags" — массив коротких тегов по ключевым понятиям фрагмента, каждый с символом «#», не более 10 штук;
+"summary" — краткое описание фрагмента не длиннее 300 символов, на языке документа, без вымысла.
+Эти значения пойдут в поля "tags" и "summary" и НЕ участвуют в поиске — только для отображения и фильтров.`;
+
+const DEFAULT_CONTEXTUAL_ENRICHMENT = {
+  enabled: false,
+  providerId: "",
+  model: "",
+  maxTokens: 1500,
+  timeoutMs: 30000,
+  contextPrompt: DEFAULT_ENRICHMENT_CONTEXT_PROMPT,
+  metaPrompt: DEFAULT_ENRICHMENT_META_PROMPT,
+};
+
+function sanitizeContextualEnrichmentSettings(raw) {
+  const safe = raw && typeof raw === "object" ? raw : {};
+  const maxTokensRaw = Number(safe.maxTokens);
+  const timeoutRaw = Number(safe.timeoutMs);
+  const contextPrompt =
+    typeof safe.contextPrompt === "string" && safe.contextPrompt.trim()
+      ? safe.contextPrompt
+      : DEFAULT_ENRICHMENT_CONTEXT_PROMPT;
+  const metaPrompt =
+    typeof safe.metaPrompt === "string" && safe.metaPrompt.trim()
+      ? safe.metaPrompt
+      : DEFAULT_ENRICHMENT_META_PROMPT;
+  return {
+    enabled: safe.enabled === true,
+    providerId: typeof safe.providerId === "string" ? safe.providerId.trim() : "",
+    model: typeof safe.model === "string" ? safe.model.trim() : "",
+    maxTokens: Number.isFinite(maxTokensRaw)
+      ? Math.max(200, Math.min(4000, Math.trunc(maxTokensRaw)))
+      : DEFAULT_CONTEXTUAL_ENRICHMENT.maxTokens,
+    timeoutMs: Number.isFinite(timeoutRaw)
+      ? Math.max(5000, Math.min(120000, Math.trunc(timeoutRaw)))
+      : DEFAULT_CONTEXTUAL_ENRICHMENT.timeoutMs,
+    contextPrompt,
+    metaPrompt,
+  };
+}
+
 function sanitizeHydeSettings(raw) {
   const safe = raw && typeof raw === "object" ? raw : {};
   const maxTokensRaw = Number(safe.maxTokens);
@@ -658,6 +707,83 @@ export class AppSettingsService {
     return this.getHydePublic();
   }
 
+  async getContextualEnrichmentSettings() {
+    const raw = (await this.getRawValue("contextual_enrichment")) || DEFAULT_CONTEXTUAL_ENRICHMENT;
+    return sanitizeContextualEnrichmentSettings(raw);
+  }
+
+  async getContextualEnrichmentPublic() {
+    const full = await this.getContextualEnrichmentSettings();
+    return {
+      enabled: full.enabled,
+      providerId: full.providerId,
+      model: full.model,
+      maxTokens: full.maxTokens,
+      timeoutMs: full.timeoutMs,
+      contextPrompt: full.contextPrompt,
+      metaPrompt: full.metaPrompt,
+      defaultContextPrompt: DEFAULT_ENRICHMENT_CONTEXT_PROMPT,
+      defaultMetaPrompt: DEFAULT_ENRICHMENT_META_PROMPT,
+      isCustomContextPrompt: full.contextPrompt !== DEFAULT_ENRICHMENT_CONTEXT_PROMPT,
+      isCustomMetaPrompt: full.metaPrompt !== DEFAULT_ENRICHMENT_META_PROMPT,
+    };
+  }
+
+  async updateContextualEnrichmentSettings(patch) {
+    const current = await this.getContextualEnrichmentSettings();
+    const next = { ...current };
+    if (patch && patch.enabled !== undefined) {
+      next.enabled = patch.enabled === true;
+    }
+    if (patch && patch.providerId !== undefined) {
+      next.providerId = String(patch.providerId || "").trim();
+    }
+    if (patch && patch.model !== undefined) {
+      next.model = String(patch.model || "").trim();
+    }
+    if (patch && patch.maxTokens !== undefined) {
+      const n = Number(patch.maxTokens);
+      if (!Number.isFinite(n) || n < 200 || n > 4000) {
+        throw Object.assign(new Error("maxTokens должен быть от 200 до 4000"), { statusCode: 400 });
+      }
+      next.maxTokens = Math.trunc(n);
+    }
+    if (patch && patch.timeoutMs !== undefined) {
+      const n = Number(patch.timeoutMs);
+      if (!Number.isFinite(n) || n < 5000 || n > 120000) {
+        throw Object.assign(new Error("timeoutMs должен быть от 5000 до 120000"), { statusCode: 400 });
+      }
+      next.timeoutMs = Math.trunc(n);
+    }
+    if (patch && typeof patch.contextPrompt === "string") {
+      const trimmed = patch.contextPrompt.trim();
+      next.contextPrompt = trimmed.length > 0 ? patch.contextPrompt : DEFAULT_ENRICHMENT_CONTEXT_PROMPT;
+    }
+    if (patch && typeof patch.metaPrompt === "string") {
+      const trimmed = patch.metaPrompt.trim();
+      next.metaPrompt = trimmed.length > 0 ? patch.metaPrompt : DEFAULT_ENRICHMENT_META_PROMPT;
+    }
+    const cleaned = sanitizeContextualEnrichmentSettings(next);
+    await this.setRawValue("contextual_enrichment", cleaned);
+    return this.getContextualEnrichmentPublic();
+  }
+
+  async resetContextualEnrichmentPrompt(which) {
+    const current = await this.getContextualEnrichmentSettings();
+    const next = { ...current };
+    if (which === "context") {
+      next.contextPrompt = DEFAULT_ENRICHMENT_CONTEXT_PROMPT;
+    } else if (which === "meta") {
+      next.metaPrompt = DEFAULT_ENRICHMENT_META_PROMPT;
+    } else {
+      throw Object.assign(new Error("Неизвестный промпт. Допустимо: context | meta"), {
+        statusCode: 400,
+      });
+    }
+    await this.setRawValue("contextual_enrichment", sanitizeContextualEnrichmentSettings(next));
+    return this.getContextualEnrichmentPublic();
+  }
+
   async getRerankingPublic() {
     const full = await this.getRerankingSettings();
     return {
@@ -704,7 +830,18 @@ export class AppSettingsService {
     const generation = await this.getGenerationSettings();
     const reranking = await this.getRerankingPublic();
     const hyde = await this.getHydePublic();
-    return { cloudProvider, cloudProviders, theme, retrieval, systemPrompt, generation, reranking, hyde };
+    const contextualEnrichment = await this.getContextualEnrichmentPublic();
+    return {
+      cloudProvider,
+      cloudProviders,
+      theme,
+      retrieval,
+      systemPrompt,
+      generation,
+      reranking,
+      hyde,
+      contextualEnrichment,
+    };
   }
 }
 

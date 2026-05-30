@@ -19,6 +19,7 @@ import { AppSettingsService } from "./services/appSettingsService.js";
 import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
 import { HydeService } from "./services/hydeService.js";
+import { ContextualEnrichmentService } from "./services/contextualEnrichmentService.js";
 import { GraphService } from "./services/graphService.js";
 import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngestionService.js";
 import { GraphConfigService } from "./services/graphConfigService.js";
@@ -253,6 +254,17 @@ const graphPreviewService = new GraphPreviewService({
   logger: app.log,
 });
 
+const cloudChatProvider = new CloudChatProvider({
+  defaultTimeoutMs: appConfig.cloudChat.timeoutMs,
+});
+
+const contextualEnrichmentService = new ContextualEnrichmentService({
+  cloudChatProvider,
+  appSettingsService,
+  globalEnabled: appConfig.ingestion?.contextual_enrichment?.enabled !== false,
+  logger: app.log,
+});
+
 const ingestionService = new IngestionService({
   config: appConfig,
   postgresProvider,
@@ -264,6 +276,8 @@ const ingestionService = new IngestionService({
   appSettingsService,
   indexingSemaphore,
   graphIngestionService,
+  contextualEnrichmentService,
+  logger: app.log,
 });
 
 const diagnosticsService = new DiagnosticsService({
@@ -278,10 +292,6 @@ const rerankerProvider = new RerankerProvider({
   defaultJinaUrl: appConfig.reranker.jinaUrl,
   defaultJinaModel: appConfig.reranker.jinaModel,
   defaultTimeoutMs: appConfig.reranker.timeoutMs,
-});
-
-const cloudChatProvider = new CloudChatProvider({
-  defaultTimeoutMs: appConfig.cloudChat.timeoutMs,
 });
 
 const hydeService = new HydeService({
@@ -342,6 +352,7 @@ app.decorate("indexingSemaphore", indexingSemaphore);
 app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("rerankerProvider", rerankerProvider);
 app.decorate("hydeService", hydeService);
+app.decorate("contextualEnrichmentService", contextualEnrichmentService);
 app.decorate("backupService", backupService);
 app.decorate("graphService", graphService);
 app.decorate("graphIngestionService", graphIngestionService);

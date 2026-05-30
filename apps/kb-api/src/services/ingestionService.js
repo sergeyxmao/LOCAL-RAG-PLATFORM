@@ -94,6 +94,8 @@ export class IngestionService {
     appSettingsService = null,
     indexingSemaphore = null,
     graphIngestionService = null,
+    contextualEnrichmentService = null,
+    logger = null,
   }) {
     this.config = config;
     this.postgresProvider = postgresProvider;
@@ -105,6 +107,73 @@ export class IngestionService {
     this.appSettingsService = appSettingsService;
     this.indexingSemaphore = indexingSemaphore;
     this.graphIngestionService = graphIngestionService;
+    this.contextualEnrichmentService = contextualEnrichmentService;
+    this.logger = logger;
+  }
+
+  // Слой 2: обогащает чанки контекстом/тегами/summary перед индексацией.
+  // Мутирует переданные chunk-объекты (добавляет chunkContext/chunkTags/
+  // chunkSummary и переписывает textWithContext, включая context в индекс).
+  // Текст чанка НЕ меняется. Graceful fallback: при любой проблеме чанк
+  // остаётся без обогащения, импорт не падает. Применять только к тексту.
+  async enrichChunks(chunks, { title, fullText, sourceType = "text" } = {}) {
+    const service = this.contextualEnrichmentService;
+    if (!service || typeof service.enrichChunk !== "function") return chunks;
+    // Только текстовые документы (docx/txt/md, sourceType "docx"/"file"/"text").
+    // PDF (asset-чанки) и табличные CSV/XLSX (предсобранные построчные чанки)
+    // не обогащаются.
+    const SKIP_SOURCE_TYPES = new Set(["pdf", "csv", "spreadsheet"]);
+    if (SKIP_SOURCE_TYPES.has(sourceType)) return chunks;
+    if (!Array.isArray(chunks) || chunks.length === 0) return chunks;
+
+    let gate;
+    try {
+      gate = await service.isEnabled();
+    } catch (err) {
+      this.logger?.warn?.({ err: err?.message || err }, "Контекстное обогащение: проверка доступности упала, fallback");
+      return chunks;
+    }
+    if (!gate || !gate.ok) {
+      this.logger?.info?.(
+        { reason: gate?.reason || "unknown" },
+        "Контекстное обогащение пропущено (выключено/не настроено) — чанки индексируются как есть"
+      );
+      return chunks;
+    }
+
+    let enrichedCount = 0;
+    for (const chunk of chunks) {
+      try {
+        const result = await service.enrichChunk({
+          title,
+          documentSummary: fullText,
+          chunkText: chunk.text,
+        });
+        if (result && result.context) {
+          chunk.chunkContext = result.context;
+          chunk.chunkTags = Array.isArray(result.tags) ? result.tags : [];
+          chunk.chunkSummary = result.summary || null;
+          // В индекс (эмбеддинг + BM25) идёт ТОЛЬКО context + текст.
+          // Формат: Заголовок\nКонтекст: <context>\n\n<текст>
+          chunk.textWithContext = `${chunk.context}\nКонтекст: ${result.context}\n\n${chunk.text}`;
+          enrichedCount += 1;
+        } else if (result) {
+          // Контекст пуст, но теги/summary могли прийти — сохраняем как метаданные.
+          chunk.chunkTags = Array.isArray(result.tags) ? result.tags : [];
+          chunk.chunkSummary = result.summary || null;
+        }
+      } catch (err) {
+        this.logger?.warn?.(
+          { err: err?.message || err, chunkIndex: chunk.chunkIndex },
+          "Контекстное обогащение чанка упало — чанк индексируется без контекста"
+        );
+      }
+    }
+    this.logger?.info?.(
+      { total: chunks.length, enriched: enrichedCount, title },
+      "Контекстное обогащение: завершено"
+    );
+    return chunks;
   }
 
   async runGraphParserIfApplicable({ documentId, filePath, jobId, logger }) {
@@ -221,12 +290,21 @@ export class IngestionService {
       }));
     }
 
+    // Слой 1: текстовые документы (docx/txt/md) режутся структурно по абзацам
+    // с целевым размером text_max_tokens. PDF-путь использует legacy
+    // sentence-стратегию (structural=false) и не затрагивается.
+    const chunkingConfig = this.config.ingestion.chunking;
+    const isPdf = extracted.sourceType === "pdf";
     return chunkTextDocument({
       text: extracted.text,
       title,
       categories,
-      maxTokens: this.config.ingestion.chunking.max_tokens,
-      overlapSentences: this.config.ingestion.chunking.overlap_sentences,
+      maxTokens: isPdf
+        ? chunkingConfig.max_tokens
+        : chunkingConfig.text_max_tokens ?? chunkingConfig.max_tokens,
+      overlapSentences: chunkingConfig.overlap_sentences,
+      structural: !isPdf,
+      minTokens: isPdf ? null : chunkingConfig.text_min_tokens ?? null,
     });
   }
 
@@ -339,12 +417,15 @@ export class IngestionService {
     primaryNodeId = null,
   }) {
     const checksum = crypto.createHash("sha256").update(text, "utf8").digest("hex");
+    const chunkingConfig = this.config.ingestion.chunking;
     const chunks = chunkTextDocument({
       text,
       title,
       categories,
-      maxTokens: this.config.ingestion.chunking.max_tokens,
-      overlapSentences: this.config.ingestion.chunking.overlap_sentences,
+      maxTokens: chunkingConfig.text_max_tokens ?? chunkingConfig.max_tokens,
+      overlapSentences: chunkingConfig.overlap_sentences,
+      structural: true,
+      minTokens: chunkingConfig.text_min_tokens ?? null,
     });
 
     if (chunks.length === 0) {
@@ -381,6 +462,8 @@ export class IngestionService {
         primaryNodeId,
       });
 
+      await this.enrichChunks(chunks, { title, fullText: text, sourceType: "text" });
+
       const insertedChunks = await this.postgresProvider.createChunks(document.id, chunks);
       await this.embedAndUpsertRecords({
         records: insertedChunks,
@@ -396,6 +479,9 @@ export class IngestionService {
           text: chunk.text,
           context: chunk.context,
           text_with_context: chunk.text_with_context,
+          chunk_context: chunk.chunk_context ?? null,
+          chunk_tags: chunk.chunk_tags ?? null,
+          chunk_summary: chunk.chunk_summary ?? null,
           categories: chunk.categories,
           source_path: document.original_file_path,
           ...nodePayload,
@@ -542,6 +628,12 @@ export class IngestionService {
         primaryNodeId,
       });
 
+      await this.enrichChunks(chunks, {
+        title: effectiveTitle,
+        fullText: extracted.text,
+        sourceType: extracted.sourceType,
+      });
+
       const insertedChunks = await this.postgresProvider.createChunks(document.id, chunks);
       let processedItems = await this.embedAndUpsertRecords({
         records: insertedChunks,
@@ -557,6 +649,9 @@ export class IngestionService {
           text: chunk.text,
           context: chunk.context,
           text_with_context: chunk.text_with_context,
+          chunk_context: chunk.chunk_context ?? null,
+          chunk_tags: chunk.chunk_tags ?? null,
+          chunk_summary: chunk.chunk_summary ?? null,
           categories: chunk.categories,
           source_path: document.original_file_path,
           ...nodePayload,

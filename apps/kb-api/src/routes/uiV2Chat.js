@@ -1643,6 +1643,12 @@ function renderChatScript(initialStateJson) {
             var label = sourceShortLabel(src, it.index);
             var href = sourceLink(src);
             var refNum = it.index + 1;
+            var enrichTitle = label;
+            if (src && src.chunkContext) enrichTitle += "\nКонтекст: " + src.chunkContext;
+            if (src && src.chunkSummary) enrichTitle += "\nОписание: " + src.chunkSummary;
+            var enrichBadge = (src && (src.chunkContext || src.chunkSummary))
+              ? '<span class="sources-compact__item-enriched" title="Фрагмент обогащён контекстом при импорте">✦</span>'
+              : '';
             var linkPart = href
               ? '<a class="sources-compact__item-link" href="' + escapeHtml(href) + '" target="_blank" rel="noopener" data-source-link="1">→ открыть</a>'
               : '';
@@ -1650,7 +1656,8 @@ function renderChatScript(initialStateJson) {
               (href ? ' data-href="' + escapeHtml(href) + '"' : '') +
               ' id="src-' + escapeHtml(message.id) + '-' + refNum + '">' +
               '<span class="sources-compact__item-index">[' + refNum + ']</span>' +
-              '<span class="sources-compact__item-label" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</span>' +
+              '<span class="sources-compact__item-label" title="' + escapeHtml(enrichTitle) + '">' + escapeHtml(label) + '</span>' +
+              enrichBadge +
               linkPart +
               '</div>';
           }).join("");
@@ -1831,6 +1838,20 @@ function renderChatScript(initialStateJson) {
         return '<span class="' + cls + '" title="' + title + '">' + label + '</span>';
       }
 
+      function formatEnrichmentBadge(sources) {
+        if (!Array.isArray(sources) || !sources.length) return "";
+        var enriched = sources.filter(function (s) {
+          return s && (s.chunkContext || s.chunkSummary);
+        });
+        if (!enriched.length) return "";
+        var title = "Найденные фрагменты обогащены контекстом при импорте (Слой 2): " +
+          "к тексту добавлено краткое описание места фрагмента в документе. " +
+          "Это улучшает и semantic-поиск, и BM25. Обогащено фрагментов: " +
+          enriched.length + " из " + sources.length + ".";
+        return '<span class="msg__hyde msg__hyde--used" title="' + escapeHtml(title) + '">' +
+          'фрагменты обогащены · ' + enriched.length + '/' + sources.length + '</span>';
+      }
+
       function renderMessage(message, opts) {
         opts = opts || {};
         var isUser = message.role === "user";
@@ -1865,6 +1886,8 @@ function renderChatScript(initialStateJson) {
           if (rerankBadge) metaParts.push(rerankBadge);
           var hydeBadge = formatHydeBadge(meta.hyde);
           if (hydeBadge) metaParts.push(hydeBadge);
+          var enrichmentBadge = formatEnrichmentBadge(sources);
+          if (enrichmentBadge) metaParts.push(enrichmentBadge);
           if (meta.error && meta.error.code) {
             var showSwitch = meta.provider === "cloud" && meta.error.code !== "no_credentials";
             errorHtml = '<div class="msg__error">' +

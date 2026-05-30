@@ -127,6 +127,14 @@ function compactSourceForStorage(source) {
     chunkIndex: source.chunk_index ?? source.chunkIndex ?? null,
     snippet:
       typeof source.text === "string" ? source.text.slice(0, 600) : source.snippet ?? null,
+    // Слой 2: контекстное обогащение — метаданные для отображения в карточке.
+    chunkContext: source.chunk_context ?? source.chunkContext ?? null,
+    chunkSummary: source.chunk_summary ?? source.chunkSummary ?? null,
+    chunkTags: Array.isArray(source.chunk_tags)
+      ? source.chunk_tags
+      : Array.isArray(source.chunkTags)
+        ? source.chunkTags
+        : [],
     score: source.score ?? null,
     assetClass: source.asset_class ?? source.assetClass ?? null,
     assetUrl: source.asset_url ?? source.assetUrl ?? null,
