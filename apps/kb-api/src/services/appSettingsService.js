@@ -110,6 +110,51 @@ function sanitizeHydeSettings(raw) {
   };
 }
 
+// --- Извлечение знаний из документов (Память инженера — Этап 3). ---
+// Промпт доменно-агностичен: не предполагает АСУ ТП. Просит модель извлечь
+// случаи «оборудование / что произошло / что сделали», переносить точные
+// обозначения дословно и вернуть строгий JSON по контракту {cases:[...]}.
+const DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT = `Ты извлекаешь из текста производственные случаи опыта эксплуатации. Каждый случай — это связка: какое ОБОРУДОВАНИЕ фигурирует, ЧТО С НИМ ПРОИЗОШЛО (неисправность, отказ, событие) и ЧТО СДЕЛАЛИ (решение, действие).
+Правила:
+- Переноси точные обозначения, модели, серийные номера, теги, коды, адреса и даты ДОСЛОВНО, как в тексте. Ничего не исправляй, не дополняй и не выдумывай.
+- Если какого-то поля в тексте нет — оставь его пустым (null). Не придумывай значения.
+- Не объединяй разные случаи в один и не дроби один случай на несколько.
+- Для каждого случая приведи source_quote — короткую дословную цитату из текста, на которой основан случай (для проверки человеком).
+- Даты указывай в формате YYYY-MM-DD, только если они однозначно определяются из текста; иначе null.
+- confidence — твоя оценка уверенности в случае от 0 до 1.
+Извлекай случаи из любой предметной области (оборудование, приборы, узлы, машины, ПО — что угодно). Если в тексте нет ни одного случая — верни пустой список.`;
+
+const DEFAULT_KNOWLEDGE_EXTRACTION = {
+  enabled: false,
+  providerId: "",
+  model: "",
+  maxTokens: 2000,
+  timeoutMs: 60000,
+  prompt: DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT,
+};
+
+function sanitizeKnowledgeExtractionSettings(raw) {
+  const safe = raw && typeof raw === "object" ? raw : {};
+  const maxTokensRaw = Number(safe.maxTokens);
+  const timeoutRaw = Number(safe.timeoutMs);
+  const prompt =
+    typeof safe.prompt === "string" && safe.prompt.trim()
+      ? safe.prompt
+      : DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT;
+  return {
+    enabled: safe.enabled === true,
+    providerId: typeof safe.providerId === "string" ? safe.providerId.trim() : "",
+    model: typeof safe.model === "string" ? safe.model.trim() : "",
+    maxTokens: Number.isFinite(maxTokensRaw)
+      ? Math.max(500, Math.min(8000, Math.trunc(maxTokensRaw)))
+      : DEFAULT_KNOWLEDGE_EXTRACTION.maxTokens,
+    timeoutMs: Number.isFinite(timeoutRaw)
+      ? Math.max(5000, Math.min(180000, Math.trunc(timeoutRaw)))
+      : DEFAULT_KNOWLEDGE_EXTRACTION.timeoutMs,
+    prompt,
+  };
+}
+
 function sanitizeRerankingSettings(raw) {
   const safe = raw && typeof raw === "object" ? raw : {};
   const provider = String(safe.provider || DEFAULT_RERANKING.provider).toLowerCase();
@@ -784,6 +829,73 @@ export class AppSettingsService {
     return this.getContextualEnrichmentPublic();
   }
 
+  // --- Извлечение знаний из документов (Этап 3) ---
+  async getKnowledgeExtractionSettings() {
+    const raw =
+      (await this.getRawValue("knowledge_extraction")) || DEFAULT_KNOWLEDGE_EXTRACTION;
+    return sanitizeKnowledgeExtractionSettings(raw);
+  }
+
+  async getKnowledgeExtractionPublic() {
+    const full = await this.getKnowledgeExtractionSettings();
+    return {
+      enabled: full.enabled,
+      providerId: full.providerId,
+      model: full.model,
+      maxTokens: full.maxTokens,
+      timeoutMs: full.timeoutMs,
+      prompt: full.prompt,
+      defaultPrompt: DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT,
+      isCustomPrompt: full.prompt !== DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT,
+    };
+  }
+
+  async updateKnowledgeExtractionSettings(patch) {
+    const current = await this.getKnowledgeExtractionSettings();
+    const next = { ...current };
+    if (patch && patch.enabled !== undefined) {
+      next.enabled = patch.enabled === true;
+    }
+    if (patch && patch.providerId !== undefined) {
+      next.providerId = String(patch.providerId || "").trim();
+    }
+    if (patch && patch.model !== undefined) {
+      next.model = String(patch.model || "").trim();
+    }
+    if (patch && patch.maxTokens !== undefined) {
+      const n = Number(patch.maxTokens);
+      if (!Number.isFinite(n) || n < 500 || n > 8000) {
+        throw Object.assign(new Error("maxTokens должен быть от 500 до 8000"), {
+          statusCode: 400,
+        });
+      }
+      next.maxTokens = Math.trunc(n);
+    }
+    if (patch && patch.timeoutMs !== undefined) {
+      const n = Number(patch.timeoutMs);
+      if (!Number.isFinite(n) || n < 5000 || n > 180000) {
+        throw Object.assign(new Error("timeoutMs должен быть от 5000 до 180000"), {
+          statusCode: 400,
+        });
+      }
+      next.timeoutMs = Math.trunc(n);
+    }
+    if (patch && typeof patch.prompt === "string") {
+      const trimmed = patch.prompt.trim();
+      next.prompt = trimmed.length > 0 ? patch.prompt : DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT;
+    }
+    const cleaned = sanitizeKnowledgeExtractionSettings(next);
+    await this.setRawValue("knowledge_extraction", cleaned);
+    return this.getKnowledgeExtractionPublic();
+  }
+
+  async resetKnowledgeExtractionPrompt() {
+    const current = await this.getKnowledgeExtractionSettings();
+    const next = { ...current, prompt: DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT };
+    await this.setRawValue("knowledge_extraction", sanitizeKnowledgeExtractionSettings(next));
+    return this.getKnowledgeExtractionPublic();
+  }
+
   async getRerankingPublic() {
     const full = await this.getRerankingSettings();
     return {
@@ -831,6 +943,7 @@ export class AppSettingsService {
     const reranking = await this.getRerankingPublic();
     const hyde = await this.getHydePublic();
     const contextualEnrichment = await this.getContextualEnrichmentPublic();
+    const knowledgeExtraction = await this.getKnowledgeExtractionPublic();
     return {
       cloudProvider,
       cloudProviders,
@@ -841,6 +954,7 @@ export class AppSettingsService {
       reranking,
       hyde,
       contextualEnrichment,
+      knowledgeExtraction,
     };
   }
 }

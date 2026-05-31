@@ -409,6 +409,40 @@ CRUD через REST API `/api/v2/graph/node-types`:
 
 Подробности — `docs/GRAPH_NODE_TYPES.md`.
 
+## Таблица graph_extraction_candidates (Память инженера — Этап 3)
+
+Очередь кандидатов LLM-извлечения случаев из документов. Создаётся в
+`PostgresProvider.ensureGraphSchema()` (идемпотентный DDL —
+`CREATE TABLE IF NOT EXISTS` + индексы). Извлечённые случаи пишутся сюда
+со `status='pending'` и НЕ попадают в `graph_nodes`/`graph_edges`, пока
+пользователь не подтвердит их на экране ревью — граф остаётся стерильным.
+
+`graph_extraction_candidates`:
+
+- `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`;
+- `source_document_id UUID REFERENCES documents(id) ON DELETE CASCADE` —
+  документ-источник (при удалении документа кандидаты уходят каскадом);
+- `extraction_job_id UUID NOT NULL` — группировка одного запуска
+  извлечения (один клик «Извлечь знания»);
+- `case_payload JSONB NOT NULL DEFAULT '{}'::jsonb` — весь случай
+  (вложенный контракт `equipment`/`fault`/`solution`/`object`/
+  `source_quote`/`confidence`);
+- `confidence REAL` (nullable) — уверенность (дублируется отдельной
+  колонкой для сортировки/фильтров);
+- `status TEXT NOT NULL DEFAULT 'pending'` — `pending` / `approved` /
+  `rejected`;
+- `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+- `reviewed_at TIMESTAMPTZ` (nullable) — момент подтверждения/отклонения.
+
+Индексы: `idx_graph_extraction_candidates_document` (по
+`source_document_id`), `idx_graph_extraction_candidates_status` (по
+`status`), `idx_graph_extraction_candidates_job` (по `extraction_job_id`).
+
+Существующие таблицы не трогаются. Расширение `recordCaseTx` опциональными
+`author`/`confidence` — это код, не DDL (колонки `author`/`confidence` уже
+есть в `graph_nodes`/`graph_edges`). Подробно —
+`docs/KNOWLEDGE_EXTRACTION.md`.
+
 ## Колонка ingestion_jobs.graph_report (#8.1.b)
 
 Идемпотентно добавляется через
@@ -459,6 +493,13 @@ ALTER TABLE document_chunks ADD COLUMN IF NOT EXISTS chunk_summary TEXT;
 
 ## История изменений
 
+- 2026-05-31: Память инженера — Этап 3. Новая таблица
+  `graph_extraction_candidates` (очередь кандидатов LLM-извлечения,
+  идемпотентный DDL + индексы по `source_document_id`/`status`/
+  `extraction_job_id`). Настройки `app_settings.knowledge_extraction`
+  (редактируемый промпт). Существующие таблицы не менялись; расширение
+  `recordCaseTx`/`recordCase` опциональными `author`/`confidence` — это
+  код, не DDL. Подробности — `docs/KNOWLEDGE_EXTRACTION.md`.
 - 2026-05-30: Слой 2 — контекстное обогащение чанков. Новые колонки
   `document_chunks.chunk_context`, `chunk_tags`, `chunk_summary`
   (идемпотентный `ADD COLUMN IF NOT EXISTS`). Настройки/промпты в

@@ -20,6 +20,7 @@ import { DiagnosticsService } from "./services/diagnosticsService.js";
 import { OcrService } from "./services/ocrService.js";
 import { HydeService } from "./services/hydeService.js";
 import { ContextualEnrichmentService } from "./services/contextualEnrichmentService.js";
+import { KnowledgeExtractionService } from "./services/knowledgeExtractionService.js";
 import { GraphService } from "./services/graphService.js";
 import { GraphIngestionService, loadGraphConfigs } from "./services/graphIngestionService.js";
 import { GraphConfigService } from "./services/graphConfigService.js";
@@ -46,6 +47,7 @@ import { uiRoutes } from "./routes/ui.js";
 import { uiV2Routes } from "./routes/uiV2.js";
 import { chatSessionRoutes } from "./routes/chatSessions.js";
 import { graphRoutes } from "./routes/graph.js";
+import { graphExtractionRoutes } from "./routes/graphExtraction.js";
 import { graphReparseRoutes } from "./routes/graphReparse.js";
 import { graphProfilesRoutes } from "./routes/graphProfiles.js";
 import { graphAliasesRoutes } from "./routes/graphAliases.js";
@@ -265,6 +267,14 @@ const contextualEnrichmentService = new ContextualEnrichmentService({
   logger: app.log,
 });
 
+const knowledgeExtractionService = new KnowledgeExtractionService({
+  cloudChatProvider,
+  appSettingsService,
+  postgresProvider,
+  globalEnabled: appConfig.ingestion?.knowledge_extraction?.enabled !== false,
+  logger: app.log,
+});
+
 const ingestionService = new IngestionService({
   config: appConfig,
   postgresProvider,
@@ -353,6 +363,7 @@ app.decorate("cloudChatProvider", cloudChatProvider);
 app.decorate("rerankerProvider", rerankerProvider);
 app.decorate("hydeService", hydeService);
 app.decorate("contextualEnrichmentService", contextualEnrichmentService);
+app.decorate("knowledgeExtractionService", knowledgeExtractionService);
 app.decorate("backupService", backupService);
 app.decorate("graphService", graphService);
 app.decorate("graphIngestionService", graphIngestionService);
@@ -377,6 +388,7 @@ await app.register(chatSessionRoutes);
 await app.register(backupApiRoutes);
 await app.register(diagnosticsRoutes);
 await app.register(graphRoutes);
+await app.register(graphExtractionRoutes);
 await app.register(graphReparseRoutes);
 await app.register(graphProfilesRoutes);
 await app.register(graphAliasesRoutes);

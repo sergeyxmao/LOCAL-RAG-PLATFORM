@@ -916,6 +916,13 @@ function renderKnowledgeScript(initialStateJson) {
           var reparseBtn = isGraphFile
             ? '<button type="button" class="kb-doc-action" data-action="reparse-graph" data-doc-id="' + escapeHtml(doc.id) + '" data-doc-title="' + escapeHtml(doc.title || doc.original_file_name || "") + '" title="Перепарсить граф">' + INITIAL_STATE.icons.graph + '</button>'
             : '';
+          // Этап 3: «Извлечь знания» — только для текстовых документов
+          // (docx/txt/md). Для PDF/XLSX кнопка скрыта (XLSX наполняет граф
+          // своим парсером; PDF — вне scope этой итерации).
+          var isTextDoc = /\.(docx|txt|md|markdown)$/.test(lowerName);
+          var extractBtn = isTextDoc
+            ? '<button type="button" class="kb-doc-action" data-action="extract-knowledge" data-doc-id="' + escapeHtml(doc.id) + '" data-doc-title="' + escapeHtml(doc.title || doc.original_file_name || "") + '" title="Извлечь знания (LLM → очередь кандидатов на ревью)">' + INITIAL_STATE.icons.extract + '</button>'
+            : '';
           return '<tr data-doc-id="' + escapeHtml(doc.id) + '">' +
             '<td><input type="checkbox" data-action="select-doc" data-doc-id="' + escapeHtml(doc.id) + '" ' + checked + ' style="accent-color:var(--accent)" /></td>' +
             '<td><div class="doc-title" title="' + escapeHtml(doc.title || "") + '">' + escapeHtml(doc.title || doc.original_file_name || "(без названия)") + '</div>' +
@@ -932,6 +939,7 @@ function renderKnowledgeScript(initialStateJson) {
             '<button type="button" class="kb-doc-action" data-action="edit-tags" data-doc-id="' + escapeHtml(doc.id) + '" title="Редактировать теги">' + INITIAL_STATE.icons.tag + '</button>' +
             '<button type="button" class="kb-doc-action" data-action="reindex-doc" data-doc-id="' + escapeHtml(doc.id) + '" data-doc-title="' + escapeHtml(doc.title || doc.original_file_name || "") + '" title="Переиндексировать (вкл. OCR)">' + INITIAL_STATE.icons.refresh + '</button>' +
             reparseBtn +
+            extractBtn +
             '<button type="button" class="kb-doc-action is-danger" data-action="delete-doc" data-doc-id="' + escapeHtml(doc.id) + '" title="Удалить">' + INITIAL_STATE.icons.trash + '</button>' +
             '</div></td>' +
             '</tr>';
@@ -1748,6 +1756,66 @@ function renderKnowledgeScript(initialStateJson) {
         });
       }
 
+      // Этап 3: ручной запуск LLM-извлечения случаев. Извлечённое идёт в
+      // очередь кандидатов (не в граф). Граф наполняется только после
+      // подтверждения на экране «Кандидаты».
+      function confirmExtractKnowledge(documentId, docTitle) {
+        openConfirmModal({
+          title: "Извлечь знания из документа?",
+          bodyHtml:
+            '<p style="margin:0;">LLM прочитает текст документа «<strong>' + escapeHtml(docTitle || documentId) + '</strong>» и извлечёт из него случаи (оборудование / что произошло / что сделали).</p>' +
+            '<ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:var(--text-muted);">' +
+            '<li>Извлечённое — <strong>черновики</strong>: в граф напрямую НЕ попадают</li>' +
+            '<li>Случаи складываются в очередь «Кандидаты» (Граф знаний → Кандидаты)</li>' +
+            '<li>В граф случай попадёт только после вашего «Подтвердить»</li>' +
+            '<li>Текст документа уходит в облако выбранного провайдера; факты переносятся дословно</li>' +
+            '<li>Доступно только для текстовых документов (docx / txt / md)</li>' +
+            '</ul>',
+          confirmLabel: "Извлечь",
+          danger: false,
+          onConfirm: function () {
+            showToast("Извлечение запущено… это может занять до минуты.");
+            api("POST", "/api/v2/graph/extract/" + encodeURIComponent(documentId), {}).then(function (data) {
+              if (data && data.jobId) {
+                pollExtractStatus(data.jobId, docTitle, 0);
+              } else {
+                showToast("Извлечение запущено.");
+              }
+            }).catch(function (err) {
+              // 409 / ok:false → понятное русское сообщение (выключено,
+              // нет провайдера, не тот тип документа и т.п.).
+              showToast("Не удалось запустить извлечение: " + err.message, "error");
+            });
+          },
+        });
+      }
+
+      function pollExtractStatus(jobId, docTitle, attempt) {
+        attempt = attempt || 0;
+        if (attempt > 90) {
+          showToast("Извлечение выполняется дольше обычного — загляните на экран «Кандидаты» позже.", "warning");
+          return;
+        }
+        api("GET", "/api/v2/graph/extract/status/" + encodeURIComponent(jobId)).then(function (data) {
+          var job = (data && data.job) || {};
+          if (job.status === "running") {
+            setTimeout(function () { pollExtractStatus(jobId, docTitle, attempt + 1); }, 2000);
+            return;
+          }
+          if (job.status === "done") {
+            showToast(job.message || ("Извлечено случаев: " + (job.casesFound || 0) + ". Откройте «Граф знаний → Кандидаты» для проверки."));
+            return;
+          }
+          if (job.status === "empty") {
+            showToast(job.message || "Случаи в документе не найдены.", "warning");
+            return;
+          }
+          showToast("Извлечение не удалось: " + (job.error || "неизвестная ошибка"), "error");
+        }).catch(function (err) {
+          showToast("Не удалось получить статус извлечения: " + err.message, "error");
+        });
+      }
+
       function showGraphReparseDetails(docTitle, report) {
         var wrap = document.createElement("div");
         wrap.className = "kb-prompt";
@@ -2304,6 +2372,11 @@ function renderKnowledgeScript(initialStateJson) {
             confirmReparseGraph(reparseGraphBtn.getAttribute("data-doc-id"), reparseGraphBtn.getAttribute("data-doc-title") || "");
             return;
           }
+          var extractBtn = event.target.closest("[data-action='extract-knowledge']");
+          if (extractBtn) {
+            confirmExtractKnowledge(extractBtn.getAttribute("data-doc-id"), extractBtn.getAttribute("data-doc-title") || "");
+            return;
+          }
           var delBtn = event.target.closest("[data-action='delete-doc']");
           if (delBtn) {
             var docId = delBtn.getAttribute("data-doc-id");
@@ -2593,6 +2666,8 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
       refresh: ICONS.refresh,
       graph:
         '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>',
+      extract:
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></svg>',
     },
   };
 

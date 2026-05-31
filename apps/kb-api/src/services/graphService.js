@@ -127,6 +127,87 @@ function serviceError(message, statusCode = 400) {
   return Object.assign(new Error(message), { statusCode });
 }
 
+// ====== Этап 3: кандидаты LLM-извлечения ======
+
+function cleanStr(value) {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+}
+
+// Приводит произвольный case_payload к канонической вложенной форме контракта
+// {equipment:{name,model,location}, fault:{text,date}, solution:{text,date},
+//  object, source_quote, confidence}. Факты не переписываются — только
+// нормализация структуры и обрезка пробелов.
+function normalizeCasePayload(raw) {
+  const cp = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const equipment =
+    cp.equipment && typeof cp.equipment === "object" ? cp.equipment : {};
+  const fault = cp.fault && typeof cp.fault === "object" ? cp.fault : {};
+  const solution = cp.solution && typeof cp.solution === "object" ? cp.solution : {};
+  const out = {
+    equipment: {
+      name: cleanStr(equipment.name) || null,
+      model: cleanStr(equipment.model) || null,
+      location: cleanStr(equipment.location) || null,
+    },
+    fault: {
+      text: cleanStr(fault.text) || null,
+      date: normalizeCaseDate(fault.date),
+    },
+    solution: {
+      text: cleanStr(solution.text) || null,
+      date: normalizeCaseDate(solution.date),
+    },
+    object: cleanStr(cp.object) || null,
+    source_quote: cleanStr(cp.source_quote) || null,
+  };
+  if (cp.confidence !== undefined && cp.confidence !== null) {
+    out.confidence = clampConfidence(cp.confidence, 0.5);
+  }
+  return out;
+}
+
+// Разворачивает вложенный case_payload кандидата в ПЛОСКИЕ поля recordCase.
+// Сигнатура recordCase под вложенный объект НЕ переписывается — раскладка
+// делается здесь. Дату случая берём из fault.date (иначе solution.date).
+function flattenCasePayload(raw) {
+  const cp = normalizeCasePayload(raw);
+  return {
+    equipmentName: cp.equipment.name || null,
+    equipmentModel: cp.equipment.model || null,
+    equipmentLocation: cp.equipment.location || null,
+    objectName: cp.object || null,
+    faultText: cp.fault.text || null,
+    solutionText: cp.solution.text || null,
+    date: cp.fault.date || cp.solution.date || null,
+  };
+}
+
+function mapCandidateRow(row) {
+  if (!row) return null;
+  let payload = row.case_payload;
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch (_e) {
+      payload = {};
+    }
+  }
+  return {
+    id: row.id,
+    sourceDocumentId: row.source_document_id,
+    extractionJobId: row.extraction_job_id,
+    casePayload: payload && typeof payload === "object" ? payload : {},
+    confidence:
+      row.confidence === null || row.confidence === undefined
+        ? null
+        : Number(row.confidence),
+    status: row.status,
+    createdAt: row.created_at,
+    reviewedAt: row.reviewed_at,
+  };
+}
+
 export class GraphService {
   constructor({ postgresProvider, logger } = {}) {
     if (!postgresProvider) {
@@ -520,6 +601,11 @@ export class GraphService {
       solutionText: solutionText || null,
       date,
       documentId: documentId || null,
+      // Этап 3: автор и уверенность. Дефолты сохраняют поведение Этапа 1
+      // (ручная запись → "user:manual" / 1.0). LLM-подтверждение передаёт
+      // author="agent:llm-extraction" и confidence из кандидата.
+      author: normalizeAuthor(input.author),
+      confidence: clampConfidence(input.confidence, 1.0),
     };
 
     const result = await this.postgresProvider.recordCaseTx(payload);
@@ -533,6 +619,171 @@ export class GraphService {
       edges: result.edges.map(mapEdgeRow),
       created: result.created,
     };
+  }
+
+  // ============== Этап 3: очередь кандидатов LLM-извлечения ==============
+
+  // Список кандидатов (по документу / запуску / статусу).
+  async listCandidates(options = {}) {
+    if (
+      options.sourceDocumentId !== undefined &&
+      options.sourceDocumentId !== null &&
+      options.sourceDocumentId !== "" &&
+      !isUuid(options.sourceDocumentId)
+    ) {
+      throw serviceError("Некорректный sourceDocumentId", 400);
+    }
+    if (
+      options.extractionJobId !== undefined &&
+      options.extractionJobId !== null &&
+      options.extractionJobId !== "" &&
+      !isUuid(options.extractionJobId)
+    ) {
+      throw serviceError("Некорректный extractionJobId", 400);
+    }
+    const result = await this.postgresProvider.listExtractionCandidates({
+      sourceDocumentId: options.sourceDocumentId || undefined,
+      extractionJobId: options.extractionJobId || undefined,
+      status: options.status || undefined,
+      limit: options.limit ?? 200,
+      offset: options.offset ?? 0,
+    });
+    return {
+      items: result.items.map(mapCandidateRow),
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
+    };
+  }
+
+  // Список запусков извлечения (группировка по документу) — для левой
+  // колонки экрана ревью.
+  async listCandidateRuns(options = {}) {
+    const rows = await this.postgresProvider.listExtractionRuns({
+      limit: options.limit ?? 100,
+    });
+    return rows.map((r) => ({
+      extractionJobId: r.extraction_job_id,
+      sourceDocumentId: r.source_document_id,
+      documentTitle: r.document_title,
+      documentFileName: r.document_file_name,
+      total: r.total,
+      pending: r.pending,
+      approved: r.approved,
+      rejected: r.rejected,
+      createdAt: r.created_at,
+      lastReviewedAt: r.last_reviewed_at,
+    }));
+  }
+
+  // Правка кандидата перед подтверждением (только статус 'pending').
+  async updateCandidate(candidateId, patch = {}) {
+    if (!isUuid(candidateId)) {
+      throw serviceError("Некорректный идентификатор кандидата", 400);
+    }
+    const row = await this.postgresProvider.getExtractionCandidateById(candidateId);
+    if (!row) {
+      throw serviceError("Кандидат не найден", 404);
+    }
+    if (row.status !== "pending") {
+      throw serviceError("Править можно только кандидата со статусом «на ревью»", 409);
+    }
+    const updated = await this.postgresProvider.updateExtractionCandidatePayload(
+      candidateId,
+      {
+        casePayload:
+          patch.casePayload !== undefined
+            ? normalizeCasePayload(patch.casePayload)
+            : undefined,
+        confidence:
+          patch.confidence === undefined
+            ? undefined
+            : patch.confidence === null
+              ? null
+              : clampConfidence(patch.confidence, 0.5),
+      }
+    );
+    return { candidate: mapCandidateRow(updated) };
+  }
+
+  // Подтверждение кандидата: разворачиваем case_payload в плоские поля,
+  // вызываем recordCase с author='agent:llm-extraction' и confidence из
+  // кандидата. Дедупликация оборудования по имени отрабатывает внутри
+  // recordCaseTx (findNodeByName), если передан equipmentName (а не id).
+  async approveCandidate(candidateId) {
+    if (!isUuid(candidateId)) {
+      throw serviceError("Некорректный идентификатор кандидата", 400);
+    }
+    const row = await this.postgresProvider.getExtractionCandidateById(candidateId);
+    if (!row) {
+      throw serviceError("Кандидат не найден", 404);
+    }
+    if (row.status === "approved") {
+      throw serviceError("Кандидат уже подтверждён", 409);
+    }
+    const flat = flattenCasePayload(row.case_payload);
+    if (!flat.equipmentName) {
+      throw serviceError(
+        "В кандидате не указано оборудование — подтверждение невозможно",
+        400
+      );
+    }
+    if (!flat.faultText) {
+      throw serviceError(
+        "В кандидате не указано, что произошло — подтверждение невозможно",
+        400
+      );
+    }
+    const confidence =
+      row.confidence === null || row.confidence === undefined
+        ? 0.5
+        : Number(row.confidence);
+
+    const result = await this.recordCase({
+      equipmentName: flat.equipmentName,
+      equipmentModel: flat.equipmentModel,
+      equipmentLocation: flat.equipmentLocation,
+      objectName: flat.objectName,
+      faultText: flat.faultText,
+      solutionText: flat.solutionText,
+      date: flat.date,
+      documentId: row.source_document_id || null,
+      author: "agent:llm-extraction",
+      confidence,
+    });
+
+    const updated = await this.postgresProvider.updateExtractionCandidateStatus(
+      candidateId,
+      "approved"
+    );
+
+    const nodes = {};
+    for (const key of Object.keys(result.nodes)) {
+      nodes[key] = result.nodes[key];
+    }
+    return {
+      candidate: mapCandidateRow(updated),
+      nodes,
+      edges: result.edges,
+      created: result.created,
+    };
+  }
+
+  // Отклонение кандидата: status='rejected', остаётся для аудита, в граф
+  // не идёт.
+  async rejectCandidate(candidateId) {
+    if (!isUuid(candidateId)) {
+      throw serviceError("Некорректный идентификатор кандидата", 400);
+    }
+    const row = await this.postgresProvider.getExtractionCandidateById(candidateId);
+    if (!row) {
+      throw serviceError("Кандидат не найден", 404);
+    }
+    const updated = await this.postgresProvider.updateExtractionCandidateStatus(
+      candidateId,
+      "rejected"
+    );
+    return { candidate: mapCandidateRow(updated) };
   }
 
   async getStats() {

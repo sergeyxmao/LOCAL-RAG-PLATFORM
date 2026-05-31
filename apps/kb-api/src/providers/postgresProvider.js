@@ -224,6 +224,37 @@ export class PostgresProvider {
       FOR EACH ROW
       EXECUTE FUNCTION graph_node_types_set_updated_at()
     `);
+
+    // ===== Этап 3: очередь кандидатов LLM-извлечения случаев =====
+    // Извлечённые из документов случаи складываются СЮДА со status='pending'
+    // и НЕ попадают в graph_nodes/graph_edges, пока пользователь их не
+    // подтвердит на экране ревью. Граф остаётся стерильным.
+    // Идемпотентный DDL: только CREATE TABLE IF NOT EXISTS + индексы.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS graph_extraction_candidates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        source_document_id UUID
+          REFERENCES documents(id) ON DELETE CASCADE,
+        extraction_job_id UUID NOT NULL,
+        case_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        confidence REAL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reviewed_at TIMESTAMPTZ
+      )
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_extraction_candidates_document
+      ON graph_extraction_candidates(source_document_id)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_extraction_candidates_status
+      ON graph_extraction_candidates(status)
+    `);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_graph_extraction_candidates_job
+      ON graph_extraction_candidates(extraction_job_id)
+    `);
   }
 
   async createGraphNode(node) {
@@ -699,8 +730,18 @@ export class PostgresProvider {
         return existing.rows[0] ?? null;
       };
 
-      const author = "user:manual";
-      const confidence = 1.0;
+      // Этап 3: автор и уверенность пробрасываются из payload (LLM-извлечение
+      // передаёт author="agent:llm-extraction" и confidence из кандидата).
+      // Обратная совместимость: при отсутствии полей — поведение Этапа 1
+      // (ручная запись: author="user:manual", confidence=1.0).
+      const author =
+        typeof payload.author === "string" && payload.author.trim()
+          ? payload.author.trim()
+          : "user:manual";
+      const confidence =
+        payload.confidence === undefined || payload.confidence === null
+          ? 1.0
+          : Math.min(1, Math.max(0, Number(payload.confidence) || 0));
       const documentId = payload.documentId ?? null;
       const date = payload.date ?? null;
 
@@ -841,6 +882,174 @@ export class PostgresProvider {
     } finally {
       client.release();
     }
+  }
+
+  // ============== Этап 3: очередь кандидатов LLM-извлечения ==============
+  // Пакетная вставка кандидатов одного запуска извлечения. Пишет ТОЛЬКО в
+  // graph_extraction_candidates со status='pending'; graph_nodes/graph_edges
+  // не затрагиваются — граф остаётся стерильным до подтверждения.
+  async createExtractionCandidates({ sourceDocumentId, extractionJobId, cases } = {}) {
+    const list = Array.isArray(cases) ? cases : [];
+    if (list.length === 0) return [];
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = [];
+      for (const item of list) {
+        const casePayload =
+          item && typeof item.casePayload === "object" && item.casePayload
+            ? item.casePayload
+            : {};
+        const confidence =
+          item && item.confidence !== undefined && item.confidence !== null
+            ? Math.min(1, Math.max(0, Number(item.confidence) || 0))
+            : null;
+        const res = await client.query(
+          `
+          INSERT INTO graph_extraction_candidates (
+            source_document_id, extraction_job_id, case_payload, confidence, status
+          )
+          VALUES ($1, $2, $3::jsonb, $4, 'pending')
+          RETURNING *
+          `,
+          [
+            sourceDocumentId ?? null,
+            extractionJobId,
+            JSON.stringify(casePayload),
+            confidence,
+          ]
+        );
+        inserted.push(res.rows[0]);
+      }
+      await client.query("COMMIT");
+      return inserted;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (_rollbackErr) {
+        // игнорируем ошибку отката — пробрасываем исходную
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getExtractionCandidateById(id) {
+    const res = await this.pool.query(
+      `SELECT * FROM graph_extraction_candidates WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async listExtractionCandidates({
+    sourceDocumentId,
+    extractionJobId,
+    status,
+    limit = 200,
+    offset = 0,
+  } = {}) {
+    const params = [];
+    const conditions = [];
+    if (sourceDocumentId) {
+      params.push(sourceDocumentId);
+      conditions.push(`source_document_id = $${params.length}`);
+    }
+    if (extractionJobId) {
+      params.push(extractionJobId);
+      conditions.push(`extraction_job_id = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+    const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const safeLimit = Math.max(1, Math.min(1000, Math.trunc(Number(limit) || 200)));
+    const safeOffset = Math.max(0, Math.trunc(Number(offset) || 0));
+
+    const totalRes = await this.pool.query(
+      `SELECT COUNT(*)::int AS total FROM graph_extraction_candidates ${whereSql}`,
+      params
+    );
+    const itemsRes = await this.pool.query(
+      `
+      SELECT * FROM graph_extraction_candidates
+      ${whereSql}
+      ORDER BY created_at ASC
+      LIMIT ${safeLimit} OFFSET ${safeOffset}
+      `,
+      params
+    );
+    return {
+      items: itemsRes.rows,
+      total: totalRes.rows[0]?.total ?? 0,
+      limit: safeLimit,
+      offset: safeOffset,
+    };
+  }
+
+  // Список запусков извлечения (группировка по extraction_job_id + документ)
+  // с разбивкой по статусам — для левого списка экрана ревью.
+  async listExtractionRuns({ limit = 100 } = {}) {
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)));
+    const res = await this.pool.query(
+      `
+      SELECT
+        c.extraction_job_id,
+        c.source_document_id,
+        d.title AS document_title,
+        d.original_file_name AS document_file_name,
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE c.status = 'pending')::int AS pending,
+        COUNT(*) FILTER (WHERE c.status = 'approved')::int AS approved,
+        COUNT(*) FILTER (WHERE c.status = 'rejected')::int AS rejected,
+        MIN(c.created_at) AS created_at,
+        MAX(c.reviewed_at) AS last_reviewed_at
+      FROM graph_extraction_candidates c
+      LEFT JOIN documents d ON d.id = c.source_document_id
+      GROUP BY c.extraction_job_id, c.source_document_id, d.title, d.original_file_name
+      ORDER BY MIN(c.created_at) DESC
+      LIMIT ${safeLimit}
+      `
+    );
+    return res.rows;
+  }
+
+  async updateExtractionCandidateStatus(id, status) {
+    const setsReviewed = status === "approved" || status === "rejected";
+    const res = await this.pool.query(
+      `
+      UPDATE graph_extraction_candidates
+      SET status = $2,
+          reviewed_at = ${setsReviewed ? "NOW()" : "reviewed_at"}
+      WHERE id = $1
+      RETURNING *
+      `,
+      [id, status]
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async updateExtractionCandidatePayload(id, { casePayload, confidence } = {}) {
+    const sets = [];
+    const params = [id];
+    if (casePayload !== undefined) {
+      params.push(JSON.stringify(casePayload ?? {}));
+      sets.push(`case_payload = $${params.length}::jsonb`);
+    }
+    if (confidence !== undefined) {
+      const safe =
+        confidence === null ? null : Math.min(1, Math.max(0, Number(confidence) || 0));
+      params.push(safe);
+      sets.push(`confidence = $${params.length}`);
+    }
+    if (sets.length === 0) return this.getExtractionCandidateById(id);
+    const res = await this.pool.query(
+      `UPDATE graph_extraction_candidates SET ${sets.join(", ")} WHERE id = $1 RETURNING *`,
+      params
+    );
+    return res.rows[0] ?? null;
   }
 
   // Жёсткое удаление одного узла без потомков. Связи к узлу
