@@ -163,11 +163,19 @@ COUNT(*) FROM document_assets WHERE document_id = d.id AS page_count
 - `sources JSONB NOT NULL DEFAULT '[]'::jsonb` — массив компактных описаний
   источников: `{ documentId, documentName, sourcePath, resourceType, page,
   chunkIndex, snippet, score, assetClass, assetUrl, assetPreviewUrl, nodePaths,
-  signalTags }`;
+  signalTags }`. Графовый источник (#8.3) хранится своей формой:
+  `{ origin:"graph", resourceType:"graph_node", documentName, graphNodeId,
+  graphType, graphAttributes, graphRelations, snippet }` и идёт после
+  RAG-источников;
 - `metadata JSONB NOT NULL DEFAULT '{}'::jsonb` — служебная информация:
-  `mode` (`llm`, `fallback-empty`, `pages`, `error`), `durationMs`,
-  `searchMode` (`answer`/`pages`), `filters` (снимок применённых фильтров на
-  момент ответа);
+  `mode` (`llm`, `graph-only`, `fallback-empty`, `pages`, `error`),
+  `durationMs`, `searchMode` (`answer`/`pages`), `filters` (снимок применённых
+  фильтров на момент ответа), `graph` (`{ used, count, reason }` — результат
+  graph-lookup для бейджа `граф: N фактов`, см.
+  [GRAPH_RETRIEVAL.md](GRAPH_RETRIEVAL.md));
+  - `mode = "graph-only"` — RAG-источников не нашлось, но граф знаний дал
+    точный структурный факт; ответ сгенерирован по графу (вместо
+    `fallback-empty`);
 - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`.
 
 Индекс: `idx_chat_messages_session_created` по `(session_id, created_at)` — для
@@ -229,6 +237,11 @@ Bag-O-Settings для произвольных настроек проекта. 
   суммарное время через `answerService`).
 - `error`: `{ code, message }` при ошибке провайдера. Коды описаны в
   `docs/CLOUD_PROVIDER.md`.
+- `reranking`, `hyde`: снимки соответствующих этапов retrieval (бейджи в чате).
+- `graph`: `{ used, count, reason }` — результат graph-lookup (#8.3). `used`
+  истинно, если приняты структурные матчи; `count` — число подмешанных фактов;
+  `reason` ∈ `no_identifier` / `no_match` / `error` / `ok`. Источник для бейджа
+  `граф: N фактов`. См. [GRAPH_RETRIEVAL.md](GRAPH_RETRIEVAL.md).
 
 ## Таблица ingestion_jobs — phase (hotfix #11)
 

@@ -1,9 +1,14 @@
+import { formatGraphFactsBlock } from "./systemPromptService.js";
+
 export class AnswerService {
-  constructor({ chatProvider, searchService, postgresProvider, modelsConfig }) {
+  constructor({ chatProvider, searchService, postgresProvider, modelsConfig, graphAnswerService = null }) {
     this.chatProvider = chatProvider;
     this.searchService = searchService;
     this.postgresProvider = postgresProvider;
     this.modelsConfig = modelsConfig;
+    // #8.3: граф знаний для структурных вопросов. Опционален — при отсутствии
+    // pipeline ведёт себя как раньше (чистый RAG).
+    this.graphAnswerService = graphAnswerService;
   }
 
   translateAssetClass(assetClass) {
@@ -149,6 +154,7 @@ export class AnswerService {
       nodeId = null,
       nodeIds = [],
       includeChildren = true,
+      graphContext = undefined,
     } = {}
   ) {
     const startedAt = Date.now();
@@ -165,12 +171,35 @@ export class AnswerService {
       nodeIds,
       includeChildren,
     });
-    const sources = hybrid.items;
+    const ragSources = hybrid.items;
     const rerankingInfo = hybrid.reranking || null;
     const hydeInfo = hybrid.hyde || null;
 
-    if (sources.length === 0) {
-      const fallback = this.buildFallbackAnswer(question, sources, {
+    // #8.3: граф знаний. graphContext можно передать снаружи (чтобы не дублировать
+    // lookup), иначе сервис делает его сам, если граф подключён.
+    let graph = graphContext;
+    if (graph === undefined) {
+      graph = this.graphAnswerService
+        ? await this.graphAnswerService.lookup(question)
+        : { used: false, reason: "no_identifier", facts: [], count: 0 };
+    }
+    const graphUsed = !!(graph && graph.used === true && Array.isArray(graph.facts) && graph.facts.length > 0);
+    const graphFacts = graphUsed ? graph.facts : [];
+    const graphSources = graphUsed && this.graphAnswerService
+      ? this.graphAnswerService.toSources(graphFacts)
+      : [];
+    // Графовые источники идут ПОСЛЕ RAG-источников со своей нумерацией,
+    // чтобы ссылки [N] на RAG-источники оставались консистентными.
+    const sources = ragSources.concat(graphSources);
+    const graphInfo = {
+      used: graphUsed,
+      count: graphUsed ? graphFacts.length : 0,
+      reason: graph?.reason ?? (graphUsed ? "ok" : "no_identifier"),
+    };
+
+    // Развилка fallback: и RAG пуст, и граф пуст → честный fallback-empty.
+    if (ragSources.length === 0 && !graphUsed) {
+      const fallback = this.buildFallbackAnswer(question, ragSources, {
         nodeId: hybrid.debug?.node_id,
         nodeName: hybrid.debug?.node_name,
       });
@@ -191,27 +220,32 @@ export class AnswerService {
         mode: fallback.mode,
         reranking: rerankingInfo,
         hyde: hydeInfo,
+        graph: graphInfo,
       };
     }
 
-    const contextBlock = sources
-      .map((source, index) => this.describeSource(source, index))
-      .join("\n\n---\n\n");
+    // graph-only: RAG пуст, но граф дал факт — отвечаем по графу.
+    const graphOnly = ragSources.length === 0 && graphUsed;
+    const contextBlock = ragSources.length
+      ? ragSources.map((source, index) => this.describeSource(source, index)).join("\n\n---\n\n")
+      : "Источники не найдены.";
+    const graphBlock = graphUsed ? formatGraphFactsBlock(graphFacts) : "";
+
+    const userContent = graphUsed
+      ? `Вопрос:\n${question}\n\nИсточники:\n${contextBlock}\n\nСтруктурные факты из графа знаний:\n${graphBlock}`
+      : `Вопрос:\n${question}\n\nИсточники:\n${contextBlock}`;
+
+    const systemContent = graphUsed
+      ? "Ты локальный консультант по рабочим документам. Отвечай по предоставленным источникам и структурным фактам из графа знаний. Если по идентификатору (тегу, адресу, шкафу, плате) есть точный факт в графе — отдавай ему приоритет над похожим текстом источников. Если данных недостаточно, скажи об этом прямо. Держи ответ кратким и добавляй ссылки на источники в виде [1], [2]."
+      : "Ты локальный консультант по рабочим документам. Отвечай только по предоставленным источникам. Если источников недостаточно, скажи об этом прямо. Держи ответ кратким и добавляй ссылки на источники в виде [1], [2].";
 
     let answer;
-    let mode = "llm";
+    let mode = graphOnly ? "graph-only" : "llm";
 
     try {
       answer = await this.chatProvider.generate([
-        {
-          role: "system",
-          content:
-            "Ты локальный консультант по рабочим документам. Отвечай только по предоставленным источникам. Если источников недостаточно, скажи об этом прямо. Держи ответ кратким и добавляй ссылки на источники в виде [1], [2].",
-        },
-        {
-          role: "user",
-          content: `Вопрос:\n${question}\n\nИсточники:\n${contextBlock}`,
-        },
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
       ]);
     } catch (error) {
       const fallback = this.buildFallbackAnswer(question, sources, {
@@ -237,6 +271,7 @@ export class AnswerService {
       mode,
       reranking: rerankingInfo,
       hyde: hydeInfo,
+      graph: graphInfo,
     };
   }
 }

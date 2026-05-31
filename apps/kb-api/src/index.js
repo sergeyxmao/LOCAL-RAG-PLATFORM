@@ -28,6 +28,7 @@ import { GraphPreviewService } from "./services/graphPreviewService.js";
 import { GraphNodeTypeService } from "./services/graphNodeTypeService.js";
 import { GraphTreeService } from "./services/graphTreeService.js";
 import { GraphSearchService } from "./services/graphSearchService.js";
+import { GraphAnswerService } from "./services/graphAnswerService.js";
 import { Semaphore } from "./utils/semaphore.js";
 import { BackupService } from "./services/backupService.js";
 import { settingsApiRoutes } from "./routes/settingsApi.js";
@@ -225,6 +226,14 @@ const graphSearchService = new GraphSearchService({
   logger: app.log,
 });
 
+// #8.3: граф знаний в answer-pipeline. Переиспользует graphSearchService и
+// graphService (их методы не модифицируются).
+const graphAnswerService = new GraphAnswerService({
+  graphSearchService,
+  graphService,
+  logger: app.log,
+});
+
 const graphConfigDir = process.env.CONFIG_DIR || "/app/config";
 const graphConfigs = loadGraphConfigs({ configDir: graphConfigDir, logger: app.log });
 if (Array.isArray(graphConfigs.errors) && graphConfigs.errors.length > 0) {
@@ -327,6 +336,7 @@ const answerService = new AnswerService({
   searchService,
   postgresProvider,
   modelsConfig: appConfig.models,
+  graphAnswerService,
 });
 const backupService = new BackupService({
   postgresConfig: appConfig.postgres,
@@ -342,6 +352,7 @@ const chatSessionService = new ChatSessionService({
   cloudChatProvider,
   appSettingsService,
   modelsConfig: appConfig.models,
+  graphAnswerService,
 });
 
 app.decorate("config", appConfig);
@@ -372,6 +383,7 @@ app.decorate("graphPreviewService", graphPreviewService);
 app.decorate("graphNodeTypeService", graphNodeTypeService);
 app.decorate("graphTreeService", graphTreeService);
 app.decorate("graphSearchService", graphSearchService);
+app.decorate("graphAnswerService", graphAnswerService);
 
 await app.register(healthRoutes);
 await app.register(settingsRoutes);
