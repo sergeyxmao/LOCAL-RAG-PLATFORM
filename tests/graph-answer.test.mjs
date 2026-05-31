@@ -232,12 +232,37 @@ test("renderSystemPrompt: {graph_facts} подставляется в дефол
   assert.match(out, /Факт 1 \(граф\): signal «KS_T2B1»/);
 });
 
-test("renderSystemPrompt: кастомный шаблон без {graph_facts} → факты не попадают в промпт", () => {
+test("renderSystemPrompt: кастомный шаблон без {graph_facts} + факты → блок дописан в конец (#8.3-followup)", () => {
   const tpl = "Источники: {sources}\nВопрос: {question}";
   const out = renderSystemPrompt(tpl, {
     question: "q",
     sources: [],
     graphFacts: [{ type: "signal", name: "KS_T2B1", attributes: {}, relations: [] }],
   });
-  assert.ok(!out.includes("KS_T2B1"), "граф не должен подмешиваться без плейсхолдера");
+  // Факт не теряется: дописан отдельной секцией в конец системного сообщения.
+  assert.match(out, /=== СТРУКТУРНЫЕ ФАКТЫ ИЗ ГРАФА ЗНАНИЙ ===/);
+  assert.match(out, /Факт 1 \(граф\): signal «KS_T2B1»/);
+  // Секция именно в конце (после вопроса).
+  assert.ok(out.indexOf("KS_T2B1") > out.indexOf("Вопрос: q"));
+});
+
+test("renderSystemPrompt: с {graph_facts} → блок подставлен на место, без дублирования в конце", () => {
+  const tpl = "Источники: {sources}\nГраф: {graph_facts}\nВопрос: {question}";
+  const out = renderSystemPrompt(tpl, {
+    question: "q",
+    sources: [],
+    graphFacts: [{ type: "signal", name: "KS_T2B1", attributes: {}, relations: [] }],
+  });
+  // Подставлен на место плейсхолдера.
+  assert.match(out, /Граф: Факт 1 \(граф\): signal «KS_T2B1»/);
+  // Нет дописанной в конец секции и нет дубля факта.
+  assert.ok(!out.includes("=== СТРУКТУРНЫЕ ФАКТЫ ИЗ ГРАФА ЗНАНИЙ ==="), "не должно быть fallback-секции");
+  assert.equal(out.match(/KS_T2B1/g).length, 1, "факт не должен дублироваться");
+});
+
+test("renderSystemPrompt: без графовых фактов → системное сообщение без графовой секции", () => {
+  const tpl = "Источники: {sources}\nВопрос: {question}";
+  const out = renderSystemPrompt(tpl, { question: "q", sources: [], graphFacts: [] });
+  assert.ok(!out.includes("=== СТРУКТУРНЫЕ ФАКТЫ ИЗ ГРАФА ЗНАНИЙ ==="));
+  assert.ok(!out.includes("Факт 1"));
 });
