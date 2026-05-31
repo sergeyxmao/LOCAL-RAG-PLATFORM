@@ -206,7 +206,20 @@ UI скрыт за `?admin=1`.
   - `filters.documentIds` — массив документов, передаётся как есть.
 - Источники из ответа сохраняются в `chat_messages.sources` (JSONB). В метаданных
   сообщения ассистента (`chat_messages.metadata`) лежат `mode` (например,
-  `llm`, `fallback-empty`, `error`), `durationMs` и `searchMode`.
+  `llm`, `graph-only`, `fallback-empty`, `error`), `durationMs` и `searchMode`.
+- **Граф знаний в чате (#8.3).** Для структурных вопросов с идентификатором
+  (термин с цифрой или дефисом, например `KS_T2B1`, `IO-03`, `DII8P24`) под
+  ответом появляется бейдж **`граф: N фактов`** (по образцу бейджей HyDE и
+  reranking), а в источниках — карточка с пометкой **`🕸 граф`**, сгруппированная
+  под заголовком «🕸 Граф знаний» и ссылающаяся в раздел `/ui/v2/graph`.
+  Источник для бейджа — `metadata.graph = { used, count, reason }`. На обычных
+  смысловых вопросах без идентификатора граф не подмешивается и бейджа нет.
+  Подробно: [GRAPH_RETRIEVAL.md](GRAPH_RETRIEVAL.md).
+- **Предупреждение про `{graph_facts}` в настройках промпта.** В карточке
+  «Системный промпт» (страница «Настройки»), если шаблон не содержит
+  плейсхолдер `{graph_facts}`, показывается мягкое предупреждение: структурные
+  факты графа не будут переданы модели (но останутся в источниках и
+  метаданных). По образцу предупреждений про `{sources}` / `{question}`.
 - Поток ответа — синхронный (`POST /api/v2/chat/sessions/:id/messages` ждёт
   завершения). Стриминг не добавлялся, потому что `OllamaChatProvider.generate`
   возвращает полный ответ. Когда добавится streaming в провайдер — UI допилим.
@@ -872,7 +885,8 @@ v5-сигнатуре.
     файл \`apps/kb-api/src/services/systemPromptService.js\` с константой
     \`DEFAULT_SYSTEM_PROMPT\`, форматтерами \`formatSourcesBlock\`,
     \`formatHistoryBlock\` и \`renderSystemPrompt(template, vars)\`.
-    Плейсхолдеры: \`{sources}\`, \`{question}\`, \`{history}\`.
+    Плейсхолдеры: \`{sources}\`, \`{question}\`, \`{history}\`,
+    \`{graph_facts}\` (последний добавлен в #8.3 — структурные факты графа).
     Эндпоинты \`GET/PATCH/DELETE /api/v2/settings/system-prompt\`.
     \`chatSessionService.buildLocalAnswerMessages\` и
     \`buildCloudMessages\` теперь \`async\` — читают шаблон из

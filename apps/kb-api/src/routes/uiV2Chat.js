@@ -1552,6 +1552,22 @@ function renderChatScript(initialStateJson) {
         if (!Array.isArray(items)) return [];
         return items.map(function (s) {
           if (!s || typeof s !== "object") return s;
+          // #8.3: графовый источник. Сохраняем origin и графовые поля как для
+          // живого onSources (snake_case), так и для уже сохранённого compact.
+          if (s.origin === "graph") {
+            return {
+              origin: "graph",
+              resourceType: "graph_node",
+              documentId: null,
+              documentName: s.documentName ?? s.title ?? s.graph_type ?? s.graphType ?? "Узел графа",
+              graphNodeId: s.graphNodeId ?? s.graph_node_id ?? null,
+              graphType: s.graphType ?? s.graph_type ?? null,
+              graphAttributes: s.graphAttributes ?? s.graph_attributes ?? {},
+              graphRelations: Array.isArray(s.graphRelations) ? s.graphRelations
+                : Array.isArray(s.graph_relations) ? s.graph_relations : [],
+              snippet: typeof s.text === "string" ? s.text : (s.snippet ?? null),
+            };
+          }
           if (s.documentName !== undefined || s.assetPreviewUrl !== undefined) {
             return s;
           }
@@ -1614,12 +1630,17 @@ function renderChatScript(initialStateJson) {
         var order = [];
         var byDoc = {};
         sources.forEach(function (src, idx) {
-          var key = src.documentId || src.documentName || src.sourcePath || ("__doc_" + idx);
+          // #8.3: все графовые источники собираем в одну группу «Граф знаний».
+          var isGraph = src && src.origin === "graph";
+          var key = isGraph
+            ? "__graph__"
+            : (src.documentId || src.documentName || src.sourcePath || ("__doc_" + idx));
           if (!byDoc[key]) {
             byDoc[key] = {
               key: key,
-              documentId: src.documentId || null,
-              documentName: src.documentName || src.sourcePath || ("Документ " + (idx + 1)),
+              isGraph: isGraph,
+              documentId: isGraph ? null : (src.documentId || null),
+              documentName: isGraph ? "🕸 Граф знаний" : (src.documentName || src.sourcePath || ("Документ " + (idx + 1))),
               items: [],
             };
             order.push(key);
@@ -1640,9 +1661,24 @@ function renderChatScript(initialStateJson) {
           var docHref = g.documentId ? '/documents/' + encodeURIComponent(g.documentId) + '/original' : '#';
           var itemsHtml = g.items.map(function (it) {
             var src = it.source;
+            var refNum = it.index + 1;
+            // #8.3: графовая карточка — отличаем origin:"graph", ссылка ведёт
+            // в раздел графа, добавляем бейдж происхождения.
+            if (src && src.origin === "graph") {
+              var gLabel = (src.graphType ? src.graphType + ": " : "") + (src.documentName || "Узел графа");
+              var gTitle = (src.snippet || gLabel);
+              var gHref = "/ui/v2/graph" + (src.graphNodeId ? ("?node=" + encodeURIComponent(src.graphNodeId)) : "");
+              return '<div class="sources-compact__item" data-source-index="' + refNum + '"' +
+                ' data-href="' + escapeHtml(gHref) + '"' +
+                ' id="src-' + escapeHtml(message.id) + '-' + refNum + '">' +
+                '<span class="sources-compact__item-index">[' + refNum + ']</span>' +
+                '<span class="sources-compact__item-label" title="' + escapeHtml(gTitle) + '">' + escapeHtml(gLabel) + '</span>' +
+                '<span class="sources-compact__item-enriched" title="Факт из графа знаний (структурный источник)">🕸 граф</span>' +
+                '<a class="sources-compact__item-link" href="' + escapeHtml(gHref) + '" target="_blank" rel="noopener" data-source-link="1">→ в граф</a>' +
+                '</div>';
+            }
             var label = sourceShortLabel(src, it.index);
             var href = sourceLink(src);
-            var refNum = it.index + 1;
             var enrichTitle = label;
             if (src && src.chunkContext) enrichTitle += "\\nКонтекст: " + src.chunkContext;
             if (src && src.chunkSummary) enrichTitle += "\\nОписание: " + src.chunkSummary;
@@ -1661,9 +1697,12 @@ function renderChatScript(initialStateJson) {
               linkPart +
               '</div>';
           }).join("");
+          var docHeadHtml = g.isGraph
+            ? '<span title="Структурные факты из графа знаний">' + escapeHtml(g.documentName) + '</span>'
+            : '<a href="' + escapeHtml(docHref) + '" target="_blank" rel="noopener" title="' + escapeHtml(g.documentName) + '">' + escapeHtml(g.documentName) + '</a>';
           return '<div class="sources-compact__group">' +
             '<div class="sources-compact__doc">' +
-            '<a href="' + escapeHtml(docHref) + '" target="_blank" rel="noopener" title="' + escapeHtml(g.documentName) + '">' + escapeHtml(g.documentName) + '</a>' +
+            docHeadHtml +
             '<span class="sources-compact__count">' + g.items.length + ' / ' + sources.length + '</span>' +
             '</div>' +
             '<div class="sources-compact__items">' + itemsHtml + '</div>' +
@@ -1838,6 +1877,17 @@ function renderChatScript(initialStateJson) {
         return '<span class="' + cls + '" title="' + title + '">' + label + '</span>';
       }
 
+      function formatGraphBadge(info) {
+        // #8.3: бейдж «граф: N фактов» по образцу HyDE/reranking.
+        if (!info || typeof info !== "object") return "";
+        if (info.used !== true || !info.count) return "";
+        var label = "граф: " + info.count + " " + pluralRu(info.count, ["факт", "факта", "фактов"]);
+        var title = "Для структурного вопроса (есть идентификатор-подобный термин) " +
+          "найдены точные факты в графе знаний: узел и его прямые связи подмешаны " +
+          "в промпт и добавлены в источники с пометкой графа.";
+        return '<span class="msg__hyde msg__hyde--used" title="' + escapeHtml(title) + '">' + escapeHtml(label) + '</span>';
+      }
+
       function formatEnrichmentBadge(sources) {
         if (!Array.isArray(sources) || !sources.length) return "";
         var enriched = sources.filter(function (s) {
@@ -1886,6 +1936,8 @@ function renderChatScript(initialStateJson) {
           if (rerankBadge) metaParts.push(rerankBadge);
           var hydeBadge = formatHydeBadge(meta.hyde);
           if (hydeBadge) metaParts.push(hydeBadge);
+          var graphBadge = formatGraphBadge(meta.graph);
+          if (graphBadge) metaParts.push(graphBadge);
           var enrichmentBadge = formatEnrichmentBadge(sources);
           if (enrichmentBadge) metaParts.push(enrichmentBadge);
           if (meta.error && meta.error.code) {

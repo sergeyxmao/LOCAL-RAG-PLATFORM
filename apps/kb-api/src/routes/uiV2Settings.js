@@ -958,6 +958,9 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         if (text.indexOf("{question}") === -1) {
           warnings.push("⚠ Без {question} модель не увидит вопрос пользователя явно.");
         }
+        if (text.indexOf("{graph_facts}") === -1) {
+          warnings.push("⚠ Шаблон не содержит {graph_facts} — структурные факты графа знаний не будут переданы модели (но останутся в источниках и метаданных).");
+        }
         if (text.length > 8000) {
           warnings.push("⚠ Длина шаблона > 8000 символов — может вытеснять источники из контекста модели.");
         }

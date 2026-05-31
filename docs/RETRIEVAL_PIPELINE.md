@@ -1,6 +1,17 @@
 # Retrieval Pipeline
 
-question -> [HyDE] -> embedding -> semantic search in Qdrant -> lexical search in PostgreSQL -> fusion -> reranking -> answer
+```
+question ─┬─ [HyDE] → embedding → semantic search (Qdrant) ─┐
+          │                                                  ├─ fusion (RRF) → reranking → answer
+          ├─ lexical search (PostgreSQL, BM25) ──────────────┘                              ▲
+          │                                                                                 │
+          └─ [граф?] идентификатор в вопросе → graph-lookup (Postgres) → факты ── {graph_facts} ┘
+```
+
+Графовая дорожка идёт **параллельно** RAG и **не участвует** в RRF-фьюжне:
+у узлов графа нет vector/lexical-скоров, поэтому факты подаются отдельным
+блоком `{graph_facts}` и отдельными источниками `origin:"graph"`. Подробно:
+[GRAPH_RETRIEVAL.md](GRAPH_RETRIEVAL.md).
 
 ## Текущая реализация
 
@@ -8,6 +19,7 @@ question -> [HyDE] -> embedding -> semantic search in Qdrant -> lexical search i
 - semantic retrieval — `Qdrant` (`kb-api` → embedding-провайдер → Qdrant);
 - lexical retrieval — PostgreSQL full-text search + точное подстрочное совпадение (BM25);
 - fusion — Reciprocal Rank Fusion (RRF);
+- граф знаний (опционально) — для структурных вопросов с идентификатором (термин с цифрой или дефисом) ищется точный узел + его прямые связи; факты подмешиваются отдельным блоком. Подробно: [GRAPH_RETRIEVAL.md](GRAPH_RETRIEVAL.md).
 - CSV/XLSX строки индексируются отдельными чанками для поиска тегов/параметров;
 - reranking — переключаемый, три режима (см. ниже).
 
@@ -38,6 +50,34 @@ question -> [HyDE] -> embedding -> semantic search in Qdrant -> lexical search i
   error: "..."                  // только при reason=error
 }
 ```
+
+## Граф знаний — структурные факты
+
+См. подробное описание: [GRAPH_RETRIEVAL.md](GRAPH_RETRIEVAL.md).
+
+Триггер чисто эвристический: в вопросе есть идентификатор-подобный термин
+(цифра или дефис). Тогда `graphAnswerService.lookup()` ищет узел по точным
+полям (`name, tag, loop_tag, signal_address, address, cabinet_id`), берёт до
+3 узлов и до 8 связей на узел. Без LLM-вызовов — только Postgres `ILIKE` +
+запросы связей. При недоступности Postgres lookup возвращает `used:false`, и
+RAG-ответ не падает.
+
+Видимость в чате — бейдж под ответом `граф: N фактов` (есть только при
+`used=true`) и карточки источников с пометкой `🕸 граф`.
+
+Структура `result.graph` (в `metadata.graph` сообщения; по образцу
+`result.hyde`):
+```js
+{
+  used: true,        // приняты ли структурные матчи
+  count: 2,          // сколько фактов подмешано
+  reason: "ok"       // "no_identifier" | "no_match" | "error" | "ok"
+}
+```
+
+Если RAG пуст, а граф дал факт — ответ генерируется по графу, `mode` =
+`"graph-only"` (вместо `fallback-empty`). Если пусто и там, и там — прежний
+`fallback-empty`.
 
 ## Три режима reranking
 

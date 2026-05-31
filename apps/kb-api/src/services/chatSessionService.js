@@ -118,6 +118,29 @@ function compactSourceForStorage(source) {
   if (!source || typeof source !== "object") {
     return null;
   }
+  // #8.3: графовый источник хранится своей компактной формой с origin:"graph",
+  // чтобы UI мог отрисовать карточку графа и считать факты для бейджа.
+  if (source.origin === "graph") {
+    return {
+      origin: "graph",
+      resourceType: "graph_node",
+      documentId: null,
+      documentName: source.title ?? source.graph_type ?? "Узел графа",
+      graphNodeId: source.graph_node_id ?? source.graphNodeId ?? null,
+      graphType: source.graph_type ?? source.graphType ?? null,
+      graphAttributes:
+        source.graph_attributes ?? source.graphAttributes ?? {},
+      graphRelations: Array.isArray(source.graph_relations)
+        ? source.graph_relations
+        : Array.isArray(source.graphRelations)
+          ? source.graphRelations
+          : [],
+      snippet:
+        typeof source.text === "string"
+          ? source.text.slice(0, 600)
+          : source.snippet ?? null,
+    };
+  }
   return {
     documentId: source.document_id ?? source.documentId ?? null,
     documentName: source.title ?? source.document_name ?? source.documentName ?? null,
@@ -161,6 +184,7 @@ export class ChatSessionService {
     cloudChatProvider,
     appSettingsService,
     modelsConfig,
+    graphAnswerService = null,
   }) {
     this.postgresProvider = postgresProvider;
     this.answerService = answerService;
@@ -169,6 +193,29 @@ export class ChatSessionService {
     this.cloudChatProvider = cloudChatProvider;
     this.appSettingsService = appSettingsService;
     this.modelsConfig = modelsConfig;
+    // #8.3: граф знаний для структурных вопросов (опционален).
+    this.graphAnswerService = graphAnswerService;
+  }
+
+  // #8.3: единая точка lookup графа для чата. Возвращает безопасный пустой
+  // результат, если граф не подключён или вопрос нерелевантен.
+  async lookupGraph(question) {
+    if (!this.graphAnswerService) {
+      return { used: false, reason: "no_identifier", facts: [], count: 0 };
+    }
+    try {
+      return await this.graphAnswerService.lookup(question);
+    } catch (err) {
+      return { used: false, reason: "error", facts: [], count: 0, error: err?.message || String(err) };
+    }
+  }
+
+  graphMeta(graph) {
+    return {
+      used: !!(graph && graph.used === true && Array.isArray(graph.facts) && graph.facts.length > 0),
+      count: graph && Array.isArray(graph.facts) ? graph.facts.length : 0,
+      reason: graph?.reason ?? "no_identifier",
+    };
   }
 
   get pool() {
@@ -403,6 +450,8 @@ export class ChatSessionService {
     }
 
     try {
+      // #8.3: answerService сам сделает graph-lookup (graphContext не передаём),
+      // вернёт объединённые источники (RAG + граф) и result.graph для бейджа.
       const result = await this.answerService.answerQuestion(question, options);
       return {
         content: result.answer,
@@ -416,6 +465,7 @@ export class ChatSessionService {
           searchMode: "answer",
           reranking: result?.reranking || null,
           hyde: result?.hyde || null,
+          graph: result?.graph || { used: false, count: 0, reason: "no_identifier" },
         },
       };
     } catch (error) {
@@ -506,12 +556,12 @@ export class ChatSessionService {
       };
     }
 
-    let sources = [];
+    let ragSources = [];
     let rerankingInfo = null;
     let hydeInfo = null;
     try {
       const hybrid = await this.searchService.hybridSearch(question, options);
-      sources = Array.isArray(hybrid?.items) ? hybrid.items : [];
+      ragSources = Array.isArray(hybrid?.items) ? hybrid.items : [];
       rerankingInfo = hybrid?.reranking || null;
       hydeInfo = hybrid?.hyde || null;
     } catch (error) {
@@ -530,8 +580,17 @@ export class ChatSessionService {
       };
     }
 
+    // #8.3: граф знаний для структурных вопросов.
+    const graph = await this.lookupGraph(question);
+    const graphMeta = this.graphMeta(graph);
+    const graphFacts = graphMeta.used ? graph.facts : [];
+    const graphSources = graphMeta.used && this.graphAnswerService
+      ? this.graphAnswerService.toSources(graphFacts)
+      : [];
+    const sources = ragSources.concat(graphSources);
+
     const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
-    const messages = await this.buildCloudMessages({ question, sources, history });
+    const messages = await this.buildCloudMessages({ question, sources: ragSources, history, graphFacts });
     const maxTokens = await this.resolveCloudMaxTokens();
 
     try {
@@ -569,6 +628,7 @@ export class ChatSessionService {
           ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
           reranking: rerankingInfo,
           hyde: hydeInfo,
+          graph: graphMeta,
         },
       };
     } catch (error) {
@@ -592,6 +652,7 @@ export class ChatSessionService {
           },
           reranking: rerankingInfo,
           hyde: hydeInfo,
+          graph: graphMeta,
         },
       };
     }
@@ -624,7 +685,7 @@ export class ChatSessionService {
       .map((row) => ({ role: row.role, content: String(row.content || "") }));
   }
 
-  async buildCloudMessages({ question, sources, history }) {
+  async buildCloudMessages({ question, sources, history, graphFacts = [] }) {
     const settings = this.appSettingsService
       ? await this.appSettingsService.getSystemPrompt()
       : { template: null };
@@ -632,6 +693,7 @@ export class ChatSessionService {
       question,
       sources,
       history,
+      graphFacts,
     });
     return [
       { role: "system", content: systemContent },
@@ -658,7 +720,7 @@ export class ChatSessionService {
     return message;
   }
 
-  async buildLocalAnswerMessages({ question, sources }) {
+  async buildLocalAnswerMessages({ question, sources, graphFacts = [] }) {
     const settings = this.appSettingsService
       ? await this.appSettingsService.getSystemPrompt()
       : { template: null };
@@ -666,6 +728,7 @@ export class ChatSessionService {
       question,
       sources,
       history: [],
+      graphFacts,
     });
     return [
       { role: "system", content: systemContent },
@@ -701,12 +764,12 @@ export class ChatSessionService {
     }
 
     const { options, filters } = this.buildSearchOptions(session);
-    let sources = [];
+    let ragSources = [];
     let rerankingInfo = null;
     let hydeInfo = null;
     try {
       const hybrid = await this.searchService.hybridSearch(trimmed, options);
-      sources = Array.isArray(hybrid?.items) ? hybrid.items : [];
+      ragSources = Array.isArray(hybrid?.items) ? hybrid.items : [];
       rerankingInfo = hybrid?.reranking || null;
       hydeInfo = hybrid?.hyde || null;
     } catch (error) {
@@ -728,12 +791,34 @@ export class ChatSessionService {
       return assistant;
     }
 
+    // #8.3: граф знаний для структурных вопросов. Графовые источники идут
+    // после RAG-источников со своей нумерацией; факты — в блок {graph_facts}.
+    const graph = await this.lookupGraph(trimmed);
+    const graphMeta = this.graphMeta(graph);
+    const graphFacts = graphMeta.used ? graph.facts : [];
+    const graphSources = graphMeta.used && this.graphAnswerService
+      ? this.graphAnswerService.toSources(graphFacts)
+      : [];
+    const sources = ragSources.concat(graphSources);
+
     if (typeof onSources === "function") onSources(sources);
 
+    const streamOpts = {
+      filters,
+      onToken,
+      onDone,
+      onError,
+      abortSignal,
+      reranking: rerankingInfo,
+      hyde: hydeInfo,
+      ragSources,
+      graphFacts,
+      graphMeta,
+    };
     if (isCloudProvider(session.provider)) {
-      return this.streamCloudAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking: rerankingInfo, hyde: hydeInfo });
+      return this.streamCloudAnswer(session, trimmed, sources, userMessage, streamOpts);
     }
-    return this.streamLocalAnswer(session, trimmed, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking: rerankingInfo, hyde: hydeInfo });
+    return this.streamLocalAnswer(session, trimmed, sources, userMessage, streamOpts);
   }
 
   async streamPagesAnswer(session, question, userMessage, { onSources, onDone, onError }) {
@@ -775,35 +860,42 @@ export class ChatSessionService {
     }
   }
 
-  async streamLocalAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking = null, hyde = null }) {
+  async streamLocalAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking = null, hyde = null, ragSources = null, graphFacts = [], graphMeta = null }) {
     const startedAt = Date.now();
+    // ragSources — только RAG-фрагменты (для {sources} и fallback-логики);
+    // sources — объединённые (RAG + граф) для хранения/отображения.
+    const ragOnly = Array.isArray(ragSources) ? ragSources : sources;
+    const graphInfo = graphMeta || { used: false, count: 0, reason: "no_identifier" };
     if (!this.chatProvider || typeof this.chatProvider.generateStream !== "function") {
       const message = "Стриминг локального ИИ недоступен.";
       const assistant = await this.insertMessage(session.id, {
         role: "assistant",
         content: message,
         sources,
-        metadata: { provider: "local", mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "server_error", message } },
+        metadata: { provider: "local", mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "server_error", message }, graph: graphInfo },
       });
       if (typeof onError === "function") onError({ code: "server_error", message });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
       return assistant;
     }
 
-    if (!sources.length) {
-      const fallback = this.answerService.buildFallbackAnswer(question, sources, {});
+    // Развилка fallback: RAG пуст. Если граф дал факт — отвечаем по графу
+    // (graph-only), иначе — прежний честный fallback-empty.
+    if (!ragOnly.length && !graphInfo.used) {
+      const fallback = this.answerService.buildFallbackAnswer(question, ragOnly, {});
       const assistant = await this.insertMessage(session.id, {
         role: "assistant",
         content: fallback.answer,
         sources,
-        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: fallback.mode, filters, durationMs: Date.now() - startedAt, searchMode: "answer", reranking, hyde },
+        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: fallback.mode, filters, durationMs: Date.now() - startedAt, searchMode: "answer", reranking, hyde, graph: graphInfo },
       });
       if (typeof onToken === "function") onToken(fallback.answer);
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
       return assistant;
     }
 
-    const messages = await this.buildLocalAnswerMessages({ question, sources });
+    const graphOnly = !ragOnly.length && graphInfo.used;
+    const messages = await this.buildLocalAnswerMessages({ question, sources: ragOnly, graphFacts });
     try {
       const result = await this.chatProvider.generateStream({ messages, onToken, abortSignal });
       const finalContent = result.content || (result.aborted ? "(прервано пользователем)" : "");
@@ -814,13 +906,14 @@ export class ChatSessionService {
         metadata: {
           provider: "local",
           model: this.modelsConfig?.chat?.model || null,
-          mode: result.aborted ? "aborted" : "llm",
+          mode: result.aborted ? "aborted" : graphOnly ? "graph-only" : "llm",
           aborted: result.aborted === true,
           filters,
           durationMs: Date.now() - startedAt,
           searchMode: "answer",
           reranking,
           hyde,
+          graph: graphInfo,
         },
       });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -831,7 +924,7 @@ export class ChatSessionService {
         role: "assistant",
         content: message,
         sources,
-        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "local_error", message: String(error?.message ?? error) }, reranking, hyde },
+        metadata: { provider: "local", model: this.modelsConfig?.chat?.model || null, mode: "error", filters, durationMs: Date.now() - startedAt, error: { code: "local_error", message: String(error?.message ?? error) }, reranking, hyde, graph: graphInfo },
       });
       if (typeof onError === "function") onError({ code: "local_error", message });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -839,8 +932,10 @@ export class ChatSessionService {
     }
   }
 
-  async streamCloudAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking = null, hyde = null }) {
+  async streamCloudAnswer(session, question, sources, userMessage, { filters, onToken, onDone, onError, abortSignal, reranking = null, hyde = null, ragSources = null, graphFacts = [], graphMeta = null }) {
     const startedAt = Date.now();
+    const ragOnly = Array.isArray(ragSources) ? ragSources : sources;
+    const graphInfo = graphMeta || { used: false, count: 0, reason: "no_identifier" };
     const resolved = await this.resolveCloudForSession(session);
     const cloud = resolved.provider;
     if (!cloud || !cloud.baseUrl || !cloud.apiKey || !cloud.model) {
@@ -855,6 +950,7 @@ export class ChatSessionService {
           filters,
           durationMs: Date.now() - startedAt,
           error: { code: "no_credentials", message },
+          graph: graphInfo,
         },
       });
       if (typeof onError === "function") onError({ code: "no_credentials", message });
@@ -864,7 +960,7 @@ export class ChatSessionService {
 
     const history = await this.loadRecentHistoryForCloud(session.id, CLOUD_HISTORY_PAIRS);
     const tail = history.filter((m) => m.role !== "user" || m.content.trim() !== question);
-    const messages = await this.buildCloudMessages({ question, sources, history: tail });
+    const messages = await this.buildCloudMessages({ question, sources: ragOnly, history: tail, graphFacts });
     const maxTokens = await this.resolveCloudMaxTokens();
 
     try {
@@ -888,7 +984,7 @@ export class ChatSessionService {
         mode = "empty-reasoning";
       } else {
         finalContent = result.content || "";
-        mode = "llm";
+        mode = !ragOnly.length && graphInfo.used ? "graph-only" : "llm";
       }
       const fallbackNote = resolved.fallbackUsed
         ? "Выбранный провайдер удалён — использован провайдер по умолчанию."
@@ -918,6 +1014,7 @@ export class ChatSessionService {
           ...(fallbackNote ? { providerFallback: fallbackNote } : {}),
           reranking,
           hyde,
+          graph: graphInfo,
         },
       });
       if (typeof onDone === "function") onDone({ assistantMessageId: assistant.id, metadata: assistant.metadata });
@@ -940,6 +1037,7 @@ export class ChatSessionService {
           error: { code, message },
           reranking,
           hyde,
+          graph: graphInfo,
         },
       });
       if (typeof onError === "function") onError({ code, message });
