@@ -761,7 +761,7 @@ async function resolveThemeDefault(app, request) {
 
 export async function uiV2Routes(app) {
   app.get("/ui/v2", async (_request, reply) => {
-    reply.redirect(302, "/ui/v2/chat");
+    reply.redirect("/ui/v2/chat", 302);
   });
 
   app.get("/ui/v2/chat", async (request, reply) => {

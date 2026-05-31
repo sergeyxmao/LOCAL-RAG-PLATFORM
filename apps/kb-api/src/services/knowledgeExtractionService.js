@@ -295,8 +295,16 @@ export class KnowledgeExtractionService {
       const cases = parsed && Array.isArray(parsed.cases) ? parsed.cases : null;
       if (!cases) {
         failed += 1;
+        // Диагностика: при неудачном разборе пишем сырой ответ модели
+        // усечённо (≤800 символов) и его длину — чтобы видеть, что именно
+        // вернул провайдер. Безопасно: усечение, без ключей; только при ошибке.
         this.logger?.warn?.(
-          { segment: i + 1, total: segments.length },
+          {
+            segment: i + 1,
+            total: segments.length,
+            rawLength: content?.length ?? 0,
+            rawHead: String(content ?? "").slice(0, 800),
+          },
           "Извлечение знаний: не удалось разобрать JSON ответа, пропускаем сегмент"
         );
         continue;
