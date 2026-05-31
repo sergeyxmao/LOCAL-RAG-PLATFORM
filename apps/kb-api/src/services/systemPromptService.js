@@ -88,14 +88,34 @@ export function formatHistoryBlock(history) {
     .join("\n\n");
 }
 
+// Заголовок и инструкция для блока графовых фактов, дописываемого в конец
+// системного сообщения, когда в шаблоне нет плейсхолдера {graph_facts}.
+const GRAPH_FALLBACK_HEADER = "=== СТРУКТУРНЫЕ ФАКТЫ ИЗ ГРАФА ЗНАНИЙ ===";
+const GRAPH_FALLBACK_INSTRUCTION =
+  "Если по идентификатору (тегу, адресу сигнала, шкафу, плате) есть точный факт ниже — отдавай ему приоритет над текстом источников.";
+
 export function renderSystemPrompt(template, { sources, question, history, graphFacts } = {}) {
   const tpl = typeof template === "string" && template.length > 0 ? template : DEFAULT_SYSTEM_PROMPT;
-  // Плейсхолдер {graph_facts} может отсутствовать в кастомном шаблоне
-  // пользователя — тогда граф просто не подмешивается в промпт (но остаётся
-  // в sources и metadata). См. предупреждение в UI настроек промпта.
-  return tpl
+  const hasGraphFacts = Array.isArray(graphFacts) && graphFacts.length > 0;
+  const hasPlaceholder = tpl.includes("{graph_facts}");
+
+  let out = tpl
     .replace(/\{sources\}/g, formatSourcesBlock(sources))
     .replace(/\{graph_facts\}/g, formatGraphFactsBlock(graphFacts))
     .replace(/\{history\}/g, formatHistoryBlock(history))
     .replace(/\{question\}/g, typeof question === "string" ? question : "");
+
+  // Защита от потери факта (#8.3-followup): если в кастомном шаблоне нет
+  // плейсхолдера {graph_facts}, но графовые факты есть — дописываем блок в
+  // конец системного сообщения отдельной секцией. Сам сохранённый шаблон НЕ
+  // модифицируется — дописывание только в рантайме. Если плейсхолдер есть —
+  // блок уже подставлен выше, дублировать не нужно.
+  if (hasGraphFacts && !hasPlaceholder) {
+    out +=
+      `\n\n${GRAPH_FALLBACK_HEADER}\n` +
+      `${GRAPH_FALLBACK_INSTRUCTION}\n\n` +
+      formatGraphFactsBlock(graphFacts);
+  }
+
+  return out;
 }
