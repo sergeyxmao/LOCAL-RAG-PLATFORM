@@ -666,6 +666,32 @@ grep -nE 'request\.raw\.on\("close"' apps/kb-api/src/routes/chatSessions.js
 
 Должен быть пустым.
 
+### Fastify v5 — порядок аргументов `reply.redirect`
+
+В Fastify v5 сигнатура — **`reply.redirect(url, code)`**: URL первым
+аргументом, код статуса вторым. В Fastify v4 порядок был **обратный** —
+`reply.redirect(code, url)`. Старый (v4) порядок на v5 даёт ошибку:
+
+```
+FST_ERR_BAD_STATUS_CODE: Called reply with an invalid status code: <url>
+```
+
+— потому что Fastify пытается трактовать переданный первым URL как код
+статуса.
+
+```js
+// СЛОМАНО на Fastify v5 (порядок v4) — FST_ERR_BAD_STATUS_CODE
+reply.redirect(302, "/ui/v2/chat");
+
+// ПРАВИЛЬНО на Fastify v5 — URL первым, код вторым
+reply.redirect("/ui/v2/chat", 302);
+```
+
+История: `GET /ui/v2` падал с `FST_ERR_BAD_STATUS_CODE`, потому что
+редирект использовал порядок аргументов v4. Исправлено вручную в
+`apps/kb-api/src/routes/uiV2.js`. Все редиректы в роутах должны следовать
+v5-сигнатуре.
+
 ## История изменений
 
 - 2026-05-16: создан, итерация 1 — каркас + страница Чата.
