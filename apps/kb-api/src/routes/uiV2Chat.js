@@ -1644,8 +1644,8 @@ function renderChatScript(initialStateJson) {
             var href = sourceLink(src);
             var refNum = it.index + 1;
             var enrichTitle = label;
-            if (src && src.chunkContext) enrichTitle += "\nКонтекст: " + src.chunkContext;
-            if (src && src.chunkSummary) enrichTitle += "\nОписание: " + src.chunkSummary;
+            if (src && src.chunkContext) enrichTitle += "\\nКонтекст: " + src.chunkContext;
+            if (src && src.chunkSummary) enrichTitle += "\\nОписание: " + src.chunkSummary;
             var enrichBadge = (src && (src.chunkContext || src.chunkSummary))
               ? '<span class="sources-compact__item-enriched" title="Фрагмент обогащён контекстом при импорте">✦</span>'
               : '';
