@@ -92,14 +92,31 @@ export class GraphAnswerService {
     }
 
     try {
-      const matches = await this.graphSearchService.search(q, { limit });
-      const accepted = (Array.isArray(matches) ? matches : []).filter(
-        (m) => m && m.node && ACCEPTED_MATCH_FIELDS.has(m.matchedField)
-      );
+      // Ищем по каждому ОЧИЩЕННОМУ идентификатор-термину, а не по сырому
+      // запросу. extractIdentifierTerms() уже срезал пунктуацию тем же
+      // правилом, что searchService.normalizeQueryTerms() (split по
+      // [^a-z0-9а-яё-]+), поэтому «TT-133?» → «tt-133». Поиск по сырому
+      // запросу с прилипшим знаком препинания не матчил ILIKE (#8.3-fix).
+      const seen = new Set();
+      const accepted = [];
+      let totalMatches = 0;
+      for (const term of identifiers) {
+        const matches = await this.graphSearchService.search(term, { limit });
+        const list = Array.isArray(matches) ? matches : [];
+        totalMatches += list.length;
+        for (const m of list) {
+          if (!m || !m.node || !ACCEPTED_MATCH_FIELDS.has(m.matchedField)) continue;
+          if (seen.has(m.node.id)) continue;
+          seen.add(m.node.id);
+          accepted.push(m);
+        }
+        // Достаточно узлов — лишние термины не ищем.
+        if (accepted.length >= MAX_NODES) break;
+      }
 
       if (accepted.length === 0) {
         this.logger?.info?.(
-          { query: q, identifiers: identifiers.length, matched: 0 },
+          { query: q, identifiers: identifiers.length, matched: totalMatches },
           "Граф: lookup — точных матчей нет"
         );
         return { used: false, reason: "no_match", facts: [], count: 0 };
@@ -121,7 +138,7 @@ export class GraphAnswerService {
       }
 
       this.logger?.info?.(
-        { query: q, matched: accepted.length, accepted: facts.length },
+        { query: q, identifiers: identifiers.length, matched: accepted.length, accepted: facts.length },
         "Граф: lookup принял структурные матчи"
       );
 

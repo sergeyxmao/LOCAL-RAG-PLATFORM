@@ -115,6 +115,65 @@ test("lookup: максимум 3 узла и 8 связей на узел", asyn
   assert.equal(res.facts[0].relations.length, 8, "не более 8 связей на узел");
 });
 
+test("lookup: идентификатор с прилипшей пунктуацией очищается перед search (#8.3-fix)", async () => {
+  // Узел в графе называется «Датчик температуры TT-133». search() матчит
+  // только чистый идентификатор «tt-133», но НЕ грязный «tt-133?» / полный вопрос.
+  const node = { id: "44444444-4444-4444-4444-444444444444", type: "sensor", name: "Датчик температуры TT-133" };
+  const search = {
+    calls: [],
+    async search(query) {
+      this.calls.push(query);
+      return query === "tt-133" ? [{ node, matchedField: "name" }] : [];
+    },
+  };
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [node.id]: [] }),
+  });
+
+  for (const q of [
+    "Что известно про датчик TT-133?",
+    "адрес TT-133.",
+    "«TT-133»",
+    "проверь TT-133,",
+  ]) {
+    search.calls = [];
+    const res = await svc.lookup(q);
+    assert.equal(res.used, true, "должен найтись узел для: " + q);
+    assert.equal(res.count, 1);
+    assert.equal(res.facts[0].name, "Датчик температуры TT-133");
+    // В search() ушёл очищенный термин без пунктуации.
+    assert.ok(search.calls.includes("tt-133"), "в search() должен уйти tt-133 для: " + q);
+    assert.ok(
+      search.calls.every((c) => !/[?.,«»]/.test(c)),
+      "ни один аргумент search() не должен содержать пунктуацию"
+    );
+  }
+});
+
+test("lookup: несколько идентификаторов → поиск по каждому, объединение матчей", async () => {
+  const n1 = { id: "55555555-5555-5555-5555-555555555555", type: "sensor", name: "TT-133" };
+  const n2 = { id: "66666666-6666-6666-6666-666666666666", type: "cabinet", name: "IO-03" };
+  const search = {
+    calls: [],
+    async search(query) {
+      this.calls.push(query);
+      if (query === "tt-133") return [{ node: n1, matchedField: "name" }];
+      if (query === "io-03") return [{ node: n2, matchedField: "name" }];
+      return [];
+    },
+  };
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [n1.id]: [], [n2.id]: [] }),
+  });
+  const res = await svc.lookup("связан ли TT-133 со шкафом IO-03?");
+  assert.equal(res.used, true);
+  assert.equal(res.count, 2);
+  const names = res.facts.map((f) => f.name).sort();
+  assert.deepEqual(names, ["IO-03", "TT-133"]);
+});
+
 test("lookup: ошибка графа (нет Postgres) → used:false reason:error, без throw", async () => {
   const search = {
     async search() {
