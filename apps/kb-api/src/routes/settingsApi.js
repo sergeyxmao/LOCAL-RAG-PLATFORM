@@ -784,6 +784,84 @@ export async function settingsApiRoutes(app) {
     }
   );
 
+  // --- Извлечение знаний из документов (Память инженера — Этап 3) ---
+  app.get("/api/v2/settings/knowledge-extraction", async (request, reply) => {
+    try {
+      const knowledgeExtraction =
+        await app.appSettingsService.getKnowledgeExtractionPublic();
+      return { ok: true, knowledgeExtraction };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось получить настройки извлечения знаний");
+      return respondError(
+        reply,
+        500,
+        error.message || "Не удалось получить настройки извлечения знаний"
+      );
+    }
+  });
+
+  app.patch(
+    "/api/v2/settings/knowledge-extraction",
+    {
+      attachValidation: true,
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            providerId: { type: "string", maxLength: 128 },
+            model: { type: "string", maxLength: 256 },
+            maxTokens: { type: "integer", minimum: 500, maximum: 8000 },
+            timeoutMs: { type: "integer", minimum: 5000, maximum: 180000 },
+            prompt: { type: "string", maxLength: 16000 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      if (request.validationError) {
+        return respondError(
+          reply,
+          400,
+          "Некорректные параметры извлечения: проверьте границы maxTokens (500-8000), timeoutMs (5000-180000)."
+        );
+      }
+      try {
+        const body = request.body ?? {};
+        const knowledgeExtraction =
+          await app.appSettingsService.updateKnowledgeExtractionSettings(body);
+        return { ok: true, knowledgeExtraction };
+      } catch (error) {
+        const code = error.statusCode || 500;
+        if (code !== 500) {
+          return respondError(reply, code, error.message);
+        }
+        request.log.error({ err: error }, "Не удалось сохранить настройки извлечения знаний");
+        return respondError(
+          reply,
+          500,
+          error.message || "Не удалось сохранить настройки извлечения знаний"
+        );
+      }
+    }
+  );
+
+  app.delete("/api/v2/settings/knowledge-extraction/prompt", async (request, reply) => {
+    try {
+      const knowledgeExtraction =
+        await app.appSettingsService.resetKnowledgeExtractionPrompt();
+      return { ok: true, knowledgeExtraction };
+    } catch (error) {
+      request.log.error({ err: error }, "Не удалось сбросить промпт извлечения знаний");
+      return respondError(
+        reply,
+        500,
+        error.message || "Не удалось сбросить промпт извлечения знаний"
+      );
+    }
+  });
+
   app.get("/api/v2/settings/services", async (request, reply) => {
     const ollamaBase = app.config.models.chat.base_url;
     const rerankingSettings = await app.appSettingsService

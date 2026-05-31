@@ -742,6 +742,17 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         ceContextPromptReset: document.getElementById("cfgCeContextPromptReset"),
         ceMetaPromptReset: document.getElementById("cfgCeMetaPromptReset"),
         ceBanner: document.getElementById("ceBanner"),
+        keEnabled: document.getElementById("cfgKeEnabled"),
+        keProviderId: document.getElementById("cfgKeProviderId"),
+        keModel: document.getElementById("cfgKeModel"),
+        keMaxTokens: document.getElementById("cfgKeMaxTokens"),
+        keTimeoutMs: document.getElementById("cfgKeTimeoutMs"),
+        kePrompt: document.getElementById("cfgKePrompt"),
+        kePromptStatus: document.getElementById("cfgKePromptStatus"),
+        keStatus: document.getElementById("keStatus"),
+        keSave: document.getElementById("cfgKeSave"),
+        kePromptReset: document.getElementById("cfgKePromptReset"),
+        keBanner: document.getElementById("keBanner"),
         promptTemplate: document.getElementById("cfgPromptTemplate"),
         promptSave: document.getElementById("cfgPromptSave"),
         promptReset: document.getElementById("cfgPromptReset"),
@@ -1424,6 +1435,86 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         });
       }
 
+      // --- Извлечение знаний из документов (Этап 3) ---
+      function renderKeProvidersDropdown() {
+        if (!dom.keProviderId) return;
+        var providers = (state.settings && state.settings.cloudProviders && state.settings.cloudProviders.providers) || [];
+        var current = state.knowledgeExtraction && state.knowledgeExtraction.providerId ? state.knowledgeExtraction.providerId : "";
+        var options = ['<option value="">— не выбран —</option>'];
+        providers.forEach(function (p) {
+          var label = (p.name || "(без названия)") + (p.model ? " · " + p.model : "");
+          options.push('<option value="' + escapeHtml(p.id) + '">' + escapeHtml(label) + '</option>');
+        });
+        dom.keProviderId.innerHTML = options.join("");
+        dom.keProviderId.value = current;
+      }
+
+      function renderKnowledgeExtraction() {
+        if (!dom.keEnabled || !state.knowledgeExtraction) return;
+        var k = state.knowledgeExtraction;
+        dom.keEnabled.checked = k.enabled === true;
+        renderKeProvidersDropdown();
+        if (dom.keModel) dom.keModel.value = k.model || "";
+        if (dom.keMaxTokens) dom.keMaxTokens.value = k.maxTokens || 2000;
+        if (dom.keTimeoutMs) dom.keTimeoutMs.value = k.timeoutMs || 60000;
+        if (dom.kePrompt && dom.kePrompt.value !== k.prompt) {
+          dom.kePrompt.value = k.prompt || "";
+        }
+        if (dom.kePromptStatus) {
+          dom.kePromptStatus.textContent = k.isCustomPrompt ? "изменён вами" : "значение по умолчанию";
+        }
+        if (dom.keStatus) {
+          dom.keStatus.textContent = k.enabled ? "включено" : "выкл";
+        }
+      }
+
+      function loadKnowledgeExtraction() {
+        return api("GET", "/api/v2/settings/knowledge-extraction").then(function (data) {
+          state.knowledgeExtraction = data.knowledgeExtraction || null;
+          renderKnowledgeExtraction();
+        }).catch(function (err) {
+          if (dom.keBanner) setBanner(dom.keBanner, "Не удалось загрузить настройки извлечения: " + err.message, "error");
+        });
+      }
+
+      function saveKnowledgeExtraction() {
+        if (!dom.keEnabled) return;
+        var payload = {
+          enabled: dom.keEnabled.checked === true,
+          providerId: dom.keProviderId ? dom.keProviderId.value : "",
+          model: dom.keModel ? dom.keModel.value : "",
+          maxTokens: dom.keMaxTokens ? Number(dom.keMaxTokens.value) : 2000,
+          timeoutMs: dom.keTimeoutMs ? Number(dom.keTimeoutMs.value) : 60000,
+          prompt: dom.kePrompt ? dom.kePrompt.value : "",
+        };
+        if (payload.enabled && !payload.providerId) {
+          setBanner(dom.keBanner, "Выберите облачного провайдера для извлечения знаний.", "error");
+          return;
+        }
+        if (dom.keSave) dom.keSave.disabled = true;
+        setBanner(dom.keBanner, "Сохранение…", "success");
+        api("PATCH", "/api/v2/settings/knowledge-extraction", payload).then(function (data) {
+          state.knowledgeExtraction = data.knowledgeExtraction;
+          renderKnowledgeExtraction();
+          setBanner(dom.keBanner, "Настройки извлечения сохранены. Применятся при следующем запуске «Извлечь знания».", "success");
+        }).catch(function (err) {
+          setBanner(dom.keBanner, "Не удалось сохранить: " + err.message, "error");
+        }).then(function () {
+          if (dom.keSave) dom.keSave.disabled = false;
+        });
+      }
+
+      function resetKnowledgeExtractionPrompt() {
+        if (!window.confirm("Восстановить универсальный промпт извлечения? Ваши изменения будут потеряны.")) return;
+        api("DELETE", "/api/v2/settings/knowledge-extraction/prompt").then(function (data) {
+          state.knowledgeExtraction = data.knowledgeExtraction;
+          renderKnowledgeExtraction();
+          setBanner(dom.keBanner, "Промпт извлечения сброшен к универсальному.", "success");
+        }).catch(function (err) {
+          setBanner(dom.keBanner, "Не удалось сбросить: " + err.message, "error");
+        });
+      }
+
       function saveSystemPrompt() {
         var template = dom.promptTemplate ? dom.promptTemplate.value : "";
         setBanner(dom.promptBanner, "Сохранение…", "success");
@@ -1964,6 +2055,8 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         if (dom.ceSave) dom.ceSave.addEventListener("click", saveEnrichment);
         if (dom.ceContextPromptReset) dom.ceContextPromptReset.addEventListener("click", function () { resetEnrichmentPrompt("context"); });
         if (dom.ceMetaPromptReset) dom.ceMetaPromptReset.addEventListener("click", function () { resetEnrichmentPrompt("meta"); });
+        if (dom.keSave) dom.keSave.addEventListener("click", saveKnowledgeExtraction);
+        if (dom.kePromptReset) dom.kePromptReset.addEventListener("click", resetKnowledgeExtractionPrompt);
       }
 
       function setActiveSettingsTab(name) {
@@ -2013,6 +2106,7 @@ function renderSettingsScript(initialStateJson, extraScripts = "") {
         loadReranking().then(checkRerankingStatus);
         loadHyde();
         loadEnrichment();
+        loadKnowledgeExtraction();
         loadBackups();
       }
 
@@ -3625,6 +3719,58 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
             <button type="button" class="btn btn--ghost" id="cfgCeMetaPromptReset">Сбросить промпт тегов/описания</button>
           </div>
           <div class="settings-banner" id="ceBanner"></div>
+        </div>
+      </div>
+
+      <div class="settings-card" id="section-knowledge-extraction">
+        <div class="settings-card__head">
+          <div class="settings-card__title">${ICONS.fileText}<span>Извлечение знаний из документов (Память инженера)</span></div>
+          <span class="settings-hint" id="keStatus">выкл</span>
+        </div>
+        <div class="settings-card__body">
+          <p class="settings-hint">LLM читает текст документа и извлекает случаи (оборудование / что произошло / что сделали). Запускается ВРУЧНУЮ кнопкой «Извлечь знания» у текстового документа в Базе знаний. Извлечённое — <strong>черновики</strong>: они попадают в очередь «Кандидаты» (Граф знаний → Кандидаты), а в граф — <strong>только после вашего «Подтвердить»</strong>. Поддерживаются только текстовые документы (docx / txt / md); PDF и XLSX — вне scope.</p>
+          <div class="settings-row settings-row--triple">
+            <div class="settings-field">
+              <label class="settings-toggle" for="cfgKeEnabled">
+                <input type="checkbox" id="cfgKeEnabled" /> Извлечение включено
+                <span class="settings-help" title="Главный тумблер. Если выключен — кнопка «Извлечь знания» вернёт понятное сообщение и ничего не создаст. Извлечение запускается ТОЛЬКО вручную, не при импорте документов.">?</span>
+              </label>
+              <span class="settings-hint">Включает ручную кнопку «Извлечь знания» у текстовых документов.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgKeProviderId">Провайдер для извлечения <span class="settings-help" title="Любой из «Облачные провайдеры». ВНИМАНИЕ: текст документа уходит в облако этого провайдера. Рекомендуем быстрый flash/turbo.">?</span></label>
+              <select class="settings-select" id="cfgKeProviderId"><option value="">— не выбран —</option></select>
+              <span class="settings-hint">Текст документа отправляется этому провайдеру. Рекомендуем flash/turbo.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgKeModel">Модель (опционально) <span class="settings-help" title="Перебивает модель провайдера. Оставьте пустым, чтобы взять модель из настроек провайдера.">?</span></label>
+              <input type="text" class="settings-input settings-input--mono" id="cfgKeModel" placeholder="по умолчанию — модель провайдера" autocomplete="off" />
+              <span class="settings-hint">Оставьте пустым, чтобы взять модель из настроек провайдера.</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-field">
+              <label for="cfgKeMaxTokens">maxTokens <span class="settings-help" title="Максимум токенов в ответе модели на один фрагмент. Извлечение возвращает JSON-массив случаев — нужно с запасом. Рекомендуем 1500–3000.">?</span></label>
+              <input type="number" class="settings-input" id="cfgKeMaxTokens" min="500" max="8000" />
+              <span class="settings-hint">Длина JSON-ответа со случаями. Рекомендуем 1500–3000.</span>
+            </div>
+            <div class="settings-field">
+              <label for="cfgKeTimeoutMs">timeoutMs <span class="settings-help" title="Таймаут на один вызов модели (на фрагмент). По истечении фрагмент пропускается; если упали все фрагменты — задача завершится со статусом «ошибка», граф не затронут.">?</span></label>
+              <input type="number" class="settings-input" id="cfgKeTimeoutMs" min="5000" max="180000" />
+              <span class="settings-hint">Таймаут на вызов модели. По истечении — graceful fallback, ничего не создаётся.</span>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label for="cfgKePrompt">Промпт извлечения <span class="settings-help" title="Системный промпт LLM для извлечения случаев. Срабатывает при ручном запуске «Извлечь знания». Доменно-агностичен: просит вернуть строгий JSON {cases:[...]} и переносить факты (серийники, даты, адреса) дословно. Редактируйте под свою предметную область.">?</span></label>
+            <textarea class="settings-input settings-input--mono" id="cfgKePrompt" rows="12"></textarea>
+            <span class="settings-hint">Срабатывает при ручном запуске «Извлечь знания». Факты (серийники, даты, адреса) модель переносит дословно; ответ — строгий JSON {cases:[...]}.</span>
+            <span class="settings-hint" id="cfgKePromptStatus">значение по умолчанию</span>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="btn btn--accent" id="cfgKeSave">${ICONS.check}<span>Сохранить</span></button>
+            <button type="button" class="btn btn--ghost" id="cfgKePromptReset">Сбросить промпт к универсальному</button>
+          </div>
+          <div class="settings-banner" id="keBanner"></div>
         </div>
       </div>
       </div>

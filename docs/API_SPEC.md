@@ -451,3 +451,70 @@ curl http://localhost:8787/api/v2/settings/services
 (`match: { any: [...] }` по `node_scope_ids` или `node_ids`), и в lexical-ветке
 Postgres (`ANY($1::uuid[])` в `document_node_links` или
 `knowledge_node_closure`).
+
+## Память инженера — извлечение знаний / очередь кандидатов (Этап 3)
+
+LLM-извлечение случаев из текстовых документов с очередью ревью.
+Извлечённое НЕ пишется в граф — только в очередь кандидатов
+(`graph_extraction_candidates`); в граф случай попадает исключительно
+через подтверждение пользователем. Все роуты — со `schema`-валидацией
+Fastify/AJV, ответы и ошибки на русском. Подробно —
+`docs/KNOWLEDGE_EXTRACTION.md`.
+
+### Извлечение (асинхронная задача)
+
+- `POST /api/v2/graph/extract/:documentId` — запустить извлечение для
+  текстового документа (`docx`/`txt`/`md`). Синхронно проверяет gate
+  (включено / провайдер / модель / промпт) и тип документа: при проблеме
+  — `409 { ok:false, error }` с понятным русским сообщением, ничего не
+  создаётся (graceful fallback). Иначе запускает разбор LLM в фоне и
+  возвращает `{ ok:true, jobId, status:"running", documentTitle }`.
+- `GET /api/v2/graph/extract/status/:jobId` — статус задачи:
+  `{ ok:true, job: { jobId, status, casesFound, message, error, … } }`.
+  `status`: `running` / `done` / `empty` / `error`.
+
+### Очередь кандидатов
+
+- `GET /api/v2/graph/candidates` — список кандидатов. Query:
+  `documentId` (uuid), `extractionJobId` (uuid),
+  `status` (`pending`|`approved`|`rejected`), `limit` (1..1000),
+  `offset`. Ответ: `{ ok, items, total, limit, offset }`.
+- `GET /api/v2/graph/candidates/runs` — список запусков извлечения
+  (группировка по документу) с разбивкой по статусам. Query: `limit`
+  (1..500). Ответ: `{ ok, items: [{ extractionJobId, sourceDocumentId,
+  documentTitle, total, pending, approved, rejected, createdAt, … }] }`.
+- `PATCH /api/v2/graph/candidates/:id` — правка кандидата перед
+  подтверждением (только `pending`). Body: `{ casePayload?, confidence? }`
+  (`confidence` — number 0..1, nullable). Ответ: `{ ok, candidate }`.
+
+### Подтверждение / отклонение
+
+- `POST /api/v2/graph/candidates/:id/approve` — подтвердить: разворачивает
+  `case_payload` в плоские поля и вызывает `recordCase` с
+  `author='agent:llm-extraction'`, `confidence` из кандидата,
+  `documentId = source_document_id`. Дедупликация оборудования по имени
+  отрабатывает внутри `recordCaseTx` (`findNodeByName`, `ILIKE`). Кандидат
+  → `status='approved'`. Ответ: `{ ok, candidate, nodes, edges, created }`.
+- `POST /api/v2/graph/candidates/:id/reject` — отклонить: `status='rejected'`
+  (остаётся для аудита, в граф не идёт). Ответ: `{ ok, candidate }`.
+- `POST /api/v2/graph/candidates/approve` — пакетно. Body: `{ ids: uuid[] }`
+  (1..500). Ответ: `{ ok, approved: [], failed: [{id,error}] }`.
+- `POST /api/v2/graph/candidates/reject` — пакетно. Body: `{ ids: uuid[] }`.
+  Ответ: `{ ok, rejected: [], failed: [] }`.
+
+### Настройки извлечения
+
+- `GET /api/v2/settings/knowledge-extraction` → `{ ok, knowledgeExtraction }`
+  (`enabled`, `providerId`, `model`, `maxTokens`, `timeoutMs`, `prompt`,
+  `defaultPrompt`, `isCustomPrompt`).
+- `PATCH /api/v2/settings/knowledge-extraction` — body с теми же полями
+  (`maxTokens` 500..8000, `timeoutMs` 5000..180000, `prompt` ≤16000).
+- `DELETE /api/v2/settings/knowledge-extraction/prompt` — сброс промпта к
+  доменно-агностичному дефолту.
+
+### Расширение `POST /api/v2/graph/case`
+
+`recordCase` (за которым стоит этот роут) и `recordCaseTx` теперь
+принимают опциональные `author` / `confidence` (обратно совместимо:
+дефолты `"user:manual"` / `1.0` — поведение Этапа 1 не меняется). Сам роут
+`POST /api/v2/graph/case` сигнатуру тела не меняет.

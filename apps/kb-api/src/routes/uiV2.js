@@ -1,7 +1,7 @@
 import { renderChatPage } from "./uiV2Chat.js";
 import { renderKnowledgePage } from "./uiV2Knowledge.js";
 import { renderSettingsPage } from "./uiV2Settings.js";
-import { renderGraphPage } from "./uiV2Graph.js";
+import { renderGraphPage, renderCandidatesPage } from "./uiV2Graph.js";
 
 export const ICONS = {
   messageCircle:
@@ -804,6 +804,15 @@ export async function uiV2Routes(app) {
       ICONS,
       renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
       stats,
+    });
+  });
+
+  app.get("/ui/v2/graph/candidates", async (request, reply) => {
+    reply.type("text/html; charset=utf-8");
+    const themeDefault = await resolveThemeDefault(app, request);
+    return renderCandidatesPage({
+      ICONS,
+      renderLayout: (opts) => renderLayout({ ...opts, themeDefault }),
     });
   });
 }
