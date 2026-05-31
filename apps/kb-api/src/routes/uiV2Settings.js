@@ -3583,9 +3583,16 @@ export function renderSettingsPage({ ICONS, renderLayout }) {
               <span class="settings-hint">Рекомендуем быстрый (flash/turbo), не reasoning — вызов идёт на каждый фрагмент.</span>
             </div>
             <div class="settings-field">
-              <label for="cfgCeModel">Модель (опционально) <span class="settings-help" title="Перебивает модель провайдера. Оставьте пустым — возьмётся модель из настроек провайдера.">?</span></label>
-              <input type="text" class="settings-input settings-input--mono" id="cfgCeModel" placeholder="по умолчанию — модель провайдера" autocomplete="off" />
-              <span class="settings-hint">Оставьте пустым, чтобы взять модель из настроек провайдера.</span>
+              <label for="cfgCeModel">Модель для обогащения <span class="settings-help" title="Перебивает модель провайдера для обогащения. Для обогащения выбирайте быструю flash/turbo-модель — вызов идёт на КАЖДЫЙ фрагмент, reasoning-pro модели будут дорогими и медленными. Выберите из списка-подсказки или впишите свою. Пусто — возьмётся модель провайдера.">?</span></label>
+              <input type="text" class="settings-input settings-input--mono" id="cfgCeModel" list="cfgCeModelSuggestions" placeholder="напр. deepseek-v4-flash" autocomplete="off" />
+              <datalist id="cfgCeModelSuggestions">
+                <option value="deepseek-v4-flash"></option>
+                <option value="deepseek-chat"></option>
+                <option value="gemini-2.5-flash"></option>
+                <option value="gpt-4o-mini"></option>
+                <option value="qwen-turbo"></option>
+              </datalist>
+              <span class="settings-hint">Для обогащения выбирайте быструю flash/turbo-модель — вызов идёт на каждый фрагмент. Выберите из списка или впишите свою; пусто — модель провайдера.</span>
             </div>
           </div>
           <div class="settings-row">
