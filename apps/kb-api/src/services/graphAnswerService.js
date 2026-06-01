@@ -5,8 +5,8 @@
 // факты (узел + его прямые связи) для подмешивания в промпт и в sources.
 //
 // Граф НЕ модифицируется — только переиспользуются методы чтения.
-// Никаких внешних/LLM-вызовов: это локальный SQL (ILIKE + до 3 запросов
-// связей). При недоступности Postgres lookup ловит ошибку и возвращает
+// Никаких внешних/LLM-вызовов: это локальный SQL (ILIKE + до MAX_NODES
+// запросов связей). При недоступности Postgres lookup ловит ошибку и возвращает
 // used:false — RAG-ответ при этом не падает.
 
 // Допустимые поля матча — только точные структурные поля узлов.
@@ -20,6 +20,24 @@ const ACCEPTED_MATCH_FIELDS = new Set([
   "address",
   "cabinet_id",
 ]);
+
+// Приоритет типов узлов при адресном кластере (#8.3 — фикс потери сигналов).
+// graphSearchService отдаёт матчи в порядке приоритета поля (name → type →
+// attributes), поэтому при адресном вопросе card/channel (матч по name) идут
+// выше сигнала (матч по address-атрибуту) и вытесняют его из лимита. Этот
+// массив переупорядочивает принятые матчи ПО ЦЕННОСТИ ТИПА для структурных
+// вопросов: «что физически подключено» (signal/device) важнее носителя
+// (card/channel) и места (station/cabinet/object). Чем меньше индекс — тем
+// выше приоритет; типы вне списка получают наименьший приоритет (идут в хвост).
+const NODE_TYPE_PRIORITY = [
+  "signal",
+  "device",
+  "card",
+  "channel",
+  "station",
+  "cabinet",
+  "object",
+];
 
 // Русификация типов связей. Зеркало EDGE_TYPE_LABELS из
 // routes/uiV2Graph.js (там словарь живёт внутри клиентского кода и для
@@ -37,7 +55,11 @@ const RELATION_LABELS_RU = {
 };
 
 // Не раздуваем промпт: максимум узлов в ответе и связей на узел.
-const MAX_NODES = 3;
+// MAX_NODES = 6: один адрес даёт кластер card+channel+signal (3 узла), а
+// запрос может содержать несколько идентификаторов — 6 покрывают полный
+// кластер одного адреса с запасом, не раздувая промпт (узлы компактны, связи
+// лимитированы MAX_RELATIONS_PER_NODE).
+const MAX_NODES = 6;
 const MAX_RELATIONS_PER_NODE = 8;
 const DEFAULT_SEARCH_LIMIT = 5;
 
@@ -97,6 +119,12 @@ export class GraphAnswerService {
       // правилом, что searchService.normalizeQueryTerms() (split по
       // [^a-z0-9а-яё-]+), поэтому «TT-133?» → «tt-133». Поиск по сырому
       // запросу с прилипшим знаком препинания не матчил ILIKE (#8.3-fix).
+      // Собираем заметно больше MAX_NODES (до MAX_NODES * 4), чтобы матч из
+      // «хвоста» выдачи graph-search (например, сигнал по address-атрибуту,
+      // идущий после card/channel по name) успел попасть в пул ДО сортировки
+      // по приоритету типа. Ранний break по MAX_NODES обрезал бы сигнал
+      // раньше, чем сортировка подняла бы его наверх (#8.3).
+      const COLLECT_LIMIT = MAX_NODES * 4;
       const seen = new Set();
       const accepted = [];
       let totalMatches = 0;
@@ -110,8 +138,8 @@ export class GraphAnswerService {
           seen.add(m.node.id);
           accepted.push(m);
         }
-        // Достаточно узлов — лишние термины не ищем.
-        if (accepted.length >= MAX_NODES) break;
+        // Достаточно кандидатов для сортировки — лишние термины не ищем.
+        if (accepted.length >= COLLECT_LIMIT) break;
       }
 
       if (accepted.length === 0) {
@@ -122,8 +150,21 @@ export class GraphAnswerService {
         return { used: false, reason: "no_match", facts: [], count: 0 };
       }
 
+      // Приоритизация по типу узла ДО применения лимита: signal/device выше
+      // card/channel и т.д. Сортировка стабильная (Array.prototype.sort в Node
+      // стабилен), поэтому внутри одного типа сохраняется исходный порядок
+      // выдачи graph-search. Без этого адресный кластер терял бы сигнал в
+      // обрезке по MAX_NODES (#8.3).
+      const typeRank = (type) => {
+        const idx = NODE_TYPE_PRIORITY.indexOf(String(type ?? ""));
+        return idx === -1 ? NODE_TYPE_PRIORITY.length : idx;
+      };
+      const prioritized = accepted
+        .slice()
+        .sort((a, b) => typeRank(a.node?.type) - typeRank(b.node?.type));
+
       const facts = [];
-      for (const match of accepted.slice(0, MAX_NODES)) {
+      for (const match of prioritized.slice(0, MAX_NODES)) {
         const node = match.node;
         const relations = await this._loadRelations(node.id);
         facts.push({

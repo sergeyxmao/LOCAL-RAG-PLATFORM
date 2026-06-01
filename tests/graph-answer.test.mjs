@@ -94,10 +94,10 @@ test("lookup: структурный матч + связи → used:true с фа
   assert.equal(fact.relations[0].targetName, "IO-03");
 });
 
-test("lookup: максимум 3 узла и 8 связей на узел", async () => {
+test("lookup: максимум 6 узлов и 8 связей на узел", async () => {
   const rows = [];
   const relatedByNode = {};
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     const id = `0000000${i}-0000-0000-0000-000000000000`;
     rows.push({ node: { id, type: "board", name: "DII8P24-" + i }, matchedField: "name" });
     relatedByNode[id] = Array.from({ length: 12 }, (_, j) => ({
@@ -111,8 +111,98 @@ test("lookup: максимум 3 узла и 8 связей на узел", asyn
     graphService: fakeGraphService(relatedByNode),
   });
   const res = await svc.lookup("где плата DII8P24-1");
-  assert.equal(res.facts.length, 3, "не более 3 узлов");
+  assert.equal(res.facts.length, 6, "не более 6 узлов");
   assert.equal(res.facts[0].relations.length, 8, "не более 8 связей на узел");
+});
+
+test("lookup: адресный кластер — сигнал не теряется и идёт первым (#8.3)", async () => {
+  // graph-search отдаёт по одному адресу 3 узла в порядке приоритета поля:
+  // card(name), channel(name), signal(address). Раньше лимит резал до
+  // приоритизации и сигнал (последний) терялся. Теперь приоритет типа
+  // поднимает signal наверх.
+  const cardId = "aaaaaaaa-0000-0000-0000-000000000000";
+  const channelId = "bbbbbbbb-0000-0000-0000-000000000000";
+  const signalId = "cccccccc-0000-0000-0000-000000000000";
+  const rows = [
+    { node: { id: cardId, type: "card", name: "AII8C @ 3:0:0:3" }, matchedField: "name" },
+    { node: { id: channelId, type: "channel", name: "Канал 3 (3:0:0:3)" }, matchedField: "name" },
+    {
+      node: {
+        id: signalId,
+        type: "signal",
+        name: "K1_DP5PP103",
+        attributes: { address: "3:0:0:3", description: "Перепад давления газа на РР103" },
+      },
+      matchedField: "address",
+    },
+  ];
+  const svc = new GraphAnswerService({
+    graphSearchService: fakeGraphSearch(rows),
+    graphService: fakeGraphService({ [cardId]: [], [channelId]: [], [signalId]: [] }),
+  });
+  const res = await svc.lookup("что подключено на адресе 3:0:0:3");
+  assert.equal(res.used, true);
+  assert.equal(res.count, 3);
+  const names = res.facts.map((f) => f.name);
+  assert.ok(names.includes("K1_DP5PP103"), "сигнал не должен теряться");
+  // Приоритет типа: signal первым, card/channel за ним.
+  assert.equal(res.facts[0].type, "signal");
+  assert.equal(res.facts[0].name, "K1_DP5PP103");
+});
+
+test("lookup: много карт + один сигнал — лимит не обрезает сигнал (#8.3)", async () => {
+  // 8 карт по name идут впереди сигнала по address. Без приоритизации сигнал
+  // обрезался бы лимитом MAX_NODES. Сортировка по типу поднимает его выше карт.
+  const rows = [];
+  const relatedByNode = {};
+  for (let i = 0; i < 8; i++) {
+    const id = `dddddddd-000${i}-0000-0000-000000000000`;
+    rows.push({ node: { id, type: "card", name: "AII8C-" + i }, matchedField: "name" });
+    relatedByNode[id] = [];
+  }
+  const signalId = "eeeeeeee-0000-0000-0000-000000000000";
+  rows.push({
+    node: { id: signalId, type: "signal", name: "K1_DP5PP103", attributes: { address: "3:0:0:3" } },
+    matchedField: "address",
+  });
+  relatedByNode[signalId] = [];
+  const svc = new GraphAnswerService({
+    graphSearchService: fakeGraphSearch(rows),
+    graphService: fakeGraphService(relatedByNode),
+  });
+  const res = await svc.lookup("что на адресе 3:0:0:3");
+  assert.equal(res.facts.length, 6, "лимит 6 узлов");
+  assert.equal(res.facts[0].type, "signal", "сигнал поднят выше карт");
+  assert.ok(
+    res.facts.some((f) => f.name === "K1_DP5PP103"),
+    "сигнал присутствует в фактах"
+  );
+});
+
+test("lookup: одиночный матч по имени сигнала FA-IO-03-A → used:true (регресс #8.3)", async () => {
+  // Вопрос про адрес конкретного сигнала по его имени: единственный матч,
+  // приоритизация по типу не должна ломать одиночный кейс.
+  const nodeId = "ffffffff-0000-0000-0000-000000000000";
+  const search = fakeGraphSearch([
+    {
+      node: {
+        id: nodeId,
+        type: "signal",
+        name: "FA-IO-03-A",
+        attributes: { address: "3:0:2:4" },
+      },
+      matchedField: "name",
+    },
+  ]);
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [nodeId]: [] }),
+  });
+  const res = await svc.lookup("какой адрес у сигнала FA-IO-03-A");
+  assert.equal(res.used, true);
+  assert.equal(res.count, 1);
+  assert.equal(res.facts[0].name, "FA-IO-03-A");
+  assert.equal(res.facts[0].attributes.address, "3:0:2:4");
 });
 
 test("lookup: идентификатор с прилипшей пунктуацией очищается перед search (#8.3-fix)", async () => {
