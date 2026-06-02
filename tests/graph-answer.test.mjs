@@ -205,6 +205,109 @@ test("lookup: одиночный матч по имени сигнала FA-IO-0
   assert.equal(res.facts[0].attributes.address, "3:0:2:4");
 });
 
+test("lookup: составной адрес 3:0:0:3 не дробится — в search уходит целиком (#8.3.4)", async () => {
+  // Раньше split по [^a-z0-9а-яё-]+ дробил «3:0:0:3» на «3»,«0»,«0»,«3» и в
+  // graph-search уходили осколки, цепляющие чужие адреса. Теперь адрес —
+  // единый идентификатор-термин.
+  const signal = {
+    id: "11111111-aaaa-0000-0000-000000000000",
+    type: "signal",
+    name: "K1_DP5PP103",
+    attributes: { address: "3:0:0:3", description: "Перепад давления газа на РР103" },
+  };
+  const search = {
+    calls: [],
+    async search(query) {
+      this.calls.push(query);
+      return query === "3:0:0:3" ? [{ node: signal, matchedField: "address" }] : [];
+    },
+  };
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [signal.id]: [] }),
+  });
+  const res = await svc.lookup("Что подключено на адресе 3:0:0:3?");
+  assert.ok(search.calls.includes("3:0:0:3"), "в search должен уйти полный адрес");
+  assert.ok(
+    !search.calls.includes("3") && !search.calls.includes("0"),
+    "осколки адреса не должны уходить в search"
+  );
+  assert.equal(res.used, true);
+  assert.equal(res.facts[0].name, "K1_DP5PP103");
+  assert.equal(res.facts[0].type, "signal");
+});
+
+test("lookup: адрес с точками 2.0.4.6 распознаётся цельным (#8.3.4)", async () => {
+  const node = { id: "22222222-aaaa-0000-0000-000000000000", type: "card", name: "AII8C @ 2.0.4.6" };
+  const search = {
+    calls: [],
+    async search(query) {
+      this.calls.push(query);
+      return query === "2.0.4.6" ? [{ node, matchedField: "name" }] : [];
+    },
+  };
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [node.id]: [] }),
+  });
+  const res = await svc.lookup("что на адресе 2.0.4.6");
+  assert.ok(search.calls.includes("2.0.4.6"), "адрес с точками — единый термин");
+  assert.equal(res.used, true);
+  assert.equal(res.facts[0].name, "AII8C @ 2.0.4.6");
+});
+
+test("lookup: составной тег с подчёркиванием K1_APK100 не дробится (#8.3.4)", async () => {
+  const node = { id: "33333333-aaaa-0000-0000-000000000000", type: "signal", name: "K1_APK100" };
+  const search = {
+    calls: [],
+    async search(query) {
+      this.calls.push(query);
+      return query === "k1_apk100" ? [{ node, matchedField: "name" }] : [];
+    },
+  };
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [node.id]: [] }),
+  });
+  const res = await svc.lookup("где сигнал K1_APK100");
+  assert.ok(search.calls.includes("k1_apk100"), "подчёркивание не дробит тег");
+  assert.ok(!search.calls.includes("k1"), "осколок k1 не должен уходить в search");
+  assert.equal(res.used, true);
+  assert.equal(res.facts[0].name, "K1_APK100");
+});
+
+test("lookup: адресный кластер по полному адресу — сигнал первым (#8.3.4 + приоритет типов)", async () => {
+  // Полный адрес матчит весь кластер; приоритизация типов из прошлого фикса
+  // поднимает signal над card/channel.
+  const cardId = "c1111111-aaaa-0000-0000-000000000000";
+  const channelId = "c2222222-aaaa-0000-0000-000000000000";
+  const signalId = "c3333333-aaaa-0000-0000-000000000000";
+  const search = {
+    calls: [],
+    async search(query) {
+      this.calls.push(query);
+      if (query !== "3:0:0:3") return [];
+      return [
+        { node: { id: cardId, type: "card", name: "AII8C @ 3:0:0:3" }, matchedField: "name" },
+        { node: { id: channelId, type: "channel", name: "Канал 3 (3:0:0:3)" }, matchedField: "name" },
+        {
+          node: { id: signalId, type: "signal", name: "K1_DP5PP103", attributes: { address: "3:0:0:3" } },
+          matchedField: "address",
+        },
+      ];
+    },
+  };
+  const svc = new GraphAnswerService({
+    graphSearchService: search,
+    graphService: fakeGraphService({ [cardId]: [], [channelId]: [], [signalId]: [] }),
+  });
+  const res = await svc.lookup("Что подключено на адресе 3:0:0:3?");
+  assert.deepEqual(search.calls, ["3:0:0:3"], "ровно один поиск по полному адресу");
+  assert.equal(res.count, 3);
+  assert.equal(res.facts[0].type, "signal");
+  assert.equal(res.facts[0].name, "K1_DP5PP103");
+});
+
 test("lookup: идентификатор с прилипшей пунктуацией очищается перед search (#8.3-fix)", async () => {
   // Узел в графе называется «Датчик температуры TT-133». search() матчит
   // только чистый идентификатор «tt-133», но НЕ грязный «tt-133?» / полный вопрос.

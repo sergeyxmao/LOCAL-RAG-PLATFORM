@@ -63,19 +63,47 @@ const MAX_NODES = 6;
 const MAX_RELATIONS_PER_NODE = 8;
 const DEFAULT_SEARCH_LIMIT = 5;
 
+// Составной адрес — последовательность из 2+ числовых групп через двоеточие
+// ИЛИ точку: «3:0:0:3», «2.0.4.6», «2:0:2:6», «3:0:3:0». Распознаётся ДО
+// общего split, иначе двоеточие/точка (они не входят в класс
+// [a-z0-9а-яё_-]) раздробили бы адрес на одиночные цифры «3»,«0»,«0»,«3» —
+// и в graph-search ушли бы осколки, цепляющие случайные узлы из чужих
+// адресов вместо точного матча по полю address (#8.3.4).
+const ADDRESS_PATTERN = /\d+(?:[:.]\d+)+/g;
+
 // Правило идентификатор-подобного термина дублирует
 // SearchService.identifierTerms() (см.
 // apps/kb-api/src/services/searchService.js → normalizeQueryTerms()/
 // identifierTerms()): термин считается идентификатором, если содержит
 // цифру или дефис. Дублируем здесь намеренно, чтобы не тянуть весь
 // SearchService ради одной эвристики.
+//
+// Порядок: сначала вытаскиваем составные адреса целиком, затем из остатка
+// строки извлекаем обычные термины прежним правилом split по
+// [^a-z0-9а-яё_-]+. Подчёркивание добавлено в класс, чтобы составные теги
+// вроде «K1_APK100» / «K1_DP5PP103» не дробились на «k1» + хвост. Результаты
+// объединяются с дедупом и сохранением порядка (адреса — первыми, как самые
+// специфичные).
 function extractIdentifierTerms(query) {
-  return String(query ?? "")
-    .toLowerCase()
-    .split(/[^a-z0-9а-яё-]+/i)
+  const raw = String(query ?? "").toLowerCase();
+  const addresses = raw.match(ADDRESS_PATTERN) || [];
+  // Убираем распознанные адреса из строки, чтобы split не дробил их по
+  // двоеточию/точке на одиночные цифры.
+  const rest = raw.replace(ADDRESS_PATTERN, " ");
+  const restTerms = rest
+    .split(/[^a-z0-9а-яё_-]+/i)
     .map((term) => term.trim())
     .filter(Boolean)
     .filter((term) => /\d/.test(term) || term.includes("-"));
+
+  const out = [];
+  const seen = new Set();
+  for (const term of [...addresses, ...restTerms]) {
+    if (seen.has(term)) continue;
+    seen.add(term);
+    out.push(term);
+  }
+  return out;
 }
 
 export class GraphAnswerService {
