@@ -184,11 +184,8 @@ export function renderLayout({
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${escapeAttr(documentTitle)}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <!-- Неблокирующая загрузка шрифтов: офлайн страница рендерится сразу на системных шрифтах. -->
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
+  <!-- Self-hosted шрифты (src/assets/fonts) — без CDN, проект полностью офлайн. -->
+  <link rel="stylesheet" href="/ui/assets/uiV2/fonts.css">
   <link rel="stylesheet" href="/ui/assets/uiV2/layout.css">
 ${stylesheetLinks}
   <script>${renderThemeBootstrapScript(themeDefault)}</script>
