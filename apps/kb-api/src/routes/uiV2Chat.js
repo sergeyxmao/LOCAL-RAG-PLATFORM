@@ -7,7 +7,7 @@ export function renderChatPage({ ICONS, renderLayout }) {
     <div class="sidebar-context__title">История</div>
     <div class="sidebar__history">
       <div class="sidebar__history-list" id="historyList">
-        <div class="sidebar__empty">История загружается…</div>
+        <div class="skeleton-list" role="status" aria-label="История загружается"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
       </div>
     </div>
   `;
@@ -55,7 +55,7 @@ export function renderChatPage({ ICONS, renderLayout }) {
         <div class="filters-panel__body">
           <div>
             <div class="filters-section__title">Разделы базы знаний</div>
-            <div class="node-tree" id="nodeTree"><div class="filters-empty">Дерево загружается…</div></div>
+            <div class="node-tree" id="nodeTree"><div class="skeleton-list" role="status" aria-label="Дерево загружается"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div></div>
           </div>
           <div>
             <div class="filters-section__title">Теги</div>

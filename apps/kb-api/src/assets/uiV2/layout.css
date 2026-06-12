@@ -504,3 +504,25 @@
     html[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
 
   
+    /* Скелетоны загрузки: пульсация только через opacity — дёшево для CPU
+       слабого ноутбука. prefers-reduced-motion отключает анимацию глобально. */
+    @keyframes lr-skeleton-pulse {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 0.9; }
+    }
+    .skeleton {
+      background: var(--surface-2);
+      border-radius: 6px;
+      min-height: 14px;
+      animation: lr-skeleton-pulse 1.3s ease-in-out infinite;
+    }
+    .skeleton-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px 6px;
+    }
+    .skeleton-list .skeleton { height: 26px; }
+    .skeleton-list .skeleton:nth-child(2) { width: 85%; }
+    .skeleton-list .skeleton:nth-child(3) { width: 70%; }
+    .skeleton-list .skeleton:nth-child(4) { width: 55%; }

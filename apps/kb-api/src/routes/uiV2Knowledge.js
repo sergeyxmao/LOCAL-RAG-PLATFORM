@@ -18,7 +18,7 @@ export function renderKnowledgePage({ ICONS, renderLayout }) {
     <div class="sidebar-context__title">Разделы</div>
     <button type="button" class="btn btn--accent" id="kbTreeNewBtn">${ICONS.plus}<span>Раздел</span></button>
     <div class="kb-tree__body" id="kbTree" style="flex:1;min-height:0;overflow-y:auto;">
-      <div class="filters-empty">Дерево загружается…</div>
+      <div class="skeleton-list" role="status" aria-label="Дерево загружается"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
     </div>
     <div class="sidebar-context__footer">
       <a href="/ui/nodes" target="_blank" rel="noopener">Расширенный редактор →</a>

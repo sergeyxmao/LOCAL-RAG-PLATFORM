@@ -90,7 +90,7 @@ function renderCandidatesPageHtml() {
           <button class="graph-btn graph-btn--small" id="btnRefreshRuns" title="Обновить список">↻</button>
         </div>
         <div class="graph-pane__body cand-runs" id="runsContainer">
-          <div class="cand-empty">Загрузка…</div>
+          <div class="skeleton-list" role="status" aria-label="Запуски загружаются"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
         </div>
         <div class="graph-pane__footer">
           <a class="graph-btn" href="/ui/v2/graph">← К графу</a>
