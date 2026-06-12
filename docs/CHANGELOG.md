@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-06-13
+
+- **UI v2: полировка дизайн-системы.** В общий layout (`uiV2.js`) добавлены токены `--warning/--warning-text/--warning-soft/--warning-border`, `--success-soft`, `--danger-soft` и токены подсветки JSON (`--code-key/string/number/bool`) для светлой и тёмной темы; страницы (`uiV2Chat/Knowledge/Settings/Graph`) переведены с захардкоженных цветов на токены — янтарные предупреждения и JSON-подсветка теперь корректно читаются в обеих темах.
+- **UI v2: единый `.toast` в layout.** Раньше каждая страница носила свою копию, а на «Базе знаний» и «Настройках» стили тоста вовсе отсутствовали (уведомления показывались голым текстом в потоке страницы). Добавлен вариант `toast--warning`, инлайн-хардкод цветов в JS убран.
+- **UI v2: доступность и микро-анимации.** Глобальный видимый фокус (`:focus-visible`) для клавиатурной навигации, фокус-кольцо на инпутах, лёгкие анимации появления модалок/тостов (`lr-fade-in`, `lr-slide-up`, `lr-toast-in`), `prefers-reduced-motion` отключает анимации; `.btn:active` даёт тактильный отклик.
+- **UI v2: неблокирующая загрузка Google Fonts.** Шрифты грузятся через `media="print" onload` — офлайн страницы рендерятся сразу на системных шрифтах, без ожидания CDN.
+- **kb-api: graceful shutdown.** Обработчики SIGTERM/SIGINT закрывают HTTP-сервер и пул PostgreSQL штатно; `Dockerfile` переведён с `npm start` на `node src/index.js` (npm не пробрасывал SIGTERM, `docker stop` ждал таймаут).
+- **kb-api: надёжность и мелочи.** Базовые security-заголовки (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) через onSend-hook; явные параметры пула pg (`max:10`, `connectionTimeoutMillis:10000`, `idleTimeoutMillis:30000`) — при недоступном PostgreSQL запросы падают быстро, а не висят; `Cache-Control: private, max-age=3600` на превью страниц PDF — ускоряет повторный просмотр; healthcheck kb-api в `docker-compose.yml` (busybox wget на `/health`).
+
 ## 2026-05-27
 
 - **Cloud chat timeout вынесен в env.** `CLOUD_CHAT_TIMEOUT_MS` (дефолт 180000) — заменяет зашитые в коде 60000 мс, которые обрывали длинные ответы reasoning/pro-моделей посреди абзаца. Прокидывается в `infra/docker-compose.yml` через `kb-api.environment`.

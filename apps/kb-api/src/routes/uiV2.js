@@ -88,7 +88,17 @@ function renderLayoutCss() {
       --accent-hover: #2563EB;
       --accent-soft: rgba(59, 130, 246, 0.15);
       --success: #10B981;
+      --success-soft: rgba(16, 185, 129, 0.12);
       --danger: #EF4444;
+      --danger-soft: rgba(239, 68, 68, 0.12);
+      --warning: #F59E0B;
+      --warning-text: #FCD34D;
+      --warning-soft: rgba(245, 158, 11, 0.10);
+      --warning-border: rgba(245, 158, 11, 0.30);
+      --code-key: #93C5FD;
+      --code-string: #34D399;
+      --code-number: #FBBF24;
+      --code-bool: #F87171;
       --border: rgba(255, 255, 255, 0.08);
       --border-strong: rgba(255, 255, 255, 0.16);
       --shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
@@ -107,7 +117,17 @@ function renderLayoutCss() {
       --accent-hover: #1D4ED8;
       --accent-soft: rgba(37, 99, 235, 0.10);
       --success: #047857;
+      --success-soft: rgba(4, 120, 87, 0.10);
       --danger: #B91C1C;
+      --danger-soft: rgba(185, 28, 28, 0.08);
+      --warning: #B45309;
+      --warning-text: #B45309;
+      --warning-soft: rgba(245, 158, 11, 0.10);
+      --warning-border: rgba(180, 83, 9, 0.25);
+      --code-key: #1D4ED8;
+      --code-string: #047857;
+      --code-number: #B45309;
+      --code-bool: #B91C1C;
       --border: rgba(0, 0, 0, 0.08);
       --border-strong: rgba(0, 0, 0, 0.16);
       --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
@@ -132,7 +152,55 @@ function renderLayoutCss() {
     button { font-family: inherit; cursor: pointer; }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
     ::-webkit-scrollbar-track { background: transparent; }
+    ::selection { background: var(--accent-soft); }
+
+    /* Единый видимый фокус для клавиатурной навигации (доступность). */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+    input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    /* Общие лёгкие анимации; страницы переиспользуют их по имени. */
+    @keyframes lr-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes lr-slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @keyframes lr-toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+    @keyframes lr-spin { to { transform: rotate(360deg); } }
+    .lr-spin { animation: lr-spin 0.8s linear infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* Единый тост для всех страниц (раньше каждая страница носила свою копию,
+       а на «Базе знаний» и «Настройках» стили вовсе отсутствовали). */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 10px 16px;
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      z-index: 999;
+      max-width: 80vw;
+      animation: lr-toast-in 0.18s ease;
+    }
+    .toast--error { border-color: var(--danger); color: var(--danger); }
+    .toast--warning { border-color: var(--warning); color: var(--warning-text); }
 
     :root {
       --context-sidebar-width: 240px;
@@ -453,6 +521,7 @@ function renderLayoutCss() {
       transition: background 0.12s ease, border-color 0.12s ease;
     }
     .btn:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+    .btn:active { transform: translateY(1px); }
     .btn--icon { padding: 8px; }
     .btn--accent {
       background: var(--accent);
@@ -717,7 +786,9 @@ export function renderLayout({
   <title>${escapeAttr(documentTitle)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <!-- Неблокирующая загрузка шрифтов: офлайн страница рендерится сразу на системных шрифтах. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"></noscript>
   <style>${renderLayoutCss()}</style>
   <script>${renderThemeBootstrapScript(themeDefault)}</script>
 </head>

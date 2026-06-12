@@ -190,10 +190,10 @@ function renderSettingsCss() {
       flex: 0 0 auto;
     }
     .diag-card--ok .diag-card__dot { background: var(--success); }
-    .diag-card--warning .diag-card__dot { background: #F59E0B; }
+    .diag-card--warning .diag-card__dot { background: var(--warning); }
     .diag-card--error .diag-card__dot { background: var(--danger); }
     .diag-card--ok { border-color: rgba(16, 185, 129, 0.30); }
-    .diag-card--warning { border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.06); }
+    .diag-card--warning { border-color: var(--warning-border); background: var(--warning-soft); }
     .diag-card--error { border-color: rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.06); }
     .diag-card__name {
       font-weight: 600;
@@ -572,8 +572,8 @@ function renderSettingsCss() {
     .graph-warning-item {
       font-size: 12px;
       color: var(--text);
-      background: rgba(218, 165, 32, 0.10);
-      border-left: 3px solid #d18f00;
+      background: var(--warning-soft);
+      border-left: 3px solid var(--warning);
       padding: 4px 8px;
       border-radius: 4px;
     }
@@ -609,8 +609,8 @@ function renderSettingsCss() {
     .graph-advanced__warn {
       font-size: 12px;
       color: var(--text);
-      background: rgba(218, 165, 32, 0.10);
-      border-left: 3px solid #d18f00;
+      background: var(--warning-soft);
+      border-left: 3px solid var(--warning);
       padding: 6px 10px;
       border-radius: 4px;
     }
@@ -2135,8 +2135,8 @@ function renderGraphTabScript() {
 "    var existing = document.querySelector('.toast');",
 "    if (existing) existing.remove();",
 "    var el = document.createElement('div');",
-"    el.className = 'toast' + (kind === 'error' ? ' toast--error' : '');",
-"    if (kind === 'warning') { el.style.borderColor = '#d18f00'; el.style.color = '#a86a00'; }",
+"    var kindClass = kind === 'error' ? ' toast--error' : kind === 'warning' ? ' toast--warning' : '';",
+"    el.className = 'toast' + kindClass;",
 "    el.textContent = msg;",
 "    document.body.appendChild(el);",
 "    var ttl = (kind === 'warning' || kind === 'error') ? 8000 : 4200;",

@@ -1448,6 +1448,9 @@ export async function documentRoutes(app) {
         request.params.fileName
       );
       reply.header("Content-Type", mimeTypeForAsset(request.params.fileName));
+      // Превью страниц практически неизменны — час кэша заметно ускоряет
+      // повторный просмотр документов без риска надолго залипшей картинки.
+      reply.header("Cache-Control", "private, max-age=3600");
       return reply.send(buffer);
     } catch (error) {
       reply.code(404);
@@ -1498,6 +1501,7 @@ export async function documentRoutes(app) {
       try {
         const buffer = await app.visualAssetService.readAssetFile(document.id, asset.file_name);
         reply.header("Content-Type", mimeTypeForAsset(asset.file_name));
+        reply.header("Cache-Control", "private, max-age=3600");
         return reply.send(buffer);
       } catch (error) {
         // Fall through to lazy generation.

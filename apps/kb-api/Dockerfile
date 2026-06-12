@@ -17,4 +17,6 @@ COPY src ./src
 
 EXPOSE 8787
 
-CMD ["npm", "start"]
+# node напрямую (а не npm start): npm не пробрасывает SIGTERM дочернему
+# процессу, из-за чего docker stop ждал таймаут вместо graceful shutdown.
+CMD ["node", "src/index.js"]

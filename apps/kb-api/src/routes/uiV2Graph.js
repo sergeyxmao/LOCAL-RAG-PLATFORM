@@ -263,10 +263,10 @@ function renderGraphPageCss() {
       color: var(--text);
       margin: 0;
     }
-    .attrs-pre .json-key { color: #93c5fd; }
-    .attrs-pre .json-string { color: #fbbf24; }
-    .attrs-pre .json-number { color: #34d399; }
-    .attrs-pre .json-boolean { color: #f87171; }
+    .attrs-pre .json-key { color: var(--code-key); }
+    .attrs-pre .json-string { color: var(--code-string); }
+    .attrs-pre .json-number { color: var(--code-number); }
+    .attrs-pre .json-boolean { color: var(--code-bool); }
     .attrs-pre .json-null { color: var(--text-muted); }
 
     .edges-section h4 {
@@ -354,6 +354,7 @@ function renderGraphPageCss() {
       align-items: center;
       justify-content: center;
       z-index: 1000;
+      animation: lr-fade-in 0.15s ease;
     }
     .graph-modal {
       background: var(--surface);
@@ -365,6 +366,7 @@ function renderGraphPageCss() {
       max-height: calc(100vh - 64px);
       overflow-y: auto;
       box-shadow: var(--shadow);
+      animation: lr-slide-up 0.18s ease;
     }
     .graph-modal__title {
       font-size: 16px;
@@ -663,8 +665,8 @@ function renderGraphPageCss() {
       margin-left: 8px;
       padding: 2px 8px;
       border-radius: 4px;
-      background: rgba(251, 191, 36, 0.15);
-      color: #fbbf24;
+      background: var(--warning-soft);
+      color: var(--warning-text);
       font-size: 11px;
       font-weight: 500;
       white-space: nowrap;

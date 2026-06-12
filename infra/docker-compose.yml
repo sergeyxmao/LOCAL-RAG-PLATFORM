@@ -69,6 +69,13 @@ services:
     volumes:
       - ../config:/app/config
       - ../data:/app/data
+    healthcheck:
+      # busybox wget есть в node:20-alpine; /health отвечает без обращения к LLM.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - localrag-net
 
