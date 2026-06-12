@@ -516,7 +516,7 @@ function renderKnowledgeCss() {
       justify-content: center;
       z-index: 100;
     }
-    .kb-modal-backdrop.is-open { display: flex; }
+    .kb-modal-backdrop.is-open { display: flex; animation: lr-fade-in 0.15s ease; }
     .kb-modal {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -526,6 +526,7 @@ function renderKnowledgeCss() {
       display: flex;
       flex-direction: column;
       box-shadow: var(--shadow);
+      animation: lr-slide-up 0.18s ease;
     }
     .kb-modal__head {
       padding: 14px 18px;
@@ -721,11 +722,8 @@ function renderKnowledgeScript(initialStateJson) {
         var existing = document.querySelector(".toast");
         if (existing) existing.remove();
         var el = document.createElement("div");
-        el.className = "toast" + (kind === "error" ? " toast--error" : "");
-        if (kind === "warning") {
-          el.style.borderColor = "#d18f00";
-          el.style.color = "#a86a00";
-        }
+        var kindClass = kind === "error" ? " toast--error" : kind === "warning" ? " toast--warning" : "";
+        el.className = "toast" + kindClass;
         el.textContent = message;
         document.body.appendChild(el);
         var ttl = kind === "warning" || kind === "error" ? 8000 : 4200;

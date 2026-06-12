@@ -136,6 +136,15 @@ await app.register(multipart, {
   },
 });
 
+// Базовые security-заголовки. Платформа локальная, но UI рендерит
+// извлечённый из документов текст — заголовки дешёвые и снижают риск
+// XSS/clickjacking без влияния на работу страниц.
+app.addHook("onSend", async (_request, reply) => {
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("X-Frame-Options", "SAMEORIGIN");
+  reply.header("Referrer-Policy", "same-origin");
+});
+
 const postgresProvider = new PostgresProvider(appConfig.postgres);
 await postgresProvider.ensureRuntimeSchema();
 const staleJobs = await postgresProvider.failStaleRunningJobs();
@@ -413,6 +422,29 @@ await app.register(uiV2Routes);
 app.addHook("onClose", async () => {
   await postgresProvider.close();
 });
+
+// Graceful shutdown: docker stop шлёт SIGTERM — закрываем HTTP-сервер и пул
+// PostgreSQL штатно, вместо обрыва соединений по таймауту контейнера.
+let shuttingDown = false;
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info({ signal }, "Получен сигнал остановки, завершаем работу");
+    const forceExit = setTimeout(() => {
+      app.log.warn("Штатное завершение не уложилось в 10 секунд, выходим принудительно");
+      process.exit(1);
+    }, 10000);
+    forceExit.unref();
+    app
+      .close()
+      .then(() => process.exit(0))
+      .catch((err) => {
+        app.log.error({ err }, "Ошибка при штатном завершении");
+        process.exit(1);
+      });
+  });
+}
 
 app
   .listen({ port: appConfig.port, host: appConfig.host })

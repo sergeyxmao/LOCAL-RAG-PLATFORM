@@ -183,18 +183,13 @@ function renderChatCss() {
       margin: 8px 24px 0;
       padding: 8px 12px;
       border-radius: 8px;
-      background: rgba(245, 158, 11, 0.10);
-      color: #B45309;
-      border: 1px solid rgba(245, 158, 11, 0.25);
+      background: var(--warning-soft);
+      color: var(--warning-text);
+      border: 1px solid var(--warning-border);
       font-size: 12px;
       display: none;
       align-items: center;
       gap: 8px;
-    }
-    html[data-theme="dark"] .cloud-banner {
-      color: #FCD34D;
-      background: rgba(245, 158, 11, 0.10);
-      border-color: rgba(245, 158, 11, 0.30);
     }
     .cloud-banner.is-visible { display: flex; }
     .cloud-banner__text { flex: 1; min-width: 0; }
@@ -454,9 +449,9 @@ function renderChatCss() {
       cursor: help;
     }
     .msg__rerank--warn {
-      color: #B45309;
-      background: rgba(245, 158, 11, 0.10);
-      border-color: rgba(245, 158, 11, 0.35);
+      color: var(--warning-text);
+      background: var(--warning-soft);
+      border-color: var(--warning-border);
     }
     .msg__hyde {
       display: inline-flex;
@@ -471,14 +466,14 @@ function renderChatCss() {
       cursor: help;
     }
     .msg__hyde--used {
-      color: #1D4ED8;
-      background: rgba(59, 130, 246, 0.10);
-      border-color: rgba(59, 130, 246, 0.35);
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: var(--accent);
     }
     .msg__hyde--warn {
-      color: #B45309;
-      background: rgba(245, 158, 11, 0.10);
-      border-color: rgba(245, 158, 11, 0.35);
+      color: var(--warning-text);
+      background: var(--warning-soft);
+      border-color: var(--warning-border);
     }
 
     .typing-dots {
@@ -972,23 +967,7 @@ function renderChatCss() {
       gap: 8px;
     }
 
-    .toast {
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow);
-      padding: 10px 16px;
-      border-radius: 8px;
-      color: var(--text);
-      font-size: 13px;
-      z-index: 999;
-      max-width: 80vw;
-    }
-    .toast--error { border-color: var(--danger); color: var(--danger); }
-
+    /* Стили .toast теперь общие — см. renderLayoutCss() в uiV2.js. */
     .chat-modal-backdrop {
       position: fixed;
       inset: 0;
@@ -998,7 +977,7 @@ function renderChatCss() {
       justify-content: center;
       z-index: 100;
     }
-    .chat-modal-backdrop.is-open { display: flex; }
+    .chat-modal-backdrop.is-open { display: flex; animation: lr-fade-in 0.15s ease; }
     .chat-modal {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -1008,6 +987,7 @@ function renderChatCss() {
       display: flex;
       flex-direction: column;
       box-shadow: var(--shadow);
+      animation: lr-slide-up 0.18s ease;
     }
     .chat-modal__head {
       padding: 14px 18px;

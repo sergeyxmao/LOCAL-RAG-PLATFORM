@@ -29,7 +29,14 @@ function buildDocumentAssetMetadata(asset) {
 
 export class PostgresProvider {
   constructor(config) {
-    this.pool = new Pool(config);
+    this.pool = new Pool({
+      // Явные параметры пула: при недоступном PostgreSQL запросы падают
+      // быстро и понятно, а простаивающие соединения освобождаются.
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      ...config,
+    });
   }
 
   async ensureRuntimeSchema() {
