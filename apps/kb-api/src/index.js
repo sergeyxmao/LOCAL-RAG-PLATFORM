@@ -46,6 +46,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { uiStateRoutes } from "./routes/uiState.js";
 import { uiRoutes } from "./routes/ui.js";
 import { uiV2Routes } from "./routes/uiV2.js";
+import { uiAssetRoutes } from "./routes/uiAssets.js";
 import { chatSessionRoutes } from "./routes/chatSessions.js";
 import { graphRoutes } from "./routes/graph.js";
 import { graphExtractionRoutes } from "./routes/graphExtraction.js";
@@ -418,6 +419,7 @@ await app.register(graphTreeRoutes);
 await app.register(graphSearchRoutes);
 await app.register(uiRoutes);
 await app.register(uiV2Routes);
+await app.register(uiAssetRoutes);
 
 app.addHook("onClose", async () => {
   await postgresProvider.close();
