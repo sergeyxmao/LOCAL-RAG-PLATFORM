@@ -500,6 +500,30 @@ async function updateDocumentNodePayload(app, documentId) {
   };
 }
 
+// Лимит параллельных документов в bulk-link/bulk-unlink. Per-document логика
+// (транзакции, fallback на «Без раздела», выбор primary) остаётся нетронутой —
+// параллелим только независимые документы. Пул pg = 10 соединений, каждый
+// работник держит максимум одно, 4 — безопасно и для слабого ноутбука.
+const BULK_NODE_CONCURRENCY = 4;
+
+// Прогоняет worker по items с ограниченной конкурентностью, сохраняя порядок
+// результатов. Первая ошибка отклоняет общий Promise (как и раньше прерывался
+// последовательный цикл): часть документов может быть уже обработана — это
+// прежняя семантика bulk-операций.
+async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(lanes);
+  return results;
+}
+
 function groupDuplicateRows(rows) {
   const groups = new Map();
 
@@ -625,26 +649,30 @@ export async function documentRoutes(app) {
         };
       }
 
-      const results = [];
-      for (const documentId of documentIds) {
-        const links =
-          mode === "replace"
-            ? await app.postgresProvider.replaceDocumentNodeLinks(documentId, {
-                nodeIds,
-                primaryNodeId: parsePrimaryNodeId(body),
-              })
-            : await app.postgresProvider.addDocumentNodeLinks(documentId, {
-                nodeIds,
-                primaryNodeId: parsePrimaryNodeId(body),
-              });
-        const reindex = await updateDocumentNodePayload(app, documentId);
-        results.push({
-          documentId,
-          links: links.map((row) => mapNodeLinkRow(row)),
-          updatedPoints: reindex.updatedPoints,
-          payload: reindex.payload,
-        });
-      }
+      const primaryNodeId = parsePrimaryNodeId(body);
+      const results = await mapWithConcurrency(
+        documentIds,
+        BULK_NODE_CONCURRENCY,
+        async (documentId) => {
+          const links =
+            mode === "replace"
+              ? await app.postgresProvider.replaceDocumentNodeLinks(documentId, {
+                  nodeIds,
+                  primaryNodeId,
+                })
+              : await app.postgresProvider.addDocumentNodeLinks(documentId, {
+                  nodeIds,
+                  primaryNodeId,
+                });
+          const reindex = await updateDocumentNodePayload(app, documentId);
+          return {
+            documentId,
+            links: links.map((row) => mapNodeLinkRow(row)),
+            updatedPoints: reindex.updatedPoints,
+            payload: reindex.payload,
+          };
+        }
+      );
 
       return {
         ok: true,
@@ -678,20 +706,25 @@ export async function documentRoutes(app) {
         };
       }
 
-      const results = [];
-      for (const documentId of documentIds) {
-        let links = [];
-        for (const nodeId of nodeIds) {
-          links = await app.postgresProvider.unlinkDocumentNode(documentId, nodeId);
+      const results = await mapWithConcurrency(
+        documentIds,
+        BULK_NODE_CONCURRENCY,
+        async (documentId) => {
+          // Разделы одного документа отвязываются последовательно: unlink
+          // содержит fallback на «Без раздела» и пересчёт primary.
+          let links = [];
+          for (const nodeId of nodeIds) {
+            links = await app.postgresProvider.unlinkDocumentNode(documentId, nodeId);
+          }
+          const reindex = await updateDocumentNodePayload(app, documentId);
+          return {
+            documentId,
+            links: links.map((row) => mapNodeLinkRow(row)),
+            updatedPoints: reindex.updatedPoints,
+            payload: reindex.payload,
+          };
         }
-        const reindex = await updateDocumentNodePayload(app, documentId);
-        results.push({
-          documentId,
-          links: links.map((row) => mapNodeLinkRow(row)),
-          updatedPoints: reindex.updatedPoints,
-          payload: reindex.payload,
-        });
-      }
+      );
 
       return {
         ok: true,
