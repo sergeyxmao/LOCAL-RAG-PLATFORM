@@ -109,6 +109,11 @@ services:
       - localrag-net
 
   ingestion-worker:
+    # Пока каркас: только heartbeat-лог, вся логика импорта живёт в kb-api.
+    # Спрятан за профиль, чтобы не занимать RAM слабого ноутбука. Запуск при
+    # необходимости: docker compose --profile experimental up -d
+    profiles:
+      - experimental
     build:
       context: ../apps/ingestion-worker
     container_name: localrag-ingestion-worker
