@@ -127,7 +127,14 @@ async function runOcrAllDefaultTrueMigration({ appSettingsService, logger }) {
   }
 }
 
-const app = Fastify({ logger: true });
+const app = Fastify({
+  logger: true,
+  // Схемы валидации намеренно используют union-типы (например documentId
+  // string|null, limit number|string) — parseNumber/parseTagList принимают
+  // оба вида, а documentId/nodeId реально приходят как null. allowUnionTypes
+  // подтверждает это AJV и убирает strict-предупреждения при компиляции схем.
+  ajv: { customOptions: { allowUnionTypes: true } },
+});
 await app.register(multipart, {
   limits: {
     files: 1000,
@@ -144,6 +151,20 @@ app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("X-Frame-Options", "SAMEORIGIN");
   reply.header("Referrer-Policy", "same-origin");
+});
+
+// Единый формат ошибок. Ошибки валидации схем (Fastify по умолчанию отдаёт
+// { statusCode, error, message }) приводятся к контракту приложения
+// { ok:false, error }, который читают все клиенты (старый UI берёт data.error,
+// новый — data.error/message). Прочие ошибки — поведение Fastify по умолчанию.
+app.setErrorHandler((error, request, reply) => {
+  if (error.validation) {
+    request.log.info({ err: error, url: request.url }, "Запрос отклонён схемой валидации");
+    reply.code(400).send({ ok: false, error: error.message });
+    return;
+  }
+  request.log.error({ err: error, url: request.url }, "Необработанная ошибка запроса");
+  reply.send(error);
 });
 
 const postgresProvider = new PostgresProvider(appConfig.postgres);

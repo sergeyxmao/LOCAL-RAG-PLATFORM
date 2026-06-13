@@ -1,4 +1,5 @@
 import { parseTagList } from "../utils/tags.js";
+import { searchBodySchema } from "../schemas/retrievalSchemas.js";
 
 function parseNumber(value) {
   if (value === undefined || value === null || value === "") {
@@ -119,7 +120,7 @@ export async function searchRoutes(app) {
     }
   });
 
-  app.post("/search", async (request, reply) => {
+  app.post("/search", { schema: { body: searchBodySchema } }, async (request, reply) => {
     try {
       const body = request.body ?? {};
       if (!body.query) {
@@ -166,7 +167,7 @@ export async function searchRoutes(app) {
     }
   });
 
-  app.post("/search/pages", async (request, reply) => {
+  app.post("/search/pages", { schema: { body: searchBodySchema } }, async (request, reply) => {
     try {
       const body = request.body ?? {};
       if (!body.query) {
@@ -203,7 +204,7 @@ export async function searchRoutes(app) {
     }
   });
 
-  app.post("/search/visual", async (request, reply) => {
+  app.post("/search/visual", { schema: { body: searchBodySchema } }, async (request, reply) => {
     try {
       const result = await runVisualSearch(app, request.body ?? {});
       return {
