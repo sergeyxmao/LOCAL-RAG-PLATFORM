@@ -1,11 +1,12 @@
 import { parseTagList } from "../utils/tags.js";
+import { askBodySchema } from "../schemas/retrievalSchemas.js";
 
 function parseTags(value) {
   return parseTagList(value);
 }
 
 export async function askRoutes(app) {
-  app.post("/ask", async (request, reply) => {
+  app.post("/ask", { schema: { body: askBodySchema } }, async (request, reply) => {
     try {
       const body = request.body ?? {};
       if (!body.question) {
@@ -41,7 +42,7 @@ export async function askRoutes(app) {
     }
   });
 
-  app.post("/ask/pages", async (request, reply) => {
+  app.post("/ask/pages", { schema: { body: askBodySchema } }, async (request, reply) => {
     try {
       const body = request.body ?? {};
       if (!body.question) {
